@@ -159,13 +159,21 @@ class PreferenceTests(WindowFixture):
         self.assertTrue(again.expand_tables.isChecked())
         again.close()
 
-    def test_the_hidden_files_checkbox_comes_back(self):
-        """Галочку ставят в диалоге, а хранит её окно: диалог живёт один показ."""
-        self.window.calc_tab.set_show_hidden(True)
+    def test_the_picker_settings_come_back(self):
+        """Их ставят в диалоге, а хранит окно: диалог живёт один показ."""
+        state = self.window.calc_tab.picker_state
+        state.show_hidden = True
+        state.remember_dir = False
+        state.directory = str(self.data_dir)
+        state.width, state.height = 700, 480
         self.window._store_preferences()
 
         again = MainWindow(data_dir=self.data_dir)
-        self.assertTrue(again.calc_tab.show_hidden)
+        restored = again.calc_tab.picker_state
+        self.assertTrue(restored.show_hidden)
+        self.assertFalse(restored.remember_dir)
+        self.assertEqual(restored.directory, str(self.data_dir))
+        self.assertEqual((restored.width, restored.height), (700, 480))
         again.close()
 
     def test_active_tab_comes_back(self):

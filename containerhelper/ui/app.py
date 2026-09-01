@@ -6,7 +6,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QByteArray, QSettings
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -42,6 +42,7 @@ from .chart_window import (
     ChartWindow,
 )
 from .collect_dialog import CollectDialog
+from .path_picker import PickerState
 from .model_tab import ModelTab
 from .records_tab import RecordsTab
 from .table import (
@@ -61,6 +62,15 @@ STATE_KEY = "window_state"
 ACTIVE_TAB_KEY = "active_tab"
 REMEMBER_TAB_KEY = "remember_tab"
 SHOW_HIDDEN_KEY = "show_hidden_files"
+#: Настройки диалога выбора файлов. Своей группой: их четыре, и растащить их
+#: по General значило бы забыть половину при следующей правке. Ключ скрытых
+#: файлов остался прежним — его писали ещё до появления группы, и переезд
+#: молча сбросил бы галочку у тех, у кого она стоит.
+PICKER_REMEMBER_KEY = "picker/remember_dir"
+PICKER_DIR_KEY = "picker/directory"
+PICKER_WIDTH_KEY = "picker/width"
+PICKER_HEIGHT_KEY = "picker/height"
+PICKER_LAYOUT_KEY = "picker/layout"
 
 #: Названия вкладок. Вынесены в константы, потому что имя активной вкладки
 #: уходит в настройки: раньше туда уходил номер, и одной перестановки вкладок
@@ -249,7 +259,12 @@ class MainWindow(QMainWindow):
             CHART_NTFS: (
                 "Метаданные NTFS",
                 (
-                    lambda: charts.ntfs_curve(store()),
+                    # Список рекомендуемых размеров — чтобы кривая сказала
+                    # подписью, какие из них не покрыты ни одним замером.
+                    lambda: charts.ntfs_curve(store(), RECOMMENDED_MIB),
+                    # Доля тома — та же кривая, но в единицах, которыми
+                    # метаданные меряют на глаз.
+                    lambda: charts.ntfs_share(store()),
                     lambda: charts.ntfs_residuals(store()),
                     lambda: charts.ntfs_slopes(store()),
                 ),
@@ -306,9 +321,9 @@ class MainWindow(QMainWindow):
             title, builders, link_x = specs[key]
             window = ChartWindow(key, title, builders, link_x, self)
             window.set_unit(unit_by_key(self.unit_combo.currentData()))
-            geometry = self.settings.value(f"chart_{key}/geometry")
-            if geometry:
-                window.restoreGeometry(geometry)
+            # Вместе с геометрией возвращаются и отсоединённые графики: окно,
+            # разложенное по экрану, собирают один раз, а не каждый запуск.
+            window.restore_layout(self.settings)
             self._charts[key] = window
         else:
             window.refresh()
@@ -547,11 +562,7 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
 
-        # Галочку ставят в диалоге выбора, а хранит её окно: диалог живёт один
-        # показ, и настройка, оставшаяся в нём, не пережила бы даже «Отмену».
-        self.calc_tab.set_show_hidden(
-            self.settings.value(SHOW_HIDDEN_KEY, False, type=bool)
-        )
+        self._restore_picker()
 
         remember = self.settings.value(REMEMBER_TAB_KEY, True, type=bool)
         self.remember_tab.setChecked(remember)
@@ -569,6 +580,32 @@ class MainWindow(QMainWindow):
             if section >= 0:
                 restore_sort(table, section, order)
 
+    def _restore_picker(self) -> None:
+        """Вернуть диалогу выбора его вид, размер и обе галочки.
+
+        Всё это ставят в самом диалоге, а хранит окно: диалог живёт один
+        показ, и настройка, оставшаяся в нём, не пережила бы даже «Отмену».
+        """
+        self.calc_tab.set_picker_state(
+            PickerState(
+                show_hidden=self.settings.value(SHOW_HIDDEN_KEY, False, type=bool),
+                remember_dir=self.settings.value(PICKER_REMEMBER_KEY, True, type=bool),
+                directory=self.settings.value(PICKER_DIR_KEY, "", type=str),
+                width=self.settings.value(PICKER_WIDTH_KEY, 0, type=int),
+                height=self.settings.value(PICKER_HEIGHT_KEY, 0, type=int),
+                layout=QByteArray(self.settings.value(PICKER_LAYOUT_KEY, QByteArray())),
+            )
+        )
+
+    def _store_picker(self) -> None:
+        state = self.calc_tab.picker_state
+        self.settings.setValue(SHOW_HIDDEN_KEY, state.show_hidden)
+        self.settings.setValue(PICKER_REMEMBER_KEY, state.remember_dir)
+        self.settings.setValue(PICKER_DIR_KEY, state.directory)
+        self.settings.setValue(PICKER_WIDTH_KEY, state.width)
+        self.settings.setValue(PICKER_HEIGHT_KEY, state.height)
+        self.settings.setValue(PICKER_LAYOUT_KEY, state.layout)
+
     def _store_preferences(self) -> None:
         self.settings.setValue(GEOMETRY_KEY, self.saveGeometry())
         # При выключенном запоминании имя не перезаписывается: программа в
@@ -577,11 +614,11 @@ class MainWindow(QMainWindow):
         if self.remember_tab.isChecked():
             self.settings.setValue(ACTIVE_TAB_KEY, self.current_tab_title())
         self.settings.setValue(REMEMBER_TAB_KEY, self.remember_tab.isChecked())
-        self.settings.setValue(SHOW_HIDDEN_KEY, self.calc_tab.show_hidden)
-        # Геометрия каждого окна графиков — своим именем, а не номером:
-        # то же правило, что и для активной вкладки.
-        for key, window in self._charts.items():
-            self.settings.setValue(f"chart_{key}/geometry", window.saveGeometry())
+        self._store_picker()
+        # Расположение окон графиков — своим именем, а не номером: то же
+        # правило, что и для активной вкладки.
+        for window in self._charts.values():
+            window.save_layout(self.settings)
         for name, table in self.all_tables().items():
             self.settings.setValue(f"{name}/columns", column_widths(table))
             self.settings.setValue(f"{name}/height", table_height(table))

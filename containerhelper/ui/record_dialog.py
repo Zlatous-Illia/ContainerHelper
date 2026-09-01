@@ -31,10 +31,15 @@ MAX_BYTES_CHARS = 24
 MAX_MIB_CHARS = 10
 MAX_CLUSTER_CHARS = 7
 MAX_COUNT_CHARS = 11
+#: Имя и заметка — свободный текст, но не бесконечный: имя стоит в таблицах и
+#: в подписях графиков, а заметка целиком уходит в подсказку строки.
+MAX_ID_CHARS = 80
+MAX_NOTE_CHARS = 400
 from ..sizes import scan_volume
 from ..records import Record, validate
 from .calc_tab import CLUSTER_CHOICES
 from .measure_dialog import MeasureDialog
+from .table import digits_only, plain_text
 
 
 class RecordDialog(QDialog):
@@ -86,6 +91,18 @@ class RecordDialog(QDialog):
         self._filesystem = self._record.filesystem
         self._load(self._record)
         self._refresh()
+        # Минимум ширины — по самой широкой строке кнопок, а не круглым числом.
+        # QPushButton соглашается стать вчетверо уже своей надписи, и на
+        # 560 пикселях «Взять с „Расчёта“» показывала «Взять с…»: клипается
+        # молча, а окно при этом выглядит целым.
+        self.setMinimumWidth(max(self.minimumWidth(), self._actions_width()))
+
+    def _actions_width(self) -> int:
+        """Сколько нужно строке кнопок вместе с полями окна."""
+        margins = self.layout().contentsMargins()
+        return (
+            self._actions.sizeHint().width() + margins.left() + margins.right() + 24
+        )
 
     # --- построение --------------------------------------------------------
 
@@ -128,6 +145,7 @@ class RecordDialog(QDialog):
         actions.addWidget(self.left_button)
         actions.addStretch(1)
         form.addRow("", actions)
+        self._actions = actions
 
         self.container_edit = QLineEdit()
         self.container_edit.setToolTip(
@@ -216,10 +234,30 @@ class RecordDialog(QDialog):
         for edit in (self.predicted_edit, self.predicted_safety_edit):
             edit.setMaxLength(MAX_MIB_CHARS)
 
+        # Все числовые поля принимают только цифры и разделители разрядов.
+        # Буква в поле байт — промах по клавише, а не «значение, которое не
+        # разобралось»: раньше parse_bytes молча отдавал None, поле оставалось
+        # с мусором, а вычисленные величины превращались в прочерки.
+        digits_only(self.cluster_combo)
+        for edit in (
+            self.container_edit,
+            self.mounted_edit,
+            self.free_edit,
+            self.file_edit,
+            self.count_edit,
+            self.alloc_edit,
+            self.left_edit,
+            self.predicted_edit,
+            self.predicted_safety_edit,
+        ):
+            digits_only(edit)
+        plain_text(self.id_edit, MAX_ID_CHARS)
+
         if self._calibration:
             self._hide_payload_rows(form)
 
         self.note_edit = QLineEdit()
+        plain_text(self.note_edit, MAX_NOTE_CHARS)
         self.note_edit.setToolTip(
             "Свободный текст для себя: чем заполняли, на какой машине, что "
             "показалось странным. В расчёте не участвует."
@@ -386,6 +424,10 @@ class RecordDialog(QDialog):
 
     def _ask_volume(self, prompt: str) -> tuple[str, int, int] | None:
         dialog = MeasureDialog(self, prompt=prompt)
+        # Модально своему окну, а не всей программе: окон записи теперь
+        # открыто может быть несколько, и выбор буквы в одном из них не должен
+        # запирать остальные вместе с «Расчётом».
+        dialog.setWindowModality(Qt.WindowModal)
         if dialog.exec() != QDialog.Accepted:
             return None
         values = dialog.result_values()

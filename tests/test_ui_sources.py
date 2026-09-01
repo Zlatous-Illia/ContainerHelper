@@ -34,8 +34,10 @@ from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
 from containerhelper.sizes import scan_paths, unique_roots  # noqa: E402
 from containerhelper.ui.calc_tab import SOURCE_COLUMNS, CalcTab  # noqa: E402
 from containerhelper.ui.path_picker import (  # noqa: E402
+    COMPUTER,
     FILE_VIEWS,
     PathPicker,
+    PickerState,
 )
 
 
@@ -358,35 +360,57 @@ class PathPickerTests(unittest.TestCase):
         hidden = self.root / "secret.bin"
         hidden.write_bytes(b"\0" * 10)
         ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)
-        self.picker = PathPicker(directory=str(self.root))
+        self.state = PickerState(directory=str(self.root))
+        self.picker = PathPicker(state=self.state)
 
     def tearDown(self):
         self.picker.deleteLater()
         self._dir.cleanup()
+
+    def select_names(self, *names):
+        """Выделить в списке строки с этими именами — как это делает мышь."""
+        view = self.picker._active_view()
+        _app.processEvents()
+        model = view.model()
+        root = view.rootIndex()
+        view.clearSelection()
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            if model.fileName(index) in names:
+                view.selectionModel().select(
+                    index, QItemSelectionModel.Select | QItemSelectionModel.Rows
+                )
+        _app.processEvents()
 
     def test_it_does_not_use_the_native_dialog(self):
         """Родные диалоги Windows умеют либо файлы, либо одну папку."""
         self.assertTrue(self.picker.testOption(PathPicker.DontUseNativeDialog))
 
     def test_a_folder_is_accepted_instead_of_entered(self):
-        target = str(self.root / "folder")
-        self.picker.selectedFiles = lambda: [target]
+        self.select_names("folder")
         self.picker.accept()
         self.assertEqual(self.picker.result(), QDialog.Accepted)
-        self.assertEqual(self.picker.chosen_paths(), [target])
+        self.assertEqual(
+            [Path(path) for path in self.picker.chosen_paths()],
+            [self.root / "folder"],
+        )
 
     def test_files_and_folders_come_back_together(self):
-        chosen = [str(self.root / "folder"), str(self.root / "file.bin")]
-        self.picker.selectedFiles = lambda: chosen
+        self.select_names("folder", "file.bin")
         self.picker.accept()
-        self.assertEqual(self.picker.chosen_paths(), chosen)
+        self.assertEqual(
+            sorted(Path(path).name for path in self.picker.chosen_paths()),
+            ["file.bin", "folder"],
+        )
 
     def test_an_empty_selection_leaves_the_dialog_open(self):
-        self.picker.selectedFiles = lambda: []
+        self.select_names()
         self.picker.accept()
         self.assertNotEqual(self.picker.result(), QDialog.Accepted)
 
     def test_a_vanished_path_is_dropped(self):
+        """Имя набирают руками, и файла за ним может уже не быть."""
+        self.picker._name_edit.setText("gone")
         self.picker.selectedFiles = lambda: [str(self.root / "gone")]
         self.picker.accept()
         self.assertNotEqual(self.picker.result(), QDialog.Accepted)
@@ -465,10 +489,223 @@ class PathPickerTests(unittest.TestCase):
 
     def test_the_checkbox_starts_where_it_was_left(self):
         """Диалог живёт один показ; состояние приходит снаружи и уходит наружу."""
-        opened = PathPicker(directory=str(self.root), show_hidden=True)
+        opened = PathPicker(
+            state=PickerState(directory=str(self.root), show_hidden=True)
+        )
         self.assertTrue(opened.show_hidden)
         self.assertTrue(opened.hidden_check.isChecked())
         opened.deleteLater()
+
+    def test_it_opens_where_it_was_shown_not_where_the_choice_was(self):
+        """Выбрав в папке 1 папку 2, второй раз надо открыться снова в папке 1.
+
+        Начальная папка, взятая из выбранного пути, уводила на уровень вглубь
+        на каждый показ: рядом с выбранным лежит и следующее, а внутри него —
+        уже ничего.
+        """
+        nested = self.root / "folder"
+        self.picker.selectFile(str(nested))
+        self.picker.accept()
+        state = self.picker.store_state()
+        self.assertEqual([Path(p) for p in self.picker.chosen_paths()], [nested])
+        self.assertEqual(Path(state.directory), self.root)
+
+    def test_walking_into_a_folder_moves_the_remembered_place(self):
+        nested = self.root / "folder"
+        self.picker.setDirectory(str(nested))
+        _app.processEvents()
+        self.assertEqual(Path(self.picker.store_state().directory), nested)
+
+    def test_without_the_checkbox_it_starts_at_the_computer(self):
+        """Список дисков, а не папка программы: данные лежат где угодно."""
+        state = PickerState(directory=str(self.root), remember_dir=False)
+        self.assertEqual(state.start_directory(), COMPUTER)
+        opened = PathPicker(state=state)
+        self.assertFalse(opened.remember_check.isChecked())
+        opened.deleteLater()
+
+    def test_the_dialog_carries_no_tooltip_of_its_own(self):
+        """Иначе её показывает наведение на любой файл в списке.
+
+        Подсказка диалога наследуется всеми детьми без своей, и под курсором
+        над именем файла появлялся тот же текст, что и так написан внизу.
+        """
+        self.assertEqual(self.picker.toolTip(), "")
+
+    def test_clearing_the_selection_empties_the_chosen_line(self):
+        """Иначе «Выбрать» добавляет файлы, которых никто уже не выделял.
+
+        Строка наполняется в обход сигналов: на правку текста диалог отвечает
+        автодополнением и сам же выделяет подходящее имя — а проверить надо
+        свою уборку, а не его.
+        """
+        edit = self.picker._name_edit
+        self.select_names()
+        edit.blockSignals(True)
+        edit.setText('"folder" "file.bin"')
+        edit.blockSignals(False)
+        self.picker._sync_name()
+        self.assertEqual(edit.text(), "")
+
+    def test_an_emptied_selection_hands_out_nothing(self):
+        self.select_names("folder", "file.bin")
+        self.picker._select_none()
+        self.picker.accept()
+        self.assertNotEqual(self.picker.result(), QDialog.Accepted)
+        self.assertEqual(self.picker.chosen_paths(), [])
+
+    def test_inverting_twice_hands_out_nothing(self):
+        """Инверсия из пустоты выделяет всё, вторая — снимает всё."""
+        self.select_names()
+        self.picker._invert_selection()
+        _app.processEvents()
+        self.assertTrue(self.picker.selected_paths())
+        self.picker._invert_selection()
+        _app.processEvents()
+        self.assertEqual(self.picker.selected_paths(), [])
+        self.picker.accept()
+        self.assertNotEqual(self.picker.result(), QDialog.Accepted)
+
+    def test_the_view_and_the_size_come_back(self):
+        self.picker.setViewMode(PathPicker.Detail)
+        state = self.picker.store_state()
+        self.assertFalse(state.layout.isEmpty())
+        again = PathPicker(state=state)
+        self.assertEqual(again.viewMode(), PathPicker.Detail)
+        again.deleteLater()
+
+
+class ChosenLineTests(unittest.TestCase):
+    """Строка «Выбрано» и выделение обязаны говорить одно и то же."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.root = Path(self._dir.name)
+        for name in ("a.bin", "b.bin"):
+            (self.root / name).write_bytes(b"\0" * 10)
+        for name in ("folder1", "folder2"):
+            (self.root / name).mkdir()
+        self.picker = PathPicker(state=PickerState(directory=str(self.root)))
+        self.picker.show()
+        _app.processEvents()
+        _app.processEvents()
+
+    def tearDown(self):
+        self.picker.close()
+        self.picker.deleteLater()
+        self._dir.cleanup()
+
+    def names(self):
+        return sorted(Path(path).name for path in self.picker.selected_paths())
+
+    def test_the_line_lists_folders_too(self):
+        """Диалог кладёт туда только файлы: папку он считает дорогой вглубь."""
+        self.picker._select_all()
+        _app.processEvents()
+        text = self.picker._name_edit.text()
+        for name in ("folder1", "folder2", "a.bin", "b.bin"):
+            with self.subTest(name):
+                self.assertIn(name, text)
+
+    def test_inverting_keeps_alternating(self):
+        """Вторая инверсия подряд работала уже над не тем набором, что показан."""
+        self.picker._select_all()
+        _app.processEvents()
+        self.assertEqual(len(self.names()), 4)
+        for expected in (0, 4, 0, 4):
+            self.picker._invert_selection()
+            _app.processEvents()
+            self.assertEqual(len(self.names()), expected)
+
+    def test_the_line_empties_with_the_selection(self):
+        self.picker._select_all()
+        _app.processEvents()
+        self.assertTrue(self.picker._name_edit.text())
+        self.picker._select_none()
+        _app.processEvents()
+        self.assertEqual(self.picker._name_edit.text(), "")
+
+    def test_a_stale_line_hands_out_nothing(self):
+        """Папка могла перечитаться, а имена в строке остаться."""
+        edit = self.picker._name_edit
+        self.picker._select_none()
+        edit.blockSignals(True)
+        edit.setText('"a.bin" "b.bin"')
+        edit.blockSignals(False)
+        self.picker.accept()
+        self.assertNotEqual(self.picker.result(), QDialog.Accepted)
+        self.assertEqual(self.picker.chosen_paths(), [])
+
+    def test_a_typed_name_still_works(self):
+        self.picker._select_none()
+        self.picker._name_edit.setText("a.bin")
+        self.picker._on_typed()
+        self.picker.accept()
+        self.assertEqual(
+            [Path(path).name for path in self.picker.chosen_paths()], ["a.bin"]
+        )
+
+    def test_the_accept_button_follows_the_selection(self):
+        """Диалог включает её по правке строки, а строка у нас молчит."""
+        button = self.picker._accept_button
+        self.assertIsNotNone(button)
+        self.picker._select_none()
+        _app.processEvents()
+        self.assertFalse(button.isEnabled())
+        self.picker._select_all()
+        _app.processEvents()
+        self.assertTrue(button.isEnabled())
+
+
+class DialogSizeTests(unittest.TestCase):
+    """Размер окна запоминается двумя числами, а не saveGeometry.
+
+    `restoreGeometry` сверяет ширину экрана, на котором геометрию сохранили, с
+    нынешней, и при расхождении больше четверти возвращает false, ничего не
+    сделав, — а дальше QDialog подгоняет окно под содержимое.
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.state = PickerState(directory=self._dir.name)
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_the_size_is_written_down(self):
+        first = PathPicker(state=self.state)
+        first.show()
+        _app.processEvents()
+        first.resize(700, 480)
+        _app.processEvents()
+        stored = first.store_state()
+        first.close()
+        self.assertEqual(stored.height, 480)
+        self.assertTrue(stored.sized)
+
+    def test_the_next_dialog_opens_that_size(self):
+        first = PathPicker(state=self.state)
+        first.show()
+        _app.processEvents()
+        first.resize(700, 480)
+        _app.processEvents()
+        first.store_state()
+        first.close()
+
+        second = PathPicker(state=self.state)
+        second.show()
+        _app.processEvents()
+        self.assertEqual(second.height(), 480)
+        second.close()
+
+    def test_an_unknown_size_leaves_the_dialog_alone(self):
+        """Первый показ: размер выбирает сам диалог."""
+        self.assertFalse(PickerState().sized)
+        dialog = PathPicker(state=PickerState(directory=self._dir.name))
+        dialog.show()
+        _app.processEvents()
+        self.assertGreater(dialog.height(), 0)
+        dialog.close()
 
 
 if __name__ == "__main__":

@@ -242,5 +242,165 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(window.records_tab.store.backup_path.exists())
 
 
+class ModelessDialogTests(unittest.TestCase):
+    """Окна правки немодальны: их бывает несколько, и вкладка «Расчёт» жива."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.path = Path(self._dir.name) / "records.json"
+        seeded_store(self.path)
+        self.tab = RecordsTab()
+        self.errors: list[tuple[str, str]] = []
+        self.tab.report_error = lambda title, text: self.errors.append((title, text))
+        self.tab.confirm = lambda *_: True
+        self.tab.load_from(self.path)
+
+    def tearDown(self):
+        self.tab.close_editors()
+        self._dir.cleanup()
+
+    def test_two_records_open_at_once(self):
+        first = self.tab.open_record(self.tab.store.records[0])
+        second = self.tab.open_record(self.tab.store.records[1])
+        self.assertIsNot(first, second)
+        self.assertTrue(first.isVisible())
+        self.assertTrue(second.isVisible())
+
+    def test_the_same_record_opens_only_once(self):
+        """Два окна на одну строку — гонка, где выигрывает нажавший последним."""
+        record = self.tab.store.records[0]
+        first = self.tab.open_record(record)
+        self.assertIs(self.tab.open_record(record), first)
+
+    def test_the_dialog_does_not_block_the_program(self):
+        dialog = self.tab.open_record(self.tab.store.records[0])
+        self.assertFalse(dialog.isModal())
+
+    def test_saving_lands_in_the_same_record_after_the_list_shifted(self):
+        """Номер, взятый при открытии, показал бы уже на чужую строку."""
+        record = self.tab.store.records[2]
+        dialog = self.tab.open_record(record)
+        dialog.id_edit.setText("Переименована")
+        self.tab.store.remove_at(0)
+        dialog.save_button.click()
+        self.assertEqual(self.tab.store.records[-1].id, "Переименована")
+        self.assertEqual(len(self.tab.store.records), 2)
+
+    def test_a_record_deleted_meanwhile_is_reported_not_resurrected(self):
+        record = self.tab.store.records[1]
+        dialog = self.tab.open_record(record)
+        self.tab.store.records.remove(record)
+        dialog.id_edit.setText("Призрак")
+        dialog.save_button.click()
+        self.assertTrue(self.errors)
+        self.assertNotIn("Призрак", [item.id for item in self.tab.store.records])
+
+    def test_deleting_a_record_closes_its_open_window(self):
+        """Иначе «Сохранить» в нём выглядит работающим, а сохранять некуда."""
+        self.tab.table.selectRow(0)
+        record = self.tab.store.records[0]
+        dialog = self.tab.open_record(record)
+        self.tab._delete()
+        self.assertFalse(dialog.isVisible())
+        self.assertEqual(self.tab._editors, {})
+
+    def test_changing_the_file_closes_every_window(self):
+        """Открытое окно держит запись прежнего хранилища."""
+        dialog = self.tab.open_record(self.tab.store.records[0])
+        other = Path(self._dir.name) / "other.json"
+        seeded_store(other)
+        self.tab.load_from(other)
+        self.assertFalse(dialog.isVisible())
+
+    def test_cancelling_changes_nothing(self):
+        record = self.tab.store.records[0]
+        dialog = self.tab.open_record(record)
+        dialog.id_edit.setText("Не сохранится")
+        dialog.reject()
+        self.assertEqual(self.tab.store.records[0].id, "Cache 1")
+
+    def test_several_new_records_can_be_drafted_at_once(self):
+        """Пока запись не сохранена, мешать друг другу окнам нечем."""
+        first = self.tab._add()
+        second = self.tab._add()
+        self.assertIsNot(first, second)
+        self.assertEqual(len(self.tab._creators), 2)
+        first.id_edit.setText("Свежая")
+        first.container_edit.setText("2048")
+        # setText не поднимает textEdited, а «Сохранить» включается по нему:
+        # без имени сохранять нечего, и кнопка выключена.
+        first._refresh()
+        first.save_button.click()
+        self.assertIn("Свежая", [item.id for item in self.tab.store.records])
+        second.reject()
+
+    def test_a_calibration_point_opens_once_per_size(self):
+        first = self.tab.add_calibration_point(4096)
+        self.assertIs(self.tab.add_calibration_point(4096), first)
+        self.assertFalse(first.isModal())
+        second = self.tab.add_calibration_point(8192)
+        self.assertIsNot(second, first)
+        first.reject()
+        second.reject()
+
+    def test_a_saved_calibration_point_reaches_the_store(self):
+        dialog = self.tab.add_calibration_point(1024)
+        dialog.mounted_edit.setText("1073475584")
+        dialog.free_edit.setText("1055596544")
+        dialog.save_button.click()
+        volumes = [item.mounted_bytes for item in self.tab.store.calibration]
+        self.assertIn(1073475584, volumes)
+
+
+class FieldValidationTests(unittest.TestCase):
+    """Буква в поле байт — промах по клавише, а не «значение, что не разобралось»."""
+
+    def typed(self, field, text):
+        field.setText("")
+        for symbol in text:
+            field.insert(symbol)
+        return field.text()
+
+    def test_numeric_fields_take_digits_and_separators_only(self):
+        dialog = RecordDialog()
+        for name in (
+            "container_edit",
+            "mounted_edit",
+            "free_edit",
+            "file_edit",
+            "count_edit",
+            "alloc_edit",
+            "left_edit",
+            "predicted_edit",
+            "predicted_safety_edit",
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    self.typed(getattr(dialog, name), "12a3 4б5-"), "123 45"
+                )
+
+    def test_a_pasted_number_with_separators_still_fits(self):
+        """Из Проводника число приходит с пробелами — их разбор и так выбрасывает."""
+        dialog = RecordDialog()
+        dialog.mounted_edit.setText("")
+        dialog.mounted_edit.insert("11 599 081 472")
+        self.assertEqual(dialog.mounted_edit.text(), "11 599 081 472")
+
+    def test_the_cluster_field_is_numeric_too(self):
+        dialog = RecordDialog()
+        self.assertIsNotNone(dialog.cluster_combo.validator())
+
+    def test_text_fields_refuse_control_characters(self):
+        """В JSON они уезжают экранированными и глазом потом не находятся."""
+        dialog = RecordDialog()
+        self.assertEqual(self.typed(dialog.id_edit, "Cache\t5"), "Cache5")
+        self.assertEqual(self.typed(dialog.note_edit, "за\rметка"), "заметка")
+
+    def test_the_name_and_the_note_have_a_ceiling(self):
+        dialog = RecordDialog()
+        self.assertGreater(dialog.id_edit.maxLength(), 0)
+        self.assertGreater(dialog.note_edit.maxLength(), dialog.id_edit.maxLength())
+
+
 if __name__ == "__main__":
     unittest.main()

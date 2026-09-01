@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Callable, Sequence
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -52,6 +52,7 @@ from ..fileset import FileSet
 from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit, plural
 from ..model import MIB, CopySlackModel, NtfsModel, SafetyModel
 from ..paths import is_writable
+from .table import scrollable, wrapped
 from ..veracrypt import (
     FORMAT_NAMES,
     MOUNT_NAMES,
@@ -86,6 +87,21 @@ PROGRESS_INTERVAL = 0.1
 #: Раньше неё скорость меряется по первым секундам создания контейнера и
 #: врёт в разы.
 ETA_AFTER_PERCENT = 5
+
+#: Ниже этого содержимое диалога перестаёт быть читаемым: подписи наборов
+#: схлопываются, а строка кнопок под ними уезжает за край. Дальше включается
+#: горизонтальная прокрутка — то же решение, что и у вкладок главного окна.
+MIN_CONTENT_WIDTH = 640
+
+#: Отступ подписей под галочкой — тем же числом, что и у самих галочек.
+NOTE_INDENT = 20
+
+#: Как часто окно перерисовывает часы само по себе, миллисекунды. Время шло
+#: только вместе с прогрессом, а прогресс приходит от шага: на полном
+#: форматировании и на монтировании его нет вовсе, и часы стояли минутами —
+#: единственный признак того, что программа жива, замирал ровно тогда, когда
+#: он и был нужен.
+CLOCK_INTERVAL = 1000
 
 ModelProvider = Callable[[], "tuple[NtfsModel, CopySlackModel]"]
 SafetyProvider = Callable[[], SafetyModel]
@@ -238,11 +254,23 @@ class CollectDialog(QDialog):
         self._total_weight = 0
         self._started = 0.0
         self._index = 0
+        #: Что идёт сейчас и с какой секунды. Фаза отдельно от подробности:
+        #: «запись файлов» держится минутами, а число записанных байт в ней
+        #: меняется десять раз в секунду, и часы фазы сбрасывались бы вместе
+        #: с ним.
+        self._phase = ""
+        self._detail = ""
+        self._phase_started = 0.0
         #: Наибольшая доля текущего шага. Полоса не имеет права пятиться.
         self._share = 0.0
 
         #: Подменяемые обработчики: модальное окно посреди логики нечем
         #: закрыть из теста, а перезапуск от администратора нечем отменить.
+        #: Часы окна. Идут сами, а не от прогресса: см. CLOCK_INTERVAL.
+        self._clock = QTimer(self)
+        self._clock.setInterval(CLOCK_INTERVAL)
+        self._clock.timeout.connect(self._show_progress)
+
         self.report_error = self._show_error
         self.confirm = self._ask_confirmation
         self.ask_directory = self._ask_directory
@@ -251,14 +279,25 @@ class CollectDialog(QDialog):
         self.relaunch = relaunch_as_admin
         self.make_veracrypt = VeraCrypt
 
+        # Всё, кроме кнопок, живёт под прокруткой. Окно просит 1178 пикселей
+        # высоты — больше, чем есть у экрана, — и без прокрутки Qt сплющивает
+        # подписи: у строки с ценой набора высота становилась нулевой, и текст
+        # исчезал целиком. Кнопки остаются снаружи: «Остановить» обязана быть
+        # под рукой, не прокручивая окно.
+        content = QWidget()
+        inner = QVBoxLayout(content)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.addWidget(self._build_intro())
+        inner.addWidget(self._build_install_box())
+        inner.addWidget(self._build_workdir_box())
+        inner.addWidget(self._build_scope_box())
+        inner.addWidget(self._build_rights_box())
+        inner.addWidget(self._build_progress())
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self._build_intro())
-        layout.addWidget(self._build_install_box())
-        layout.addWidget(self._build_workdir_box())
-        layout.addWidget(self._build_scope_box())
-        layout.addWidget(self._build_rights_box())
-        layout.addWidget(self._build_progress())
+        layout.addWidget(scrollable(content, MIN_CONTENT_WIDTH), 1)
         layout.addLayout(self._build_buttons())
+        self.resize(760, 820)
 
         self._restore_install()
         self._restore_workdir()
@@ -382,12 +421,10 @@ class CollectDialog(QDialog):
     def _build_ntfs_options(self) -> QWidget:
         box = QWidget()
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(20, 0, 0, 0)
+        layout.setContentsMargins(NOTE_INDENT, 0, 0, 0)
 
         self.only_missing = QRadioButton()
-        self.only_missing.setToolTip(
-            "Снять только те размеры, где своего замера ещё нет."
-        )
+        # Без подсказки: она пересказывала подпись самого переключателя.
         self.only_missing.setChecked(True)
         self.only_missing.toggled.connect(self._refresh_scope)
         layout.addWidget(self.only_missing)
@@ -399,9 +436,7 @@ class CollectDialog(QDialog):
         )
         layout.addWidget(self.everything)
 
-        self.with_self_check = QCheckBox(
-            "Начать с самопроверки (1 GiB дважды, меньше минуты)"
-        )
+        self.with_self_check = QCheckBox("Начать с самопроверки (1 GiB дважды)")
         self.with_self_check.setChecked(True)
         self.with_self_check.setToolTip(
             "Снять гигабайт двумя способами: динамическим контейнером с "
@@ -426,15 +461,27 @@ class CollectDialog(QDialog):
         """
         box = QWidget()
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(20, 0, 0, 0)
+        layout.setContentsMargins(NOTE_INDENT, 0, 0, 0)
 
         self.fileset_boxes: dict[str, QCheckBox] = {}
+        #: Цена набора и его состояние — отдельной подписью под галочкой.
+        #: В самой галочке им не место: QCheckBox не переносит строк, а строка
+        #: «10 000 файлов по 1 KiB — 10000 файлов, 39.06 MiB по кластерам,
+        #: нужно 61.5 MiB, свой замер уже есть» просит 1224 пикселя при окне
+        #: в 660 и обрезалась ровно на самом важном — на «уже есть».
+        self.fileset_notes: dict[str, QLabel] = {}
         for item in self._filesets:
             check = QCheckBox(item.title)
             check.setChecked(item.key not in self._slack_covered)
             check.toggled.connect(self._refresh_scope)
             layout.addWidget(check)
             self.fileset_boxes[item.key] = check
+
+            note = wrapped(QLabel())
+            note.setStyleSheet("color: palette(mid);")
+            note.setContentsMargins(NOTE_INDENT, 0, 0, 0)
+            layout.addWidget(note)
+            self.fileset_notes[item.key] = note
 
         row = QHBoxLayout()
         for title, wanted, tip in (
@@ -494,8 +541,9 @@ class CollectDialog(QDialog):
         self.progress_label.setWordWrap(True)
         self.progress_label.setStyleSheet("color: palette(mid);")
         self.progress_label.setToolTip(
-            "Какой шаг идёт, на какой он фазе и сколько уже прошло. Внутри "
-            "записи набора видно и число готовых файлов."
+            "Какой шаг идёт, на какой он фазе, сколько эта фаза длится и "
+            "сколько прошло всего. Внутри записи набора видно число готовых "
+            "файлов и записанный объём."
         )
         layout.addWidget(self.progress_label)
 
@@ -717,7 +765,7 @@ class CollectDialog(QDialog):
             if free and free < need:
                 parts.append("НЕ ХВАТАЕТ МЕСТА")
             check = self.fileset_boxes[item.key]
-            check.setText(f"{item.title} — {', '.join(parts)}")
+            self._set_note(self.fileset_notes[item.key], ", ".join(parts))
             check.setToolTip(
                 f"Контейнер {step.container_mib} MiB. Расчёт обещает "
                 f"{step.predicted_mib} MiB, из них {step.predicted_safety_mib} "
@@ -725,6 +773,20 @@ class CollectDialog(QDialog):
                 f"точно влез, а обещание записывается как есть — на нём "
                 f"держится проверка прогноза."
             )
+
+    @staticmethod
+    def _set_note(note: QLabel, text: str) -> None:
+        """Подпись под галочкой набора вместе с высотой под перенос.
+
+        Высоту приходится ставить руками: под прокруткой раскладка ужимает
+        переносимую подпись до одной строки и ниже — у QLabel минимальная
+        высота не зависит от ширины, — и вторая строка исчезала целиком.
+        Ширина берётся не текущая, а гарантированная: уже неё содержимое не
+        станет, дальше включается горизонтальная прокрутка.
+        """
+        note.setText(text)
+        width = max(note.width(), MIN_CONTENT_WIDTH - NOTE_INDENT * 2)
+        note.setMinimumHeight(note.heightForWidth(width))
 
     def _preview_step(self, item: FileSet, ntfs, slack) -> Step:
         return slack_step(
@@ -797,6 +859,8 @@ class CollectDialog(QDialog):
         self.progress.setMaximum(max(self._total_weight // MIB, 1))
         self.progress.setValue(0)
         self._started = time.monotonic()
+        self._set_phase("подготовка")
+        self._clock.start()
         self._say(f"Сбор начат. VeraCrypt: {self._install.title}.")
 
         collector = Collector(
@@ -836,14 +900,27 @@ class CollectDialog(QDialog):
     def _on_step_started(self, index: int, title: str) -> None:
         self._index = index
         self._share = 0.0
+        self._set_phase("подготовка шага")
         self._advance(index, 0.0)
         self._say(f"[{index + 1}/{len(self._weights)}] {title}")
 
     def _on_step_progress(self, index: int, progress: Progress) -> None:
+        self._index = index
         self._advance(index, progress.share)
-        detail = progress.detail
-        phase = f"{progress.phase}, {detail}" if detail else progress.phase
-        self._show_progress(index, phase)
+        self._set_phase(progress.phase, progress.detail)
+        self._show_progress()
+
+    def _set_phase(self, phase: str, detail: str = "") -> None:
+        """Запомнить фазу и когда она началась.
+
+        Часы фазы нужны ровно там, где нет прогресса: «создание контейнера» на
+        полном форматировании держится минутами, и без бегущей секунды окно
+        неотличимо от повисшего.
+        """
+        if phase != self._phase:
+            self._phase = phase
+            self._phase_started = time.monotonic()
+        self._detail = detail
 
     def _advance(self, index: int, share: float) -> None:
         """Полоса — доля пройденного веса от веса всего плана.
@@ -863,9 +940,21 @@ class CollectDialog(QDialog):
         done = self._before[index] + int(self._weights[index] * self._share)
         self.progress.setValue(min(done // MIB, self.progress.maximum()))
 
-    def _show_progress(self, index: int, phase: str) -> None:
-        elapsed = time.monotonic() - self._started
-        parts = [f"[{index + 1}/{len(self._weights)}] {phase}"]
+    def _show_progress(self) -> None:
+        """Собрать строку под полосой из того, что известно сейчас.
+
+        Ничего не принимает и зовётся откуда угодно — и от прогресса шага, и
+        от таймера раз в секунду: иначе часы шли бы только тогда, когда шаг о
+        себе сообщает, а молчит он как раз в самых долгих местах.
+        """
+        if not self._weights:
+            return
+        now = time.monotonic()
+        phase = f"{self._phase}, {self._detail}" if self._detail else self._phase
+        parts = [f"[{self._index + 1}/{len(self._weights)}] {phase}"]
+        if self._phase_started:
+            parts.append(f"фаза {_clock(now - self._phase_started)}")
+        elapsed = now - self._started
         parts.append(f"прошло {_clock(elapsed)}")
         done = self.progress.value()
         total = self.progress.maximum()
@@ -921,8 +1010,10 @@ class CollectDialog(QDialog):
         return line
 
     def _on_done(self, reason: str) -> None:
+        self._clock.stop()
         self._finish_thread()
         self._set_running(False)
+        self._phase = self._detail = ""
         self.progress_label.setText("")
         self._say(
             f"Готово. Снято замеров: {self._measured}, неудач: {self._failed}, "

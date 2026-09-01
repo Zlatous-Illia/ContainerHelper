@@ -19,7 +19,7 @@ Float здесь допустим и правила «только целые ч
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .formatting import (
     DEFAULT_UNIT,
@@ -46,6 +46,10 @@ KIND_LINE = "line"
 #: легенде две записи одного цвета про одно и то же.
 KIND_LINE_DOTS = "line+dots"
 KIND_STEPS = "steps"
+#: Точка со стеблем до нуля. Для величин, у которых ноль — не край шкалы, а
+#: сама модель: стебель показывает, куда и насколько промахнулись, а точка
+#: остаётся точкой — каждый замер сам по себе, и соединять их линией нельзя.
+KIND_STEMS = "stems"
 KIND_BARS = "bars"
 KIND_STACK = "stack"
 
@@ -293,6 +297,20 @@ def _unit_digits(step: float, resolved: Unit) -> int:
     return _decimals(units)
 
 
+def _count_tick(value: float) -> str:
+    """Подпись деления логарифмической **не** байтовой оси.
+
+    Целое печатается целым, дробное — с тем числом знаков, при котором оно
+    вообще видно: деления там идут декадами, и «0,01» без знаков после запятой
+    превращается в ноль. Доля тома под метаданными как раз такая величина —
+    от 0,013 % на терабайте до 16 % на шестидесяти четырёх мегабайтах.
+    """
+    if value >= 1:
+        return fmt_bytes(int(round(value)))
+    digits = min(6, int(math.ceil(-math.log10(max(value, 1e-9)))))
+    return _group(value, digits)
+
+
 def _size_tick(value: float) -> str:
     """Подпись деления логарифмической байтовой оси.
 
@@ -323,7 +341,7 @@ def ticks(
             # единицы — от 512 MiB до терабайта, — и половина подписей стала
             # бы «0.001».
             return [Tick(value, _size_tick(value)) for value in values]
-        return [Tick(value, fmt_bytes(int(round(value)))) for value in values]
+        return [Tick(value, _count_tick(value)) for value in values]
 
     span = hi - lo
     if axis.kind == AXIS_BYTES:
@@ -340,6 +358,38 @@ def ticks(
     return [
         Tick(value, _group(value, digits)) for value in _linear_values(lo, hi, step)
     ]
+
+
+def value_label(
+    axis: Axis,
+    value: float,
+    lo: float,
+    hi: float,
+    unit: Unit = DEFAULT_UNIT,
+    categories: tuple[str, ...] = (),
+    count: int = TICK_TARGET,
+) -> str:
+    """Подпись произвольного значения оси — та, что стоит у перекрестья.
+
+    Считается тем же шагом, что и деления: у перекрестья и у ближайшего
+    деления должно быть одинаковое число знаков, иначе одно и то же место оси
+    подписано двумя разными способами.
+    """
+    if categories:
+        index = int(round(value))
+        return categories[index] if 0 <= index < len(categories) else ""
+
+    if axis.log:
+        if axis.kind == AXIS_BYTES:
+            return _size_tick(value)
+        return _count_tick(value)
+
+    span = hi - lo
+    if axis.kind == AXIS_BYTES:
+        step, resolved = _byte_step(span, count, unit)
+        factor = float(resolved.factor or 1)
+        return _group(value / factor, _unit_digits(step, resolved))
+    return _group(value, _decimals(_nice_step(span, count)))
 
 
 def axis_caption(axis: Axis, lo: float, hi: float, unit: Unit = DEFAULT_UNIT) -> str:

@@ -37,7 +37,13 @@ from ..formatting import (
 from ..model import MIB, VC_HEADER_BYTES
 from ..records import Record, forecast
 from .chart_window import CHART_NTFS
-from .table import fit_columns, set_header_tooltips, setup_table, with_grip
+from .table import (
+    fit_columns,
+    fit_widget_columns,
+    set_header_tooltips,
+    setup_table,
+    with_grip,
+)
 
 #: Размеры контейнеров, на которых имеет смысл иметь точку. Ниже 512 MiB
 #: контейнер бесполезен, выше 1 TiB — за пределами того, ради чего программу
@@ -295,9 +301,8 @@ class CalibrationTab(QWidget):
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.summary.setToolTip(
-            "Сколько размеров закрыто своими замерами, сколько держится на "
-            "заводских и сколько не покрыто. Непокрытые модель считает по "
-            "соседям — там она слабее всего."
+            "Непокрытые размеры модель считает по соседним замерам — там она "
+            "слабее всего."
         )
         return self.summary
 
@@ -330,9 +335,8 @@ class CalibrationTab(QWidget):
         self.slack_summary = QLabel()
         self.slack_summary.setWordWrap(True)
         self.slack_summary.setToolTip(
-            "Что эти замеры дают модели и как расчёт справился с ними: "
-            "промах считается по каждому набору, потому что контейнер под "
-            "него программа выбирала сама."
+            "Промах считается по каждому набору отдельно: контейнер под него "
+            "программа выбирала сама, и промахнулась бы тоже сама."
         )
         column.addWidget(self.slack_summary)
 
@@ -436,6 +440,9 @@ class CalibrationTab(QWidget):
                 4, QHeaderView.Interactive
             )
             self._fitted = True
+        # Кнопки в ячейках подгонкой по содержимому не меряются вовсе, и
+        # столбец с ними выходил уже самих кнопок.
+        fit_widget_columns(self.table)
         self._refresh_summary(counts)
         self._refresh_slack()
 
@@ -467,6 +474,7 @@ class CalibrationTab(QWidget):
                     item.setForeground(QColor("#b00020"))
                 self.slack_table.setItem(row, column, item)
             self.slack_table.setCellWidget(row, 6, self._slack_button(record))
+        fit_widget_columns(self.slack_table)
 
         if records and not self._slack_fitted:
             fit_columns(self.slack_table)

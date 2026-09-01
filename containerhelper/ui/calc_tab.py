@@ -50,9 +50,10 @@ from ..formatting import (
     unit_suffix,
 )
 from ..sizes import ScanResult, scan_paths
-from .path_picker import ask_paths
+from .path_picker import PickerState, ask_paths
 from .table import (
     apply_table_height,
+    digits_only,
     fit_columns,
     fit_field,
     set_header_tooltips,
@@ -207,9 +208,10 @@ class CalcTab(QWidget):
         self._solution: Solution | None = None
         self._unit: Unit = DEFAULT_UNIT
         self._sources_fitted = False
-        #: Показывать ли скрытые файлы в диалоге выбора. На расчёт не влияет:
-        #: внутри выбранной папки скрытые считаются всегда.
-        self._show_hidden = False
+        #: Что диалог выбора обязан пережить между показами: вид, размер
+        #: окна, обе галочки и показанная папка. Хранит и записывает в
+        #: настройки главное окно — диалог живёт один показ.
+        self._picker = PickerState()
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_source_group())
@@ -233,11 +235,9 @@ class CalcTab(QWidget):
 
     def _build_source_group(self) -> QGroupBox:
         group = QGroupBox("Исходные данные")
-        group.setToolTip(
-            "Что кладём в контейнер. Файлы и папки можно выбирать "
-            "вперемешку, бросать сюда мышью из Проводника, а можно просто "
-            "ввести размер."
-        )
+        # Без подсказки на самой группе: она наследуется каждым виджетом без
+        # своей, и наведение на любую подпись внутри показывало пересказ того,
+        # что и так написано под таблицей источников.
         outer = QVBoxLayout(group)
         outer.addLayout(self._build_source_buttons())
 
@@ -247,10 +247,7 @@ class CalcTab(QWidget):
         self.source_label = QLabel(NO_SOURCE_HINT)
         self.source_label.setWordWrap(True)
         self.source_label.setStyleSheet("color: palette(mid);")
-        self.source_label.setToolTip(
-            "Сводка по выбранному. В расчёт идут два числа: объём по "
-            "кластерам и количество файлов."
-        )
+        # Без подсказки: подпись и есть сводка, а подсказка её пересказывала.
         outer.addWidget(self.source_label)
 
         form = QFormLayout()
@@ -263,6 +260,7 @@ class CalcTab(QWidget):
             "указать самому."
         )
         self.size_edit.setMaxLength(MAX_BYTES_CHARS)
+        digits_only(self.size_edit)
         fit_field(self.size_edit, SAMPLE_BYTES)
         self.size_edit.textEdited.connect(self._on_manual_edit)
         form.addRow("Размер, байт:", self.size_edit)
@@ -409,6 +407,7 @@ class CalcTab(QWidget):
             self.cluster_combo.addItem(str(value), value)
         self.cluster_combo.setCurrentText(str(DEFAULT_CLUSTER_BYTES))
         self.cluster_combo.lineEdit().setMaxLength(MAX_CLUSTER_CHARS)
+        digits_only(self.cluster_combo)
         fit_field(self.cluster_combo.lineEdit(), SAMPLE_CLUSTER)
         self.cluster_combo.setMaximumWidth(
             self.cluster_combo.lineEdit().maximumWidth() + 34
@@ -546,25 +545,14 @@ class CalcTab(QWidget):
 
     # --- источник данных ---------------------------------------------------
 
-    def _start_directory(self) -> str:
-        """Открывать диалог там, где выбирали в прошлый раз."""
-        paths = self._scan.paths if self._scan else []
-        if not paths:
-            return ""
-        first = paths[0]
-        return first if os.path.isdir(first) else os.path.dirname(first)
-
     def _ask_paths(self) -> list[str]:
-        """Показать диалог выбора и запомнить, чем он закрылся.
+        """Показать диалог выбора; состояние он правит на месте.
 
-        Галочку «показывать скрытые» диалог переживает: сам он живёт один
-        показ, а состояние хранится тут и сохраняется окном в настройки — иначе
-        её пришлось бы ставить каждый раз заново.
+        Начальную папку выбирает само состояние, а не выбранный путь. Брать её
+        из выбранного нельзя: выбрав в папке 1 папку 2, следующий показ уезжал
+        внутрь папки 2 — и так на уровень вглубь с каждым разом.
         """
-        chosen, self._show_hidden = ask_paths(
-            self, self._start_directory(), self._show_hidden
-        )
-        return chosen
+        return ask_paths(self, self._picker)
 
     def _pick_sources(self) -> None:
         chosen = self._ask_paths()
@@ -577,12 +565,12 @@ class CalcTab(QWidget):
             self._rescan(self._current_paths() + chosen)
 
     @property
-    def show_hidden(self) -> bool:
-        """Показывать ли скрытые в диалоге выбора. Читает и пишет окно."""
-        return self._show_hidden
+    def picker_state(self) -> PickerState:
+        """Состояние диалога выбора. Читает и пишет главное окно."""
+        return self._picker
 
-    def set_show_hidden(self, show: bool) -> None:
-        self._show_hidden = bool(show)
+    def set_picker_state(self, state: PickerState) -> None:
+        self._picker = state
 
     def _drop_sources(self) -> None:
         """Убрать выделенные источники и пересчитать по оставшимся."""

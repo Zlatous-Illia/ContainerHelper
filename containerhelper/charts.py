@@ -13,6 +13,7 @@ from .factory import factory_data
 from .formatting import fmt_both, fmt_bytes, plural, size_label
 from .model import (
     MIB,
+    VC_HEADER_BYTES,
     CopySlackModel,
     NtfsModel,
     Payload,
@@ -28,6 +29,7 @@ from .plot import (
     KIND_LINE,
     KIND_LINE_DOTS,
     KIND_STACK,
+    KIND_STEMS,
     KIND_STEPS,
     LAYOUT_STACK,
     Axis,
@@ -75,8 +77,42 @@ def _geometric(lo: float, hi: float, count: int = CURVE_SAMPLES) -> list[float]:
 # --- метаданные NTFS -------------------------------------------------------
 
 
-def ntfs_curve(store) -> Chart:
-    """Измеренные метаданные и ломаная модели поверх них."""
+#: Сколько непокрытых размеров называть поимённо. Дальше список перестаёт
+#: читаться и начинает вытеснять саму подпись.
+UNCOVERED_SHOWN = 5
+
+
+def uncovered(store, sizes: Sequence[int]) -> list[int]:
+    """Рекомендованные размеры, на которых нет ни своего замера, ни заводского.
+
+    Именно там модель ведёт прямую через пустое место, и туда же стоит снять
+    следующий замер. Своё, отключённое кнопкой «К заводскому», покрытием не
+    считается только если и заводского на этом размере нет.
+    """
+    own = {
+        record.mounted_bytes
+        for record in store.calibration_points()
+        if record.mounted_bytes and not record.disabled
+    }
+    factory = factory_data().by_volume()
+    return [
+        size_mib
+        for size_mib in sizes
+        if (size_mib * MIB - VC_HEADER_BYTES) not in own
+        and (size_mib * MIB - VC_HEADER_BYTES) not in factory
+    ]
+
+
+def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
+    """Измеренные метаданные и ломаная модели поверх них.
+
+    `sizes` — список рекомендуемых размеров; по нему подпись говорит, какие из
+    них не покрыты ничем. Отдельной панелью это уже стояло — «лента покрытия»,
+    три ряда точек, — и оказалось лишним: своё против заводского на кривой уже
+    видно по цвету, а всё, что лента добавляла сверх этого, укладывается в
+    одну строку. Таблица на «Калибровке» говорит то же самое подробнее и с
+    кнопками.
+    """
     own = _own(store)
     records = store.all_for_model()
     model = NtfsModel(ntfs_points(records))
@@ -107,6 +143,16 @@ def ntfs_curve(store) -> Chart:
         "Модель ведёт прямую между соседними замерами, а зависимость прямой не "
         "является: $LogFile меняется ступенями."
     )
+    holes = uncovered(store, sizes)
+    if holes:
+        names = ", ".join(size_label(size) for size in holes[:UNCOVERED_SHOWN])
+        if len(holes) > UNCOVERED_SHOWN:
+            names += f" и ещё {len(holes) - UNCOVERED_SHOWN}"
+        note += (
+            f" Не покрыто замерами: {len(holes)} "
+            f"{plural(len(holes), 'размер', 'размера', 'размеров')} — {names}; "
+            f"там прямая идёт через пустое место."
+        )
     return Chart(
         "Метаданные NTFS от размера тома",
         Axis("Размер тома", AXIS_BYTES, log=True),
@@ -166,9 +212,12 @@ def ntfs_residuals(store) -> Chart:
         Axis("Размер тома", AXIS_BYTES, log=True),
         Axis("Измерено минус модель", AXIS_BYTES),
         (
-            Series("модель занизила", tuple(under), KIND_DOTS, tone=1),
-            Series("модель завысила", tuple(over), KIND_DOTS, tone=0),
-            Series("край диапазона", tuple(edge), KIND_DOTS, tone=3, visible=False),
+            # Стеблями, а не голыми точками: ноль здесь — сама модель, и
+            # стебель от неё до точки показывает, куда и насколько промах, не
+            # заставляя глаз мерить расстояние до линии.
+            Series("модель занизила", tuple(under), KIND_STEMS, tone=1),
+            Series("модель завысила", tuple(over), KIND_STEMS, tone=0),
+            Series("край диапазона", tuple(edge), KIND_STEMS, tone=3, visible=False),
         ),
         note=(
             "Ноль — это сама модель. Вверх — занижение, единственная опасная "
@@ -177,6 +226,69 @@ def ntfs_residuals(store) -> Chart:
             "больше; вернуть их можно щелчком по легенде."
         ),
         zero_line=True,
+    )
+
+
+def ntfs_share(store) -> Chart:
+    """Какую долю тома съедают метаданные.
+
+    Кривая в байтах отвечает на другой вопрос — «сколько их», — и на фоне тома
+    в гигабайтах разница между 0,2 % и 0,4 % там толщиной в линию. А доля и
+    есть то, чем метаданные меряют на глаз: «сколько тома уйдёт не на данные».
+
+    С наклонами отрезков это тоже разные величины: наклон говорит, как быстро
+    метаданные растут на участке, а доля — сколько их всего на этом размере.
+    Ровный участок наклона и ровный участок доли — не одно и то же.
+    """
+    own = _own(store)
+    records = store.all_for_model()
+    model = NtfsModel(ntfs_points(records))
+
+    mine: list[Point] = []
+    factory: list[Point] = []
+    for record in records:
+        overhead = record.ntfs_bytes
+        if overhead is None or not record.mounted_bytes:
+            continue
+        share = overhead / record.mounted_bytes * 100.0
+        point = Point(
+            float(record.mounted_bytes),
+            share,
+            (
+                f"{record.id}\n"
+                f"Том: {fmt_both(record.mounted_bytes)}\n"
+                f"Метаданные: {fmt_both(overhead)}\n"
+                f"Доля тома: {share:.3f} %"
+            ).replace(".", ","),
+            key=record.id,
+        )
+        (mine if _is_own(record, own) else factory).append(point)
+
+    curve: list[Point] = []
+    if model.points:
+        lo = min(point[0] for point in model.points)
+        hi = max(point[0] for point in model.points)
+        curve = [
+            Point(x, model.overhead(int(x)) / x * 100.0) for x in _geometric(lo, hi)
+        ]
+
+    return Chart(
+        "Доля тома под метаданными",
+        Axis("Размер тома", AXIS_BYTES, log=True),
+        # Логарифмическая и по вертикали: доля расходится на три порядка — от
+        # 0,013 % на терабайтном томе до 16 % на шестидесяти четырёх
+        # мегабайтах, — и на линейной оси всё, кроме самых мелких томов,
+        # ложится в одну линию у нуля.
+        Axis("Доля тома, %", AXIS_PLAIN, log=True),
+        (
+            Series("модель", tuple(curve), KIND_LINE, tone=2),
+            Series("свои замеры", tuple(mine), KIND_DOTS, tone=0),
+            Series("заводские", tuple(factory), KIND_DOTS, tone=1),
+        ),
+        note=(
+            "Сколько тома уходит не на данные. Соседний график наклонов — про "
+            "другое: там скорость роста на участке, а не уровень."
+        ),
     )
 
 
@@ -287,8 +399,8 @@ def slack_residuals(store) -> Chart:
         Axis("Файлов", AXIS_COUNT, log=True),
         Axis("Измерено минус модель", AXIS_BYTES),
         (
-            Series("модель занизила", tuple(under), KIND_DOTS, tone=1),
-            Series("модель завысила", tuple(over), KIND_DOTS, tone=0),
+            Series("модель занизила", tuple(under), KIND_STEMS, tone=1),
+            Series("модель завысила", tuple(over), KIND_STEMS, tone=0),
         ),
         note="Ноль — сама модель. Вверх — занижение.",
         zero_line=True,
@@ -350,6 +462,10 @@ def forecast_misses(store) -> Chart:
         Axis("Обещано минус необходимо", AXIS_MIB),
         (
             Series("перезаклад", tuple(misses), KIND_BARS, tone=0),
+            # Точками, а не столбиками: столбик поверх столбика читается как
+            # «часть целого», а это отдельная величина того же промаха, снятая
+            # с другого места. Ниже нуля точка стоит одна, и подпись под
+            # графиком проговаривает, что она означает.
             Series("без страховки", tuple(bare), KIND_DOTS, tone=1),
         ),
         note=note,

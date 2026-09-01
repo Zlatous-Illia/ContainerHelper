@@ -12,7 +12,14 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QHeaderView  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QHBoxLayout,
+    QHeaderView,
+    QPushButton,
+    QTableWidget,
+    QWidget,
+)
 
 _app = QApplication.instance() or QApplication([])
 
@@ -26,6 +33,7 @@ from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
 from containerhelper.ui.records_tab import RecordsTab  # noqa: E402
+from containerhelper.ui.table import fit_widget_columns  # noqa: E402
 
 #: Имена намеренно не совпадают с порядком по размеру: иначе сортировку не
 #: отличить от исходного порядка строк.
@@ -260,6 +268,57 @@ class MainWindowWiringTests(unittest.TestCase):
         self.window.unit_combo.setCurrentIndex(self.window.unit_combo.findData("GiB"))
         self.assertEqual(self.window.calc_tab.result_label.text(), before)
         self.assertEqual(self.window.calc_tab.result_units.text(), "MiB")
+
+
+class WidgetColumnTests(unittest.TestCase):
+    """Кнопки в ячейках подгонкой по содержимому не меряются вовсе.
+
+    Столбец с «Переснять» и «К заводскому» вставал в 97 px при нужных 284, и
+    обе кнопки показывали по три буквы.
+    """
+
+    def setUp(self):
+        self.table = QTableWidget(2, 2)
+        self.table.setColumnWidth(1, 30)
+        for row in range(2):
+            box = QWidget()
+            layout = QHBoxLayout(box)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(QPushButton("Достаточно длинная надпись"))
+            self.table.setCellWidget(row, 1, box)
+
+    def test_the_column_grows_to_the_widget(self):
+        needed = self.table.cellWidget(0, 1).sizeHint().width()
+        fit_widget_columns(self.table)
+        self.assertGreaterEqual(self.table.columnWidth(1), needed)
+
+    def test_a_wider_column_is_left_alone(self):
+        """Натянутую руками ширину сужать нельзя."""
+        self.table.setColumnWidth(1, 900)
+        fit_widget_columns(self.table)
+        self.assertEqual(self.table.columnWidth(1), 900)
+
+    def test_columns_without_widgets_are_untouched(self):
+        before = self.table.columnWidth(0)
+        fit_widget_columns(self.table)
+        self.assertEqual(self.table.columnWidth(0), before)
+
+
+class CalibrationButtonWidthTests(unittest.TestCase):
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.window = MainWindow(data_dir=Path(self._dir.name))
+
+    def tearDown(self):
+        self.window.close()
+        self._dir.cleanup()
+
+    def test_the_row_buttons_are_not_squeezed(self):
+        table = self.window.calibration_tab.table
+        column = table.columnCount() - 1
+        widget = table.cellWidget(0, column)
+        self.assertIsNotNone(widget)
+        self.assertGreaterEqual(table.columnWidth(column), widget.sizeHint().width())
 
 
 if __name__ == "__main__":

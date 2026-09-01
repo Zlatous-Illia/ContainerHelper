@@ -7,14 +7,13 @@
 import math
 import unittest
 
-from containerhelper.formatting import UNIT_AUTO, UNIT_BYTE, UNIT_MIB
+from containerhelper.formatting import UNIT_AUTO
 from containerhelper.model import MIB
 from containerhelper.plot import (
     AXIS_BYTES,
     AXIS_COUNT,
     AXIS_MIB,
     AXIS_PLAIN,
-    KIND_DOTS,
     KIND_STACK,
     Axis,
     Frame,
@@ -27,6 +26,7 @@ from containerhelper.plot import (
     padded,
     stack_hit,
     ticks,
+    value_label,
 )
 
 GIB = 1024 * MIB
@@ -289,6 +289,60 @@ class StackTests(unittest.TestCase):
 
     def test_outside_the_rectangle_hits_nothing(self):
         self.assertIsNone(stack_hit(self.frame, self.series, 10, 100))
+
+
+class ValueLabelTests(unittest.TestCase):
+    """Подпись под перекрестьем считается тем же шагом, что и деления.
+
+    Иначе одно и то же место оси подписано двумя способами: у деления «4»,
+    а у перекрестья рядом — «4,0000001».
+    """
+
+    def test_a_log_byte_axis_names_the_power_of_two(self):
+        axis = Axis("Размер тома", AXIS_BYTES, log=True)
+        self.assertEqual(
+            value_label(axis, 2 ** 31, 2 ** 29, 2 ** 40), "2 GiB"
+        )
+
+    def test_a_linear_byte_axis_follows_the_chosen_unit(self):
+        axis = Axis("Метаданные", AXIS_BYTES)
+        self.assertEqual(
+            value_label(axis, 36_573_184, 0, 40_000_000), "36 573 184"
+        )
+
+    def test_a_counted_axis_stays_whole(self):
+        axis = Axis("Файлов", AXIS_COUNT, log=True)
+        self.assertEqual(value_label(axis, 5000, 1, 10000), "5 000")
+
+    def test_a_listed_axis_names_the_category(self):
+        axis = Axis("Запись")
+        self.assertEqual(
+            value_label(axis, 1.0, -0.5, 2.5, categories=("a", "b", "c")), "b"
+        )
+
+    def test_a_cursor_beyond_the_list_names_nothing(self):
+        axis = Axis("Запись")
+        self.assertEqual(value_label(axis, 9.0, -0.5, 2.5, categories=("a",)), "")
+
+
+class LogCountTicksTests(unittest.TestCase):
+    """Дробные деления логарифмической счётной оси.
+
+    Они шли через `fmt_bytes(int(...))`, и «0,01» превращалось в «0»: величин
+    меньше единицы на такой оси до доли тома просто не бывало.
+    """
+
+    axis = Axis("Доля тома, %", AXIS_PLAIN, log=True)
+
+    def test_a_decade_below_one_keeps_its_digits(self):
+        labels = [tick.text for tick in ticks(self.axis, 0.01, 20)]
+        self.assertEqual(labels, ["0,01", "0,1", "1", "10"])
+
+    def test_whole_values_stay_whole(self):
+        self.assertEqual(value_label(self.axis, 12.0, 0.01, 20), "12")
+
+    def test_a_fraction_is_not_rounded_to_zero(self):
+        self.assertNotEqual(value_label(self.axis, 0.35, 0.01, 20), "0")
 
 
 if __name__ == "__main__":

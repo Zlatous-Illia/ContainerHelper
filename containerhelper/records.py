@@ -877,6 +877,22 @@ class Store:
     def replace_at(self, index: int, record: Record) -> None:
         self.records[index] = record
 
+    def index_of(self, record: Record) -> int | None:
+        """Где лежит эта самая запись. По тождеству, а не по равенству.
+
+        Окна правки немодальны, и пока одно из них открыто, список успевает
+        измениться: соседнюю запись удалили, новую добавили — номер, взятый
+        при открытии, показывает уже на чужую строку. Равенство здесь тоже не
+        годится: две записи с одинаковыми полями — обычное дело, `Record`
+        сравнивается по значениям, и правка ушла бы в первую попавшуюся.
+
+        None — записи в хранилище больше нет: её удалили из другого окна.
+        """
+        for index, item in enumerate(self.records):
+            if item is record:
+                return index
+        return None
+
     def remove_at(self, index: int) -> None:
         del self.records[index]
 

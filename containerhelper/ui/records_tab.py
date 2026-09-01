@@ -172,6 +172,14 @@ class RecordsTab(QWidget):
         #: отклонение остаётся осмысленным. Калиброванная проходит точно через
         #: свои же точки, и отклонение в таблице всегда было бы нулём.
         self._baseline = NtfsModel()
+        #: Открытые окна правки: id(записи) → окно. Окна немодальны, и на одну
+        #: запись их должно быть не больше одного: два окна на одну строку —
+        #: это гонка, где выигрывает нажавший «Сохранить» последним, а
+        #: потерянную правку заметить нечем.
+        self._editors: dict[int, RecordDialog] = {}
+        #: Окна новых записей. Их можно открыть сколько угодно: пока запись не
+        #: сохранена, мешать друг другу им нечем.
+        self._creators: list[RecordDialog] = []
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._build_path_row())
@@ -199,8 +207,7 @@ class RecordsTab(QWidget):
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.path_label.setStyleSheet("color: palette(mid);")
         self.path_label.setToolTip(
-            "Полный путь; выделяется мышью и копируется. Рядом лежит одна "
-            "резервная копия с расширением .bak."
+            "Рядом с файлом лежит одна резервная копия с расширением .bak."
         )
         row.addWidget(self.path_label, 1)
 
@@ -214,19 +221,110 @@ class RecordsTab(QWidget):
         row.addWidget(choose)
         return row
 
-    def add_calibration_point(self, container_mib: int) -> None:
+    def add_calibration_point(self, container_mib: int) -> RecordDialog:
         """Завести точку калибровки на заданный размер.
 
         Имя подставляется, размер тоже — от пользователя нужен только замер
         смонтированного пустого тома.
+
+        Окно немодальное, как и у обычной записи: замер снимают, глядя на
+        смонтированный том и на вкладку «Расчёт», а модальное окно закрывает
+        и то, и другое.
         """
+        opened = self._editors.get(container_mib)
+        if opened is not None:
+            return self._raise(opened)
         seed = Record(
             id=f"Калибровка {size_label(container_mib)}", container_mib=container_mib
         )
         dialog = RecordDialog(seed, parent=self, calibration=True)
-        if dialog.exec() != QDialog.Accepted:
+        # Ключом — размер контейнера, а не id(seed): смысл окна в том, какой
+        # размер оно замеряет, и второе окно на тот же размер сняло бы второй
+        # замер поверх первого.
+        self._editors[container_mib] = dialog
+        dialog.finished.connect(
+            lambda code, key=container_mib, box=dialog: self._point_closed(key, box, code)
+        )
+        return self._show(dialog)
+
+    def _point_closed(self, key: int, dialog: RecordDialog, code: int) -> None:
+        self._editors.pop(key, None)
+        if code == QDialog.Accepted:
+            self.store_calibration_point(dialog.result_record())
+        dialog.deleteLater()
+
+    # --- немодальные окна правки -------------------------------------------
+
+    def _show(self, dialog: RecordDialog) -> RecordDialog:
+        """Показать окно, не отдавая ему управление.
+
+        `show`, а не `exec`: пока окно открыто, вкладка «Расчёт» остаётся
+        живой — а она и есть источник размера и числа файлов, и «Взять
+        с „Расчёта“» без неё нажимать бессмысленно.
+        """
+        dialog.show()
+        return self._raise(dialog)
+
+    @staticmethod
+    def _raise(dialog: RecordDialog) -> RecordDialog:
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def _new_dialog(self, record: Record | None = None) -> RecordDialog:
+        return RecordDialog(
+            record,
+            parent=self,
+            payload_provider=self._payload_provider,
+            container_provider=self._container_provider,
+            safety_provider=self._safety_provider,
+        )
+
+    def open_record(self, record: Record) -> RecordDialog:
+        """Открыть запись на правку. Уже открытую — поднять, а не открыть заново."""
+        opened = self._editors.get(id(record))
+        if opened is not None:
+            return self._raise(opened)
+        dialog = self._new_dialog(record)
+        self._editors[id(record)] = dialog
+        dialog.finished.connect(
+            lambda code, item=record, box=dialog: self._editor_closed(item, box, code)
+        )
+        return self._show(dialog)
+
+    def _editor_closed(self, record: Record, dialog: RecordDialog, code: int) -> None:
+        """Окно закрылось. Сохранённое кладётся в ту же самую запись.
+
+        Место ищется тождеством в момент сохранения, а не запоминается при
+        открытии: пока окно было открыто, соседнюю запись могли удалить из
+        другого окна, и номер показывал бы уже на чужую строку.
+        """
+        self._editors.pop(id(record), None)
+        dialog.deleteLater()
+        if code != QDialog.Accepted:
             return
-        self.store_calibration_point(dialog.result_record())
+        index = self.store.index_of(record)
+        if index is None:
+            self.report_error(
+                "Запись не найдена",
+                f"«{record.id}» удалили, пока окно правки было открыто. "
+                f"Изменения не сохранены.",
+            )
+            return
+        self.store.replace_at(index, dialog.result_record())
+        self._save()
+
+    def close_editors(self) -> None:
+        """Закрыть все окна правки. Зовётся при смене файла записей.
+
+        Открытое окно держит запись **прежнего** хранилища: сохранить её в
+        новое некуда, а показывать её рядом с чужой таблицей — врать о том,
+        что правится.
+        """
+        for dialog in [*self._editors.values(), *self._creators]:
+            dialog.close()
+        self._editors.clear()
+        self._creators.clear()
 
     def store_calibration_point(self, record: Record) -> None:
         """Положить замер в файл замеров, вытеснив прежний того же рода.
@@ -349,6 +447,7 @@ class RecordsTab(QWidget):
     # --- хранилище ---------------------------------------------------------
 
     def load_from(self, path: str | Path) -> bool:
+        self.close_editors()
         try:
             self.store = Store.load(path)
         except StoreError as exc:
@@ -409,14 +508,19 @@ class RecordsTab(QWidget):
         index = item.data(STORE_INDEX_ROLE)
         return int(index) if index is not None else None
 
-    def _add(self) -> None:
-        dialog = RecordDialog(
-            parent=self,
-            payload_provider=self._payload_provider,
-            container_provider=self._container_provider,
-            safety_provider=self._safety_provider,
+    def _add(self) -> RecordDialog:
+        dialog = self._new_dialog()
+        self._creators.append(dialog)
+        dialog.finished.connect(
+            lambda code, box=dialog: self._creator_closed(box, code)
         )
-        if dialog.exec() == QDialog.Accepted:
+        return self._show(dialog)
+
+    def _creator_closed(self, dialog: RecordDialog, code: int) -> None:
+        if dialog in self._creators:
+            self._creators.remove(dialog)
+        dialog.deleteLater()
+        if code == QDialog.Accepted:
             self.store.add(dialog.result_record())
             self._save()
 
@@ -424,25 +528,24 @@ class RecordsTab(QWidget):
         index = self._selected_index()
         if index is None:
             return
-        dialog = RecordDialog(
-            self.store.records[index],
-            parent=self,
-            payload_provider=self._payload_provider,
-            container_provider=self._container_provider,
-            safety_provider=self._safety_provider,
-        )
-        if dialog.exec() == QDialog.Accepted:
-            self.store.replace_at(index, dialog.result_record())
-            self._save()
+        self.open_record(self.store.records[index])
 
     def _delete(self) -> None:
         index = self._selected_index()
         if index is None:
             return
         record = self.store.records[index]
-        if self.confirm("Удалить запись", f"Удалить «{record.id}»? Действие не отменяется."):
-            self.store.remove_at(index)
-            self._save()
+        if not self.confirm(
+            "Удалить запись", f"Удалить «{record.id}»? Действие не отменяется."
+        ):
+            return
+        # Окно правки этой записи закрывается заодно: сохранять его было бы
+        # уже некуда, а «Сохранить» в нём выглядело бы работающим.
+        opened = self._editors.pop(id(record), None)
+        if opened is not None:
+            opened.close()
+        self.store.remove_at(index)
+        self._save()
 
     def _show_error(self, title: str, text: str) -> None:
         QMessageBox.warning(self, title, text)

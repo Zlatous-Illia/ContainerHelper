@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 
-from PySide6.QtCore import QDir, QItemSelection, QItemSelectionModel
+from PySide6.QtCore import QByteArray, QDir, QItemSelection, QItemSelectionModel
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
 )
 
@@ -29,6 +33,53 @@ HINT = (
 #: перетаскивание в ней нужно, им туда складывают закладки.
 FILE_VIEWS = ("listView", "treeView")
 
+#: Пустая папка — это «Компьютер», список дисков. Проверено: QFileDialog с
+#: `setDirectory("")` показывает именно диски, а не текущий каталог процесса.
+#: Папка программы в качестве начальной не годится вовсе: данные лежат где
+#: угодно, только не рядом с ней.
+COMPUTER = ""
+
+
+@dataclass
+class PickerState:
+    """Всё, что диалог обязан пережить между показами.
+
+    Живёт снаружи, потому что сам диалог живёт один показ: настройка,
+    оставшаяся в нём, не пережила бы даже «Отмену». Хранит и записывает в
+    settings.ini главное окно.
+
+    `directory` — папка, **которую диалог показывал**, а не выбранная в нём.
+    Разница не косметическая: выбрав в папке 1 папку 2, в следующий раз надо
+    открыться снова в папке 1 — рядом с папкой 2 лежит то, что выбирают
+    следующим. Начальная папка, взятая из выбранного пути, уводила на уровень
+    вглубь на каждый показ.
+    """
+
+    show_hidden: bool = False
+    #: Открываться там, где закрылись. Выключено — всегда «Компьютер».
+    remember_dir: bool = True
+    directory: str = COMPUTER
+    #: Размер окна — двумя числами, а не `saveGeometry`.
+    #:
+    #: `restoreGeometry` отказывается работать молча: она сверяет ширину
+    #: экрана, на котором геометрию сохранили, с нынешней, и при расхождении
+    #: больше четверти **возвращает false, ничего не сделав**. Дальше QDialog
+    #: видит, что размер никто не задавал, и подгоняет окно под содержимое —
+    #: со стороны это и выглядит как «размеры сбрасываются каждый запуск».
+    #: Два числа таких проверок не проходят.
+    width: int = 0
+    height: int = 0
+    #: Вид списка, ширины столбцов подробного вида и боковая панель —
+    #: всё это умеет отдать сам QFileDialog одним куском.
+    layout: QByteArray = field(default_factory=QByteArray)
+
+    def start_directory(self) -> str:
+        return self.directory if self.remember_dir else COMPUTER
+
+    @property
+    def sized(self) -> bool:
+        return self.width > 0 and self.height > 0
+
 
 class PathPicker(QFileDialog):
     """Выбор файлов и папок в одном списке.
@@ -40,13 +91,9 @@ class PathPicker(QFileDialog):
     её как источник. Внутрь по-прежнему пускает двойной щелчок.
     """
 
-    def __init__(
-        self,
-        parent=None,
-        directory: str = "",
-        show_hidden: bool = False,
-    ) -> None:
-        super().__init__(parent, "Выберите файлы и папки", directory)
+    def __init__(self, parent=None, state: PickerState | None = None) -> None:
+        self._state = state or PickerState()
+        super().__init__(parent, "Выберите файлы и папки", self._state.start_directory())
         # Штатный режим ExistingFiles: он показывает и папки (иначе по ним не
         # пройтись), и множественное выделение в нём уже настроено.
         self.setOption(QFileDialog.DontUseNativeDialog, True)
@@ -54,7 +101,6 @@ class PathPicker(QFileDialog):
         self.setLabelText(QFileDialog.Accept, "Выбрать")
         self.setLabelText(QFileDialog.Reject, "Отмена")
         self.setLabelText(QFileDialog.FileName, "Выбрано:")
-        self.setToolTip(HINT)
         self._chosen: list[str] = []
 
         self._views: list[QAbstractItemView] = []
@@ -70,11 +116,107 @@ class PathPicker(QFileDialog):
             # несколько имён нельзя вовсе, остаются только Ctrl и Shift.
             view.setDragEnabled(False)
             view.setDragDropMode(QAbstractItemView.NoDragDrop)
+            view.selectionModel().selectionChanged.connect(self._sync_name)
+            # Перечитанная папка снимает выделение, но сигнала о смене
+            # выделения при этом не шлёт: строка осталась бы с именами от
+            # прежнего содержимого.
+            model = view.model()
+            model.modelReset.connect(self._sync_name)
+            loaded = getattr(model, "directoryLoaded", None)
+            if loaded is not None:
+                loaded.connect(self._sync_name)
             self._views.append(view)
 
+        #: Строка «Выбрано:». Её держит сам QFileDialog, и по ней же он
+        #: отвечает на `selectedFiles()`.
+        self._name_edit = self.findChild(QLineEdit, "fileNameEdit")
+        self._accept_button = self._find_accept_button()
+        #: Имя в строке набрали руками. Тогда и только тогда строка что-то
+        #: значит сама по себе: во всех прочих случаях её пишем мы по
+        #: выделению, и доверять ей нельзя — папка могла перечитаться, а
+        #: имена в ней остаться. Ровно так «Выбрать» и добавляла файлы,
+        #: которых никто не выделял.
+        self._typed = False
+        if self._name_edit is not None:
+            self._name_edit.textEdited.connect(self._on_typed)
+
         self._hidden_action = self._find_hidden_action()
-        self._add_controls(show_hidden)
+        self._add_controls()
         self._add_hint()
+        self._restore_state()
+
+    # --- память между показами ---------------------------------------------
+
+    def current_directory(self) -> str:
+        """Папка, которую диалог показывает сейчас. Пусто — «Компьютер».
+
+        Спрашивается у самого списка, а не у `directory()`: на «Компьютере»
+        тот отдаёт не список дисков, а рабочий каталог процесса, и запомнить
+        его значило бы запомнить чужое место. `directoryEntered` тоже не
+        годится — программная смена папки его не поднимает вовсе.
+        """
+        view = self._active_view()
+        if view is None:
+            return self.directory().absolutePath()
+        return view.model().filePath(view.rootIndex())
+
+    def _find_accept_button(self):
+        """Кнопка «Выбрать». Нужна затем, что включать её теперь нам.
+
+        Диалог включает её по правке строки «Выбрано», а строка у нас молчит,
+        пока мы правим выделение, — иначе он на каждую правку отвечает
+        автодополнением и сбрасывает выделение.
+        """
+        box = self.findChild(QDialogButtonBox)
+        if box is None:
+            return None
+        for button in box.buttons():
+            if box.buttonRole(button) == QDialogButtonBox.AcceptRole:
+                return button
+        return None
+
+    def showEvent(self, event) -> None:  # noqa: N802 — имя от Qt
+        """Вернуть размер прошлого показа — после того, как окно уже открыто.
+
+        Именно здесь, а не в конструкторе: QDialog при показе сам подгоняет
+        размер под содержимое, если считает, что его никто не задавал.
+        """
+        super().showEvent(event)
+        if self._state.sized and not self._sized:
+            self._sized = True
+            self.resize(self._state.width, self._state.height)
+
+    def _restore_state(self) -> None:
+        """Вернуть вид и размер прошлого показа.
+
+        Порядок важен: restoreState ставит вид списка и ширины столбцов, а
+        restoreGeometry — размер окна. Первый умеет менять и размер, поэтому
+        геометрия применяется после него, иначе окно съезжает к тому, каким
+        было при сохранении вида.
+        """
+        if not self._state.layout.isEmpty():
+            self.restoreState(self._state.layout)
+            # restoreState возвращает и папку, в которой сохранялись. Нам она
+            # не годится: где открываться, решает галочка «Запоминать папку».
+            self.setDirectory(self._state.start_directory())
+        #: Размер ставится один раз, при первом показе.
+        self._sized = False
+        self.set_show_hidden(self._state.show_hidden)
+        self.hidden_check.setChecked(self.show_hidden)
+
+    def store_state(self) -> PickerState:
+        """Сложить состояние обратно. Зовётся и при «Отмене».
+
+        Вид, размер окна и обе галочки переключают осознанно, и терять это
+        из-за нажатой «Отмены» незачем.
+        """
+        state = self._state
+        state.show_hidden = self.show_hidden
+        state.remember_dir = self.remember_check.isChecked()
+        state.directory = self.current_directory()
+        state.width, state.height = self.width(), self.height()
+        state.layout = self.saveState()
+        return state
 
     # --- скрытые файлы -----------------------------------------------------
 
@@ -121,6 +263,78 @@ class PathPicker(QFileDialog):
 
     # --- выделение ---------------------------------------------------------
 
+    def selected_paths(self) -> list[str]:
+        """Что выделено в списке прямо сейчас.
+
+        У самого списка, а не у `selectedFiles()`: тот отвечает по строке
+        «Выбрано», а строка живёт своей жизнью. Сняв выделение, в ней
+        оставались прежние имена — и «Выбрать» добавляла файлы, которых на
+        экране никто уже не выделял. Инверсия из пустоты и обратно проделывала
+        то же самое: выделили всё, сняли всё, а строка помнит всё.
+        """
+        view = self._active_view()
+        if view is None:
+            return []
+        model = view.model()
+        return [
+            model.filePath(index)
+            for index in view.selectionModel().selectedIndexes()
+            if index.column() == 0
+        ]
+
+    @contextmanager
+    def _quiet_edit(self):
+        """Строка «Выбрано» молчит, пока мы правим выделение.
+
+        Диалог отвечает на всякую правку этой строки автодополнением: он
+        выделяет в списке то, что в ней написано, а чего в ней нет — снимает.
+        Своих имён он туда кладёт только файлы, поэтому «Выделить всё» тут же
+        теряло все папки, а вторая инверсия подряд работала уже над не тем
+        набором, что показан. Пока идёт наша правка, строка не подаёт
+        сигналов, и никто ничего не переставляет.
+        """
+        edit = self._name_edit
+        if edit is None:
+            yield
+            return
+        edit.blockSignals(True)
+        try:
+            yield
+        finally:
+            edit.blockSignals(False)
+
+    def _sync_name(self, *_args) -> None:
+        """Переписать строку «Выбрано» тем, что на самом деле выделено.
+
+        Своими руками и целиком — с папками. Диалог кладёт туда только файлы:
+        папку он считает не выбором, а дорогой вглубь, и в строке её не
+        показывает вовсе.
+        """
+        if self._name_edit is None:
+            return
+        names = [os.path.basename(path) for path in self.selected_paths()]
+        if len(names) == 1:
+            text = names[0]
+        else:
+            # Кавычки — соглашение самого QFileDialog для нескольких имён.
+            text = " ".join(f'"{name}"' for name in names)
+        if self._name_edit.text() != text:
+            with self._quiet_edit():
+                self._name_edit.setText(text)
+        self._typed = False
+        self._refresh_accept()
+
+    def _on_typed(self, *_args) -> None:
+        self._typed = True
+        self._refresh_accept()
+
+    def _refresh_accept(self) -> None:
+        """«Выбрать» доступна, пока есть что выбирать."""
+        if self._accept_button is None:
+            return
+        typed = self._name_edit.text().strip() if self._name_edit else ""
+        self._accept_button.setEnabled(bool(self.selected_paths()) or bool(typed))
+
     def _active_view(self) -> QAbstractItemView | None:
         """Вид, на который сейчас смотрят: простой список или подробный.
 
@@ -134,13 +348,17 @@ class PathPicker(QFileDialog):
 
     def _select_all(self) -> None:
         view = self._active_view()
-        if view is not None:
-            view.selectAll()
+        with self._quiet_edit():
+            if view is not None:
+                view.selectAll()
+        self._sync_name()
 
     def _select_none(self) -> None:
         view = self._active_view()
-        if view is not None:
-            view.clearSelection()
+        with self._quiet_edit():
+            if view is not None:
+                view.clearSelection()
+        self._sync_name()
 
     def _invert_selection(self) -> None:
         """Перевернуть выделение: выбранное снять, остальное выбрать.
@@ -160,12 +378,14 @@ class PathPicker(QFileDialog):
         whole = QItemSelection(
             model.index(0, 0, root), model.index(rows - 1, columns - 1, root)
         )
-        view.selectionModel().select(whole, QItemSelectionModel.Toggle)
+        with self._quiet_edit():
+            view.selectionModel().select(whole, QItemSelectionModel.Toggle)
+        self._sync_name()
 
     # --- обвязка -----------------------------------------------------------
 
-    def _add_controls(self, show_hidden: bool) -> None:
-        """Кнопки выделения и галочка скрытых — своей строкой под списком."""
+    def _add_controls(self) -> None:
+        """Кнопки выделения и галочки — своей строкой под списком."""
         layout = self.layout()
         if not isinstance(layout, QGridLayout):
             return
@@ -195,11 +415,20 @@ class PathPicker(QFileDialog):
             row.addWidget(button)
         row.addStretch(1)
 
+        self.remember_check = QCheckBox("Запоминать папку")
+        self.remember_check.setToolTip(
+            "Открываться там, где закрылись в прошлый раз. Выключено — "
+            "открываться на «Компьютере», списком дисков.\n"
+            "Запоминается показанная папка, а не выбранная в ней: рядом с "
+            "выбранным обычно лежит и следующее."
+        )
+        self.remember_check.setChecked(self._state.remember_dir)
+        row.addWidget(self.remember_check)
+
         self.hidden_check = QCheckBox("Показывать скрытые")
         self.hidden_check.setToolTip(
-            "Показывать скрытые файлы и папки. Настройку Проводника диалог не "
-            "наследует, а держит свою — она сохраняется в папке данных рядом "
-            "с остальными настройками вида.\n"
+            "Настройку Проводника диалог не наследует, а держит свою — она "
+            "сохраняется в папке данных рядом с остальными настройками вида.\n"
             "На расчёт не влияет: внутри выбранной папки скрытые файлы "
             "считаются всегда, обход их не пропускает."
         )
@@ -215,12 +444,15 @@ class PathPicker(QFileDialog):
             self._hidden_action.triggered.connect(self._sync_hidden_check)
         row.addWidget(self.hidden_check)
 
-        self.set_show_hidden(show_hidden)
-        self.hidden_check.setChecked(self.show_hidden)
         layout.addLayout(row, layout.rowCount(), 0, 1, max(layout.columnCount(), 1))
 
     def _add_hint(self) -> None:
-        """Подсказка снизу: без неё «Выбрать» на папке выглядит как промах."""
+        """Подсказка снизу: без неё «Выбрать» на папке выглядит как промах.
+
+        Только подписью, без подсказки на самом диалоге: та наследуется всеми
+        детьми без своей, и наведение на любой файл в списке показывало тот же
+        текст, что и так написан внизу.
+        """
         layout = self.layout()
         if not isinstance(layout, QGridLayout):
             return
@@ -236,7 +468,14 @@ class PathPicker(QFileDialog):
         становится нечем. Пустое выделение оставляет диалог открытым: закрывать
         его ни с чем — то же самое, что «Отмена», но менее понятно.
         """
-        chosen = [path for path in self.selectedFiles() if os.path.exists(path)]
+        # Выделение списка главнее строки: она отвечает и за набранное руками
+        # имя, но пока в списке что-то выделено, речь именно о нём. Пустая
+        # строка при пустом выделении не годится вовсе: `selectedFiles()`
+        # отдаёт тогда саму папку, и «Выбрать» молча брала бы её целиком.
+        chosen = self.selected_paths()
+        if not chosen and self._typed:
+            chosen = list(self.selectedFiles())
+        chosen = [path for path in chosen if os.path.exists(path)]
         if not chosen:
             return
         self._chosen = chosen
@@ -246,16 +485,13 @@ class PathPicker(QFileDialog):
         return list(self._chosen)
 
 
-def ask_paths(
-    parent,
-    directory: str = "",
-    show_hidden: bool = False,
-) -> tuple[list[str], bool]:
-    """Показать диалог; вернуть выбранное и состояние галочки скрытых.
+def ask_paths(parent, state: PickerState | None = None) -> list[str]:
+    """Показать диалог; вернуть выбранное, обновив состояние на месте.
 
-    Галочка возвращается и при отказе: её переключили осознанно, и терять это
-    из-за нажатой «Отмены» незачем. Хранит её окно — диалог живёт один показ.
+    Состояние правится и при отказе: вид, размер окна и галочки переключают
+    осознанно, и терять это из-за нажатой «Отмены» незачем.
     """
-    dialog = PathPicker(parent, directory, show_hidden)
+    dialog = PathPicker(parent, state)
     accepted = dialog.exec() == QDialog.Accepted
-    return (dialog.chosen_paths() if accepted else []), dialog.show_hidden
+    dialog.store_state()
+    return dialog.chosen_paths() if accepted else []

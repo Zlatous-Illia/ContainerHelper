@@ -116,5 +116,40 @@ class CalcTabTests(unittest.TestCase):
             self.assertEqual(self.tab._payload().logical_bytes, 1234)
 
 
+class FieldValidationTests(unittest.TestCase):
+    """Поле размера принимает только цифры и разделители разрядов.
+
+    Буква там — промах по клавише, а не «значение, которое не разобралось»:
+    parse_bytes молча отдавал None, поле оставалось с мусором, а Container
+    init превращался в прочерк без единого слова о причине.
+    """
+
+    def setUp(self):
+        self.tab = CalcTab(default_models)
+
+    def typed(self, field, text):
+        field.setText("")
+        for symbol in text:
+            field.insert(symbol)
+        return field.text()
+
+    def test_the_size_field_drops_everything_but_digits(self):
+        self.assertEqual(self.typed(self.tab.size_edit, "10a9 4б1-"), "109 41")
+
+    def test_a_pasted_number_with_separators_goes_through(self):
+        self.tab.size_edit.setText("")
+        self.tab.size_edit.insert("10 941 734 967")
+        self.assertEqual(self.tab.size_edit.text(), "10 941 734 967")
+
+    def test_a_pasted_number_with_a_unit_is_refused_whole(self):
+        self.tab.size_edit.setText("")
+        self.tab.size_edit.insert("10941734967 B")
+        self.assertEqual(self.tab.size_edit.text(), "")
+
+    def test_the_cluster_field_is_numeric_too(self):
+        self.assertIsNotNone(self.tab.cluster_combo.validator())
+        self.assertEqual(self.typed(self.tab.cluster_combo.lineEdit(), "40x96"), "4096")
+
+
 if __name__ == "__main__":
     unittest.main()

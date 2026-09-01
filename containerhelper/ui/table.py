@@ -1,4 +1,4 @@
-"""Общее поведение таблиц, прокрутки и ширины полей ввода.
+"""Общее поведение таблиц, прокрутки и полей ввода.
 
 Живёт отдельно, потому что нужно всем вкладкам, а заводить между ними
 зависимость ради нескольких помощников не за чем.
@@ -6,10 +6,18 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QCursor, QFontMetrics, QPainter, QPalette
+from PySide6.QtCore import QRegularExpression, Qt, Signal
+from PySide6.QtGui import (
+    QCursor,
+    QFontMetrics,
+    QPainter,
+    QPalette,
+    QRegularExpressionValidator,
+)
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
+    QComboBox,
+    QLabel,
     QHeaderView,
     QLineEdit,
     QScrollArea,
@@ -19,6 +27,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ..formatting import IGNORED_IN_INPUT
 
 #: Сколько строк таблица обязана показывать всегда. Меньше двух — и шапка
 #: наезжает на первую строку: у QTableWidget нет своего минимума, он честно
@@ -34,6 +44,19 @@ MIN_TABLE_WIDTH = 320
 
 #: Высота полоски, за которую таблицу тянут по вертикали.
 GRIP_HEIGHT = 7
+
+#: Что принимает поле размера: цифры и те разделители разрядов, которые
+#: `parse_bytes` и без того выбрасывает. Буква, минус или запятая в поле байт
+#: — это не «значение, которое не разобралось», а промах по клавише, и ловить
+#: его надо на вводе. Раньше `parse_bytes` молча возвращал None, поле
+#: оставалось с набранным мусором, а Container init превращался в прочерк —
+#: без единого слова о том, что именно не так.
+BYTES_PATTERN = "[0-9" + "".join(IGNORED_IN_INPUT) + "]*"
+
+#: Что принимает поле имени и заметки: что угодно, кроме управляющих символов.
+#: Они попадают туда вставкой из чужого текста, в JSON уезжают экранированными
+#: и потом не находятся глазом ни в файле, ни в таблице.
+TEXT_PATTERN = r"[^\x00-\x1f\x7f]*"
 
 
 class SortableItem(QTableWidgetItem):
@@ -96,7 +119,9 @@ class TableGrip(QWidget):
         self.setFixedHeight(GRIP_HEIGHT)
         self.setCursor(QCursor(Qt.SizeVerCursor))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setToolTip("Потяните, чтобы изменить высоту таблицы")
+        # Про перетаскивание не пишем: об этом говорит сам курсор. Про
+        # двойной щелчок написать надо — узнать о нём больше неоткуда.
+        self.setToolTip("Двойной щелчок вернёт наименьшую высоту")
 
     def floor_height(self) -> int:
         rows = self._table.property("min_rows") or MIN_TABLE_ROWS
@@ -291,6 +316,29 @@ def fit_columns(table: QTableWidget, padding: int = 16) -> None:
         header.resizeSection(column, header.sectionSize(column) + padding)
 
 
+def fit_widget_columns(table: QTableWidget, padding: int = 8) -> None:
+    """Расширить столбцы под виджеты в ячейках. Только расширить.
+
+    `resizeColumnsToContents` меряет элементы, а виджет, положенный через
+    `setCellWidget`, для неё не существует вовсе: столбец с кнопками
+    «Переснять» и «К заводскому» вставал в 97 px при нужных 284, и обе кнопки
+    показывали по три буквы.
+
+    Только в большую сторону и на каждом обновлении: натянутую руками ширину
+    сужать нельзя, а сохранённая с прежней версии может быть меньше кнопки —
+    тогда её надо поправить, ничего не спрашивая.
+    """
+    header = table.horizontalHeader()
+    for column in range(header.count()):
+        widest = 0
+        for row in range(table.rowCount()):
+            widget = table.cellWidget(row, column)
+            if widget is not None:
+                widest = max(widest, widget.sizeHint().width())
+        if widest:
+            header.resizeSection(column, max(header.sectionSize(column), widest + padding))
+
+
 def column_widths(table: QTableWidget) -> list[int]:
     header = table.horizontalHeader()
     return [header.sectionSize(index) for index in range(header.count())]
@@ -304,6 +352,43 @@ def set_column_widths(table: QTableWidget, widths: list[int]) -> bool:
     for index, width in enumerate(widths):
         header.resizeSection(index, width)
     return True
+
+
+def wrapped(label: QLabel) -> QLabel:
+    """Подпись, которая переносится по словам и получает под это высоту.
+
+    Одного `setWordWrap` мало: политика размера у QLabel по умолчанию не
+    сообщает раскладке, что высота зависит от ширины, и та отводит подписи
+    одну строку. Внутри прокрутки это видно сразу — второй строки просто нет,
+    текст обрывается на середине.
+    """
+    label.setWordWrap(True)
+    policy = label.sizePolicy()
+    policy.setHeightForWidth(True)
+    label.setSizePolicy(policy)
+    return label
+
+
+def digits_only(field: QLineEdit | QComboBox) -> None:
+    """Разрешить в поле только цифры и разделители разрядов.
+
+    Валидатором, а не проверкой при сохранении: поле, которое не принимает
+    букву, объясняет правило само, в тот момент, когда его нарушают. Вставка
+    из буфера проходит тот же валидатор целиком — испорченный текст в поле не
+    окажется и оттуда.
+    """
+    validator = QRegularExpressionValidator(
+        QRegularExpression(BYTES_PATTERN), field
+    )
+    field.setValidator(validator)
+
+
+def plain_text(field: QLineEdit, limit: int) -> None:
+    """Свободный текст без управляющих символов и не длиннее предела."""
+    field.setValidator(
+        QRegularExpressionValidator(QRegularExpression(TEXT_PATTERN), field)
+    )
+    field.setMaxLength(limit)
 
 
 def fit_field(field: QLineEdit, sample: str, padding: int = 24) -> None:

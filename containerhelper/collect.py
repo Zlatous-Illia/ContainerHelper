@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .fileset import PAYLOAD_DIR, FileSet, generate
-from .formatting import fmt_both, size_label
+from .formatting import UNIT_AUTO, fmt_both, fmt_with_unit, size_label
 from .model import (
     DEFAULT_CLUSTER_BYTES,
     DEFAULT_SAFETY_BYTES,
@@ -141,10 +141,22 @@ class Progress:
 
     @property
     def detail(self) -> str:
-        """Подробность к названию фазы. Пусто — сказать нечего."""
+        """Подробность к названию фазы. Пусто — сказать нечего.
+
+        Байты рядом с файлами, а не вместо них: набор «Один файл 4 GiB» — это
+        одна-единственная граница файла, и «0 из 1» стояло бы всю запись
+        неподвижно. На десяти тысячах килобайтных файлов, наоборот, читается
+        число файлов, а байты ползут незаметно.
+        """
         if self.phase != PHASE_WRITE or not self.files_total:
             return ""
-        return f"{self.files_done} из {self.files_total}"
+        text = f"файлов {self.files_done} из {self.files_total}"
+        if self.bytes_total:
+            text += (
+                f", {fmt_with_unit(self.bytes_done, UNIT_AUTO)}"
+                f" из {fmt_with_unit(self.bytes_total, UNIT_AUTO)}"
+            )
+        return text
 
     @property
     def share(self) -> float:

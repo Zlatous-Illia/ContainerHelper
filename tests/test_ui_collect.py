@@ -367,5 +367,62 @@ class TabTests(unittest.TestCase):
         self.assertEqual(self.window.covered_sizes(), [1024])
 
 
+class ClockTests(DialogFixture):
+    """Часы идут сами, а не только когда шаг о себе сообщает.
+
+    Прогресс приходит от шага, а на создании контейнера, форматировании и
+    монтировании его нет вовсе: время замирало минутами — ровно тогда, когда
+    единственный признак того, что программа жива, и был нужен.
+    """
+
+    def running(self):
+        dialog = self.dialog()
+        dialog._weights = [1024, 2048]
+        dialog._before = [0, 1024, 3072]
+        dialog._total_weight = 3072
+        dialog.progress.setMaximum(3072)
+        dialog._started = time.monotonic() - 60
+        dialog._set_phase("создание контейнера")
+        dialog._phase_started = time.monotonic() - 30
+        return dialog
+
+    def test_the_label_ticks_without_any_progress(self):
+        dialog = self.running()
+        dialog._show_progress()
+        first = dialog.progress_label.text()
+        dialog._started -= 5
+        dialog._phase_started -= 5
+        dialog._show_progress()
+        self.assertNotEqual(dialog.progress_label.text(), first)
+
+    def test_the_phase_carries_its_own_clock(self):
+        dialog = self.running()
+        dialog._show_progress()
+        self.assertIn("фаза 0:30", dialog.progress_label.text())
+        self.assertIn("прошло 1:00", dialog.progress_label.text())
+
+    def test_a_new_phase_restarts_its_clock(self):
+        dialog = self.running()
+        dialog._set_phase("монтирование")
+        dialog._show_progress()
+        self.assertIn("фаза 0:00", dialog.progress_label.text())
+
+    def test_the_detail_does_not_restart_the_phase_clock(self):
+        """Байты внутри записи меняются десять раз в секунду."""
+        dialog = self.running()
+        dialog._set_phase("запись файлов", "файлов 1 из 10")
+        started = dialog._phase_started
+        dialog._set_phase("запись файлов", "файлов 2 из 10")
+        self.assertEqual(dialog._phase_started, started)
+
+    def test_the_timer_runs_only_while_the_run_does(self):
+        dialog = self.running()
+        self.assertFalse(dialog._clock.isActive())
+        dialog._clock.start()
+        dialog._on_done("")
+        self.assertFalse(dialog._clock.isActive())
+        self.assertEqual(dialog.progress_label.text(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

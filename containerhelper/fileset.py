@@ -160,9 +160,12 @@ def generate(
     кончиться посреди записи от постороннего процесса, а запись в динамический
     контейнер на кончившемся диске рвёт том.
 
-    `on_progress` зовётся на границе каждого файла и throttling — забота
-    вызывающего: на десяти тысячах файлов сигнал через границу потока десять
-    тысяч раз забьёт очередь событий.
+    `on_progress` зовётся там же, где и `check`: на границе файла и после
+    каждого полного куска. Только на границах файлов его звать нельзя — набор
+    «Один файл 4 GiB» — это одна граница на несколько минут записи, и всё это
+    время полоса прогресса стоит, а окно выглядит зависшим. Throttling —
+    забота вызывающего: на десяти тысячах файлов сигнал через границу потока
+    десять тысяч раз забьёт очередь событий.
     """
     root.mkdir(parents=True, exist_ok=True)
     # Не нули: том свежий и без сжатия, но зависеть от того, что нули на нём
@@ -190,8 +193,11 @@ def generate(
                     left -= chunk
                     bytes_done += chunk
                     since_check += chunk
-                    if since_check >= WRITE_CHUNK and check is not None:
-                        check(bytes_done)
+                    if since_check >= WRITE_CHUNK:
+                        if check is not None:
+                            check(bytes_done)
+                        if on_progress is not None:
+                            on_progress(files_done, bytes_done)
                         since_check = 0
             files_done += 1
             if on_progress is not None:

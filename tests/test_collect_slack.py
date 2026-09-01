@@ -199,8 +199,24 @@ class ProgressShareTests(unittest.TestCase):
 
     def test_the_detail_names_the_file_counter(self):
         writing = Progress(PHASE_WRITE, files_done=3, files_total=10)
-        self.assertEqual(writing.detail, "3 из 10")
+        self.assertEqual(writing.detail, "файлов 3 из 10")
         self.assertEqual(Progress(PHASE_CREATE).detail, "")
+
+    def test_the_detail_names_the_written_volume_too(self):
+        """Набор из одного файла — одна граница файла на минуты записи.
+
+        Счётчик файлов на нём стоит неподвижно всю запись, и по нему нельзя
+        отличить работающую программу от повисшей.
+        """
+        writing = Progress(
+            PHASE_WRITE,
+            files_done=0,
+            files_total=1,
+            bytes_done=1024 * 1024 * 1024,
+            bytes_total=4 * 1024 * 1024 * 1024,
+        )
+        self.assertIn("файлов 0 из 1", writing.detail)
+        self.assertIn("1.000 GiB из 4.000 GiB", writing.detail)
 
     def test_the_plan_weight_is_the_sum_of_step_weights(self):
         steps = [Step(1024), Step(2048, fileset=TINY_SET)]

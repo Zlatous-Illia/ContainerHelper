@@ -16,7 +16,12 @@ GROUP_SEPARATOR = " "
 
 #: Символы, которые parse_bytes выбрасывает из ввода. Неразрывный и узкий
 #: пробелы попадают сюда при вставке из Проводника и из таблиц.
-_IGNORED_IN_INPUT = (" ", " ", " ", " ", "_")
+#:
+#: Не приватная: тем же набором живёт валидатор поля размера. Разойдись
+#: они — поле принимало бы то, чего разбор не понимает, или наоборот
+#: отвергало вставленное из Проводника, и заметить это можно было бы
+#: только руками.
+IGNORED_IN_INPUT = (" ", " ", " ", " ", "_")
 
 DASH = "—"
 
@@ -78,7 +83,7 @@ def size_label(container_mib: int) -> str:
 def parse_bytes(text: str) -> int | None:
     """Разобрать ручной ввод, не придираясь к разделителям разрядов."""
     cleaned = text
-    for junk in _IGNORED_IN_INPUT:
+    for junk in IGNORED_IN_INPUT:
         cleaned = cleaned.replace(junk, "")
     cleaned = cleaned.strip()
     if not cleaned:

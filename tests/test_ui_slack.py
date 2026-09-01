@@ -136,15 +136,22 @@ class ScopeTests(DialogFixture):
         self.assertFalse(dialog.start_button.isEnabled())
 
     def test_the_label_names_the_price_of_the_set(self):
+        """Цена набора стоит подписью под галочкой, а не в самой галочке.
+
+        QCheckBox не переносит строк, и вся эта строка целиком просила больше
+        тысячи пикселей при окне в 660 — обрезалась как раз концовка, где
+        сказано про место и про уже снятый замер.
+        """
         dialog = self.dialog()
-        text = dialog.fileset_boxes["fat"].text()
+        self.assertEqual(dialog.fileset_boxes["fat"].text(), "4 файла по 1 MiB")
+        text = dialog.fileset_notes["fat"].text()
         self.assertIn("4 файла", text)
         self.assertIn("по кластерам", text)
         self.assertIn("нужно", text)
 
     def test_a_measured_set_says_so_on_its_label(self):
         dialog = self.dialog(slack_covered=(TINY_SET.key,))
-        self.assertIn("уже есть", dialog.fileset_boxes["tiny"].text())
+        self.assertIn("уже есть", dialog.fileset_notes["tiny"].text())
 
     def test_slack_steps_come_after_the_empty_volumes(self):
         """Контейнер под набор считается моделью, которую точки и уточняют."""
@@ -173,7 +180,7 @@ class SpaceTests(DialogFixture):
         dialog = self.dialog()
         dialog.free_bytes = lambda: MIB
         dialog._refresh_scope()
-        self.assertIn("НЕ ХВАТАЕТ МЕСТА", dialog.fileset_boxes["fat"].text())
+        self.assertIn("НЕ ХВАТАЕТ МЕСТА", dialog.fileset_notes["fat"].text())
 
     def test_the_progress_bar_is_measured_in_written_bytes(self):
         """Не шагами: пустой терабайт снимается за секунды, набор пишется минуты."""
@@ -496,6 +503,30 @@ class RunTests(DialogFixture):
         dialog._start()
         self.drain(dialog)
         self.assertEqual(list(self.folder.glob("*.hc")), [])
+
+
+class NoteFitTests(ScopeTests):
+    """Цена набора не должна схлопываться под прокруткой.
+
+    У QLabel минимальная высота не зависит от ширины, и раскладка ужимала
+    переносимую подпись до одной строки и ниже — вторая строка исчезала
+    целиком вместе с «НЕ ХВАТАЕТ МЕСТА».
+    """
+
+    def test_every_note_keeps_room_for_its_own_text(self):
+        dialog = self.dialog()
+        for key, note in dialog.fileset_notes.items():
+            with self.subTest(key):
+                self.assertGreaterEqual(
+                    note.minimumHeight(), note.fontMetrics().height()
+                )
+
+    def test_a_two_line_note_asks_for_two_lines(self):
+        dialog = self.dialog()
+        note = dialog.fileset_notes["fat"]
+        long_text = "очень длинная строка про набор " * 6
+        dialog._set_note(note, long_text)
+        self.assertGreater(note.minimumHeight(), note.fontMetrics().height() * 2)
 
 
 if __name__ == "__main__":
