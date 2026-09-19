@@ -1,7 +1,8 @@
-"""Интерфейс двух новых функций: сбор запаса и проверка прогноза.
+"""The UI of two new features: copy-slack collection and the prediction check.
 
-Наборы файлов в диалоге и таблица замеров на «Калибровке» — первая; колонки
-промаха на «Записях» и в диалоге записи — вторая.
+The file sets in the dialog and the measurements table on the Calibration tab
+are the first; the miss columns on the Records tab and in the record dialog
+are the second.
 """
 
 import os
@@ -44,7 +45,7 @@ VOLUME = 1024 * MIB - VC_HEADER_BYTES
 
 
 def column_of(columns, title: str) -> int:
-    """Номер столбца по заголовку — привязка к числу ломается молча."""
+    """Column index by header title — a tie to a number breaks silently."""
     for index, (name, _kind, _tip) in enumerate(columns):
         if name == title:
             return index
@@ -69,7 +70,7 @@ def slack_record(**changes) -> Record:
 
 
 class DialogFixture(unittest.TestCase):
-    """Диалог, которому VeraCrypt уже указан, а самопроверка выключена."""
+    """A dialog already told where VeraCrypt is, with the self-check off."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -96,7 +97,7 @@ class DialogFixture(unittest.TestCase):
 
 
 class ScopeTests(DialogFixture):
-    """«Замерить все» и «замерить некоторые» — галочкой на каждый набор."""
+    """Both "measure all" and "measure some": one check box per file set."""
 
     def test_every_set_gets_its_own_checkbox(self):
         dialog = self.dialog()
@@ -136,11 +137,12 @@ class ScopeTests(DialogFixture):
         self.assertFalse(dialog.start_button.isEnabled())
 
     def test_the_label_names_the_price_of_the_set(self):
-        """Цена набора стоит подписью под галочкой, а не в самой галочке.
+        """A set's price is a label under the check box, not in the check box.
 
-        QCheckBox не переносит строк, и вся эта строка целиком просила больше
-        тысячи пикселей при окне в 660 — обрезалась как раз концовка, где
-        сказано про место и про уже снятый замер.
+        QCheckBox does not wrap lines, and this whole line asked for more than
+        a thousand pixels in a 660-wide window — what got cut off was exactly
+        the ending, which speaks of the space and of a measurement already
+        taken.
         """
         dialog = self.dialog()
         self.assertEqual(dialog.fileset_boxes["fat"].text(), "4 файла по 1 MiB")
@@ -154,14 +156,14 @@ class ScopeTests(DialogFixture):
         self.assertIn("уже есть", dialog.fileset_notes["tiny"].text())
 
     def test_slack_steps_come_after_the_empty_volumes(self):
-        """Контейнер под набор считается моделью, которую точки и уточняют."""
+        """A set's container comes from the model that the points refine."""
         dialog = self.dialog()
         keys = [bool(step.key) for step in dialog.steps()]
         self.assertEqual(keys, sorted(keys))
 
 
 class SpaceTests(DialogFixture):
-    """Предварительный анализ места: что нужно и что делать, если не хватает."""
+    """Free-space pre-check: what is needed and what to do when it is short."""
 
     def test_the_summary_names_the_hungriest_step(self):
         dialog = self.dialog()
@@ -169,7 +171,7 @@ class SpaceTests(DialogFixture):
         self.assertIn("свободно", dialog.space_label.text())
 
     def test_a_plan_that_does_not_fit_says_so_and_still_starts(self):
-        """Пропустить и доснять потом — а не отказываться от всего сразу."""
+        """Skip and measure later — rather than refuse everything at once."""
         dialog = self.dialog()
         dialog.free_bytes = lambda: MIB
         dialog._refresh_scope()
@@ -183,13 +185,13 @@ class SpaceTests(DialogFixture):
         self.assertIn("НЕ ХВАТАЕТ МЕСТА", dialog.fileset_notes["fat"].text())
 
     def test_the_progress_bar_is_measured_in_written_bytes(self):
-        """Не шагами: пустой терабайт снимается за секунды, набор пишется минуты."""
+        """Not steps: an empty terabyte takes seconds, a set takes minutes."""
         dialog = self.dialog()
         self.assertGreater(dialog.progress.maximum(), len(dialog.steps()))
 
 
 class CoverageTableTests(unittest.TestCase):
-    """Замеры запаса живут в своей таблице на «Калибровке»."""
+    """Copy-slack measurements have their own table on the Calibration tab."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -213,7 +215,7 @@ class CoverageTableTests(unittest.TestCase):
         self.assertEqual(self.tab().slack_table.rowCount(), 1)
 
     def test_it_does_not_take_a_row_in_the_coverage_table(self):
-        """Иначе «К заводскому» в той строке отключил бы и его."""
+        """Otherwise Use factory in that row would disable it as well."""
         before = [
             self.tab().table.item(row, 2).text()
             for row in range(self.tab().table.rowCount())
@@ -278,7 +280,7 @@ class CoverageTableTests(unittest.TestCase):
         self.assertEqual(len(self.window.records_tab.store.slack_measurements()), 1)
 
     def test_resetting_to_factory_leaves_slack_measurements_alone(self):
-        """Заводского на то же число файлов может не быть вовсе."""
+        """There may be no factory measurement for that file count at all."""
         self.put(
             slack_record(),
             Record(
@@ -301,7 +303,7 @@ class CoverageTableTests(unittest.TestCase):
         self.assertEqual(dialog._forbidden, tuple(RECOMMENDED_MIB))
 
     def test_two_sets_with_one_file_are_both_still_offered(self):
-        """Ключ по числу файлов молча съедал бы второй такой замер."""
+        """A file-count key would silently eat the second such measurement."""
         self.put(
             slack_record(id="Один файл 64 MiB", fileset="one", file_count=1),
             slack_record(id="Один файл 4 GiB", fileset="huge", file_count=1),
@@ -311,17 +313,18 @@ class CoverageTableTests(unittest.TestCase):
 
 
 class RecommendedGridTests(unittest.TestCase):
-    """Сетка рекомендуемых размеров: где кривая гнётся, там она гуще."""
+    """The recommended sizes grid: denser where the curve bends."""
 
     def test_the_sizes_go_up_without_repeats(self):
         self.assertEqual(list(RECOMMENDED_MIB), sorted(set(RECOMMENDED_MIB)))
 
     def test_no_doubling_step_is_left_where_the_curve_bends(self):
-        """Замер на 1610 MiB лёг на 202 672 B выше хорды отрезка 1024…2048.
+        """The 1610 MiB measurement lay 202 672 B above the 1024…2048 chord.
 
-        Прогиб растёт как квадрат ширины прорехи, поэтому отрезки с шагом
-        вдвое там, где метаданные ещё круто растут, — самое слабое место
-        сетки. Выше 8 GiB кривая пологая, и такой плотности не требует.
+        The sag grows as the square of the gap width, so segments with a
+        doubling step where the metadata still grows steeply are the weakest
+        spot of the grid. Above 8 GiB the curve is flat and needs no such
+        density.
         """
         bending = [size for size in RECOMMENDED_MIB if size <= 8192]
         for low, high in zip(bending, bending[1:]):
@@ -334,7 +337,7 @@ class RecommendedGridTests(unittest.TestCase):
 
 
 class MissColumnTests(unittest.TestCase):
-    """Колонки промаха на «Записях» — по реальным копированиям."""
+    """The miss columns on the Records tab — from real copies."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -401,7 +404,7 @@ class RecordDialogForecastTests(unittest.TestCase):
         self.assertIn(str(record.minimum_mib), dialog.minimum_label.text())
 
     def test_taking_the_calculation_fills_the_promise_and_its_safety(self):
-        """Иначе обещание пришлось бы вбивать руками, когда модель уже другая."""
+        """Else the prediction is typed by hand after the model has changed."""
         from containerhelper.model import Payload
 
         dialog = RecordDialog(
@@ -423,7 +426,7 @@ class RecordDialogForecastTests(unittest.TestCase):
 
 
 class RunTests(DialogFixture):
-    """Полный проход через настоящий поток: замер запаса доходит наружу."""
+    """A full pass through a real thread: the slack measurement gets out."""
 
     def running_dialog(self, **kwargs):
         dialog = self.dialog(sizes=(), **kwargs)
@@ -480,10 +483,11 @@ class RunTests(DialogFixture):
         self.assertNotIn("ошибка:", text)
 
     def test_the_bar_never_goes_backwards(self):
-        """После записи идут ещё четыре фазы, и доля у них нулевая.
+        """Four more phases follow the write, and their share is zero.
 
-        Не запоминай диалог достигнутое, полоса откатывалась бы к началу шага
-        на сверке, перемонтировании, замере остатка и уборке.
+        If the dialog did not remember what it had reached, the bar would roll
+        back to the start of the step during the check, the remount, the
+        left-space measurement and the cleanup.
         """
         dialog = self.running_dialog()
         seen = []
@@ -506,11 +510,11 @@ class RunTests(DialogFixture):
 
 
 class NoteFitTests(ScopeTests):
-    """Цена набора не должна схлопываться под прокруткой.
+    """A set's price must not collapse under scrolling.
 
-    У QLabel минимальная высота не зависит от ширины, и раскладка ужимала
-    переносимую подпись до одной строки и ниже — вторая строка исчезала
-    целиком вместе с «НЕ ХВАТАЕТ МЕСТА».
+    QLabel's minimum height does not depend on its width, and the layout
+    squeezed the wrapped label to one line and below — the second line
+    vanished whole, together with «НЕ ХВАТАЕТ МЕСТА».
     """
 
     def test_every_note_keeps_room_for_its_own_text(self):

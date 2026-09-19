@@ -1,4 +1,4 @@
-"""Диалог автоматического сбора: поиск VeraCrypt, план и ход работы."""
+"""The automatic collection dialog: finding VeraCrypt, the plan, the run."""
 
 import os
 import tempfile
@@ -29,8 +29,8 @@ from containerhelper.ui.collect_dialog import (  # noqa: E402
 
 from tests.test_veracrypt import Fake, make_install
 
-#: Крохотные размеры: диалогу всё равно, какие они, а файлы создаются
-#: настоящие — гигабайтным тут делать нечего.
+#: Tiny sizes: the dialog does not care what they are, and the files created
+#: are real — gigabyte ones have no business here.
 TINY = (1, 2, 4)
 
 
@@ -51,7 +51,7 @@ class DialogFixture(unittest.TestCase):
         self._dir.cleanup()
 
     def dialog(self, sizes=TINY, covered=()):
-        """Диалог, которому VeraCrypt уже указан — как после первого выбора."""
+        """A dialog that already knows VeraCrypt, as after the first choice."""
         self.settings.setValue(PATH_KEY, str(self.veracrypt_dir))
         dialog = CollectDialog(sizes=sizes, covered=covered, settings=self.settings)
         dialog.report_error = lambda title, text: self.errors.append((title, text))
@@ -62,7 +62,7 @@ class DialogFixture(unittest.TestCase):
         return dialog
 
     def blind(self, **kwargs):
-        """Диалог, который VeraCrypt не находит нигде."""
+        """A dialog that finds VeraCrypt nowhere."""
         dialog = CollectDialog(
             sizes=kwargs.pop("sizes", TINY), settings=self.settings, **kwargs
         )
@@ -77,7 +77,7 @@ class DialogFixture(unittest.TestCase):
 
 
 class DiscoveryTests(DialogFixture):
-    """Стандартные места ищутся сами, остальное спрашивается."""
+    """Standard places are searched automatically; the rest is asked for."""
 
     def test_a_missing_veracrypt_names_both_standard_places(self):
         dialog = self.blind()
@@ -180,7 +180,7 @@ class RightsTests(DialogFixture):
         self.assertEqual(len(self.errors), 1)
 
     def test_a_successful_elevation_asks_the_window_to_close(self):
-        """Две копии в одной папке данных писали бы поверх друг друга."""
+        """Two copies in one data folder would write over each other."""
         dialog = self.dialog()
         dialog.relaunch = lambda data_dir: True
         asked = []
@@ -190,7 +190,7 @@ class RightsTests(DialogFixture):
 
 
 class WorkerTests(unittest.TestCase):
-    """Шаги крутятся сами, отмена срабатывает между ними."""
+    """Steps run on their own; cancelling takes effect between them."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -253,7 +253,7 @@ class WorkerTests(unittest.TestCase):
 
 
 class RunTests(DialogFixture):
-    """Полный проход через настоящий поток: замеры доходят наружу."""
+    """A full pass through a real thread: measurements reach the outside."""
 
     def running_dialog(self):
         dialog = self.dialog()
@@ -283,8 +283,8 @@ class RunTests(DialogFixture):
 
         self.assertEqual([record.container_mib for record in measured], list(TINY))
         self.assertTrue(all(record.filesystem == "NTFS" for record in measured))
-        # Полоса меряется байтами, а не шагами: сравнивать её значение с
-        # числом шагов больше не с чем, зато дойти до конца она обязана.
+        # The bar counts bytes, not steps: there is no step count left to
+        # compare its value with, but it is bound to reach the end.
         self.assertEqual(dialog.progress.value(), dialog.progress.maximum())
         self.assertIn("Готово", dialog.log.toPlainText())
 
@@ -314,7 +314,7 @@ class RunTests(DialogFixture):
 
 
 class TabTests(unittest.TestCase):
-    """Кнопка на вкладке «Калибровка» доводит просьбу до окна."""
+    """The button on the Calibration tab carries the request to the window."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -329,8 +329,8 @@ class TabTests(unittest.TestCase):
         self.assertIn("автоматически", button.text())
 
     def test_pressing_it_reaches_the_window(self):
-        # Штатный получатель отцеплен: он поднимает модальное окно, и закрыть
-        # его из теста нечем.
+        # The regular receiver is disconnected: it raises a modal window, and
+        # the test has nothing to close it with.
         self.window.calibration_tab.collectRequested.disconnect()
         asked = []
         self.window.calibration_tab.collectRequested.connect(lambda: asked.append(True))
@@ -368,11 +368,11 @@ class TabTests(unittest.TestCase):
 
 
 class ClockTests(DialogFixture):
-    """Часы идут сами, а не только когда шаг о себе сообщает.
+    """The clock runs by itself, not only when a step reports on itself.
 
-    Прогресс приходит от шага, а на создании контейнера, форматировании и
-    монтировании его нет вовсе: время замирало минутами — ровно тогда, когда
-    единственный признак того, что программа жива, и был нужен.
+    Progress comes from the step, and during container creation, formatting
+    and mounting there is none at all: the time froze for minutes — exactly
+    when it was needed as the only sign that the program was alive.
     """
 
     def running(self):
@@ -408,7 +408,7 @@ class ClockTests(DialogFixture):
         self.assertIn("фаза 0:00", dialog.progress_label.text())
 
     def test_the_detail_does_not_restart_the_phase_clock(self):
-        """Байты внутри записи меняются десять раз в секунду."""
+        """The bytes within a write change ten times a second."""
         dialog = self.running()
         dialog._set_phase("запись файлов", "файлов 1 из 10")
         started = dialog._phase_started

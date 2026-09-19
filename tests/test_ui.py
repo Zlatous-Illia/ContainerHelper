@@ -1,4 +1,4 @@
-"""Проверка вкладки «Расчёт». Qt поднимается в offscreen-режиме."""
+"""Tests of the Calculation tab. Qt starts in offscreen mode."""
 
 import os
 import tempfile
@@ -117,11 +117,11 @@ class CalcTabTests(unittest.TestCase):
 
 
 class FieldValidationTests(unittest.TestCase):
-    """Поле размера принимает только цифры и разделители разрядов.
+    """The size field accepts only digits and digit group separators.
 
-    Буква там — промах по клавише, а не «значение, которое не разобралось»:
-    parse_bytes молча отдавал None, поле оставалось с мусором, а Container
-    init превращался в прочерк без единого слова о причине.
+    A letter there is a slipped key, not "a value that failed to parse":
+    parse_bytes silently returned None, the field kept the garbage, and
+    Container init turned into a dash without a single word about why.
     """
 
     def setUp(self):

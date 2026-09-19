@@ -1,11 +1,13 @@
-"""Три записи, снятые вручную с реальных контейнеров.
+"""Three records taken by hand from real containers.
 
-Значения взяты из свойств тома в Проводнике. Хранятся только измеренные поля —
-заголовок VeraCrypt, метаданные NTFS и запас на копирование выводятся из них.
+The values come from the volume properties in Explorer. Only the measured
+fields are stored — the VeraCrypt header, the NTFS metadata and the copy slack
+are derived from them.
 
-Cache 2 намеренно оставлена как есть: её left_bytes физически невозможен
-(занято выходит меньше самого файла), и на ней проверяется, что валидация это
-ловит, но точку для модели NTFS из неё всё равно берёт.
+Cache 2 is deliberately kept as is: its left_bytes is physically impossible
+(the used space comes out smaller than the file itself), and it is used to
+check that validation catches this but still takes the point for the NTFS
+model from it.
 """
 
 from containerhelper.records import Record
@@ -45,22 +47,22 @@ CACHE_4 = Record(
 
 ALL = [CACHE_1, CACHE_2, CACHE_4]
 
-#: Метаданные NTFS, выведенные как mounted - empty_free.
+#: NTFS metadata, derived as mounted - empty_free.
 EXPECTED_NTFS = {
     "Cache 1": 40_316_928,
     "Cache 2": 36_573_184,
     "Cache 4": 34_074_624,
 }
 
-#: Запас на копирование, выведенный как (empty_free - left) - alloc(file).
-#: Обе записи с одним файлом. Cache 2 отсутствует: там величина отрицательна.
+#: Copy slack, derived as (empty_free - left) - alloc(file).
+#: Both records hold one file. Cache 2 is missing: there the value is negative.
 EXPECTED_SLACK = {
     "Cache 1": 143_360,
     "Cache 4": 114_688,
 }
 
-#: Наименьший размер контейнера, которого хватило бы: фактически заданный
-#: минус измеренный остаток, округлённый вниз до целых MiB.
+#: The smallest container size that would have been enough: the one actually
+#: set minus the measured left space, rounded down to whole MiB.
 TRUE_MINIMUM_MIB = {
     "Cache 1": 11057,
     "Cache 4": 8020,

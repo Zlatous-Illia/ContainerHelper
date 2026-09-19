@@ -1,4 +1,4 @@
-"""Автоматический сбор: порядок шагов, самопроверка и уборка за собой."""
+"""Automatic collection: step order, the self-check and cleaning up after."""
 
 import tempfile
 import unittest
@@ -24,8 +24,8 @@ from containerhelper.veracrypt import (
 
 from tests.test_veracrypt import Fake, make_install
 
-#: Крохотные размеры: шагу всё равно, какой он, а гигабайтные файлы в наборе
-#: тестов создавать незачем.
+#: Tiny sizes: the step does not care what size it is, and there is no reason
+#: to create gigabyte files in the test suite.
 TINY = (1, 2, 4)
 
 
@@ -42,7 +42,7 @@ def measurement(mib, ntfs):
 
 class PlanTests(unittest.TestCase):
     def test_the_self_check_goes_first(self):
-        """Узнать, что динамическим верить нельзя, надо на секундах."""
+        """Finding out that dynamic can't be trusted must take seconds."""
         steps = plan((512, 2048))
         self.assertTrue(steps[0].self_check)
         self.assertTrue(steps[1].self_check)
@@ -72,7 +72,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan((512,), covered=(512,), self_check=False), [])
 
     def test_ordinary_steps_are_dynamic(self):
-        """Иначе терабайтный контейнер потребовал бы терабайта свободного."""
+        """Otherwise a terabyte container would need a terabyte free."""
         step = plan((2048,), self_check=False)[0]
         self.assertTrue(step.dynamic)
         self.assertTrue(step.quick)
@@ -90,7 +90,7 @@ class SelfCheckTests(unittest.TestCase):
         self.assertEqual(self_check_verdict(same, same), "")
 
     def test_a_small_difference_still_passes(self):
-        """На перекрывающихся размерах расхождение было 8 KiB и 3 KiB."""
+        """On overlapping sizes the difference was 8 KiB and 3 KiB."""
         fast = measurement(SELF_CHECK_MIB, 17_879_040)
         slow = measurement(SELF_CHECK_MIB, 17_879_040 + 8 * 1024)
         self.assertEqual(self_check_verdict(fast, slow), "")
@@ -106,7 +106,7 @@ class SelfCheckTests(unittest.TestCase):
 
 class MeasurementTests(unittest.TestCase):
     def test_the_record_keeps_only_what_was_measured(self):
-        """Вычислимое не хранится — иначе повторяется ошибка ручных записей."""
+        """Nothing computable is stored, or the hand records' error repeats."""
         stored = measurement(1024, 17_879_040).as_record().to_json()
         self.assertNotIn("ntfs_bytes", stored)
         self.assertNotIn("vc_header", stored)
@@ -163,7 +163,7 @@ class MeasureTests(Fixture):
         self.assertEqual(self.fake.drives, ["C:"])
 
     def test_a_failure_still_cleans_up(self):
-        """Иначе терабайтные файлы копились бы молча."""
+        """Otherwise terabyte files would pile up silently."""
         self.fake.broken.add("mount")
         with self.assertRaises(VeraCryptError):
             measure(self.vc, self.workdir, Step(1))
@@ -194,7 +194,7 @@ class CollectorTests(Fixture):
         )
 
     def test_a_failed_step_does_not_stop_the_rest(self):
-        """Один неудавшийся размер — не повод бросать остальные двадцать."""
+        """One failed size is no reason to drop the other twenty."""
         collector = self.collector([Step(1)])
         self.fake.broken.add("create")
         result = collector.run_step(collector.steps[0])
@@ -217,15 +217,15 @@ class CollectorTests(Fixture):
         self.assertFalse(any(result.fatal for result in results))
 
     def test_a_diverging_self_check_is_fatal_but_keeps_the_measurement(self):
-        """Замер настоящий, и второй из пары — как раз обычный контейнер."""
+        """Real measurement: the second of the pair is the normal container."""
         steps = [
             Step(1, dynamic=True, quick=True, self_check=True),
             Step(1, dynamic=False, quick=False, self_check=True),
         ]
         collector = self.collector(steps)
         collector.run_step(steps[0])
-        # Обычный контейнер с полным форматированием отдал на 8 MiB больше
-        # метаданных: на такой машине динамическим верить нельзя.
+        # The normal container with a full format gave 8 MiB more metadata:
+        # on such a machine dynamic containers cannot be trusted.
         self.fake.ntfs += 8 * MIB
         result = collector.run_step(steps[1])
         self.assertTrue(result.fatal)

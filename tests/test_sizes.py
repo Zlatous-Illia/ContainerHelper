@@ -1,4 +1,4 @@
-"""Проверка обхода исходных данных и форматирования чисел."""
+"""Tests of walking the input data and of number formatting."""
 
 import tempfile
 import unittest

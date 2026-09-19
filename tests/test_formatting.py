@@ -1,7 +1,7 @@
-"""Проверка единиц отображения.
+"""Tests of the display units.
 
-Единица меняет только показ. Ввод и хранение остаются в байтах, поэтому
-parse_bytes здесь не участвует и обратного преобразования нет.
+A unit changes only what is shown. Input and storage stay in bytes, so
+parse_bytes takes no part here and there is no reverse conversion.
 """
 
 import unittest
@@ -52,7 +52,7 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(resolve_unit(5 * 1024**4, UNIT_AUTO), UNIT_TIB)
 
     def test_auto_names_the_unit_in_the_cell(self):
-        """Иначе столбец смешал бы MiB и GiB без подписи."""
+        """Otherwise the column would mix MiB and GiB with no label."""
         self.assertEqual(fmt_table_cell(GIB, UNIT_AUTO), "1.000 GiB")
         self.assertEqual(fmt_table_cell(5 * 1024**2, UNIT_AUTO), "5.00 MiB")
 
@@ -72,7 +72,7 @@ class UnitTests(unittest.TestCase):
 
 
 class PluralTests(unittest.TestCase):
-    """«23 точек» в отчёте читается как машинный перевод."""
+    """«23 точек» in a report reads like machine translation."""
 
     def word(self, count):
         return f"{count} {plural(count, 'точка', 'точки', 'точек')}"
@@ -83,7 +83,7 @@ class PluralTests(unittest.TestCase):
         self.assertEqual(self.word(5), "5 точек")
 
     def test_the_teens_are_the_exception(self):
-        """11–14 берут третью форму, хотя кончаются на 1–4."""
+        """11–14 take the third form although they end in 1–4."""
         for count in (11, 12, 13, 14):
             self.assertEqual(self.word(count), f"{count} точек")
 

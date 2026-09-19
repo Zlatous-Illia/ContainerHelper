@@ -1,4 +1,4 @@
-"""Виджет графика, окна графиков и их связь с главным окном."""
+"""The chart widget, the chart windows and their link to the main window."""
 
 import os
 import tempfile
@@ -76,9 +76,10 @@ class ChartViewTests(unittest.TestCase):
         self.assertFalse(self.view.image(1.0).isNull())
 
     def test_the_left_margin_makes_room_for_the_widest_label(self):
-        """Подобранное на глаз поле обрежет «1 099 511 627 776» ровно тогда,
+        """A margin picked by eye cuts off "1 099 511 627 776".
 
-        когда такое число появится, — а появится оно на терабайтном томе.
+        It does so exactly when such a number appears, and it appears on a
+        terabyte volume.
         """
         frame = self.view.frame()
         self.assertGreater(frame.left, 20)
@@ -95,7 +96,7 @@ class ChartViewTests(unittest.TestCase):
         self.assertEqual(self.view.tip_at(frame.left + 2, frame.top + 2), "")
 
     def test_the_legend_hides_and_returns_a_series(self):
-        self.view.image(1.0)  # легенда размечается при рисовании
+        self.view.image(1.0)  # the legend is laid out while painting
         self.view.toggle_series("модель")
         self.assertEqual(
             [item.name for item in self.view.series() if item.visible], ["замеры"]
@@ -104,7 +105,7 @@ class ChartViewTests(unittest.TestCase):
         self.assertEqual(len([i for i in self.view.series() if i.visible]), 2)
 
     def test_a_hidden_series_stops_holding_the_scale(self):
-        """Иначе выключенная серия продолжала бы растягивать ось."""
+        """Otherwise a switched-off series would keep stretching the axis."""
         wide = Series("далёкая", (Point(1e15, 1e15),), KIND_DOTS)
         chart = sample_chart()
         self.view.set_chart(Chart(chart.title, chart.x, chart.y, (*chart.series, wide)))
@@ -125,7 +126,10 @@ class ChartViewTests(unittest.TestCase):
         self.assertFalse(self.view.zoomed)
 
     def test_setting_a_new_chart_drops_the_zoom(self):
-        """Масштаб был про прежние числа; на новых он означал бы другое."""
+        """The zoom was about the old numbers.
+
+        On new ones it would mean something else.
+        """
         frame = self.view.frame()
         self.view._zoom_to(
             QPointF(frame.left + 40, frame.top + 40),
@@ -135,13 +139,13 @@ class ChartViewTests(unittest.TestCase):
         self.assertFalse(self.view.zoomed)
 
     def test_the_unit_reaches_the_labels(self):
-        """График следует переключателю единиц так же, как таблицы."""
+        """The chart follows the unit switch just as the tables do."""
         self.view.set_unit(UNIT_GIB)
         self.assertEqual(self.view._unit, UNIT_GIB)
         self.assertFalse(self.view.image(1.0).isNull())
 
     def test_a_series_hidden_by_the_chart_starts_hidden(self):
-        """График один знает, какая серия по умолчанию мешает смотреть."""
+        """Only the chart knows which series gets in the way by default."""
         chart = sample_chart()
         quiet = Series("край диапазона", chart.series[0].points, KIND_DOTS, visible=False)
         self.view.set_chart(Chart(chart.title, chart.x, chart.y, (*chart.series, quiet)))
@@ -153,7 +157,7 @@ class ChartViewTests(unittest.TestCase):
         self.assertTrue(all(item.visible for item in self.view.series()))
 
     def test_a_long_note_gets_more_room_than_a_short_one(self):
-        """Подпись в одну строку обрезалась ровно на полуслове."""
+        """A one-line note was cut off right in the middle of a word."""
         chart = sample_chart()
         short = Chart(chart.title, chart.x, chart.y, chart.series, note="коротко")
         long = Chart(
@@ -199,11 +203,12 @@ class StackViewTests(unittest.TestCase):
         self.assertIn("данные", self.view.tip_at(frame.left + 10, frame.top + 5))
 
     def test_the_bar_asks_for_only_the_height_it_uses(self):
-        """У полосы нет оси: строка и легенда, и всё.
+        """The bar has no axis: one line and a legend, and that is all.
 
-        Без своей высоты разделитель делит окно поровну, и под полосой висит
-        пустое поле в две трети экрана. График с осями своей высоты не просит
-        вовсе — ему годится любая, и там переопределять нечего.
+        Without a height of its own, the splitter divides the window equally,
+        and an empty area two thirds of the screen high hangs under the bar. A
+        chart with axes asks for no height of its own at all: any height suits
+        it, and there is nothing to override there.
         """
         asked = self.view.sizeHint().height()
         self.assertGreater(asked, 0)
@@ -228,12 +233,12 @@ class ChartWindowTests(unittest.TestCase):
         self.assertEqual(self.built, 2)
 
     def test_refresh_rebuilds_every_chart(self):
-        """Иначе окно молча показывало бы вчерашнюю картинку."""
+        """Otherwise the window would silently show yesterday's picture."""
         self.window.refresh()
         self.assertEqual(self.built, 4)
 
     def test_linked_charts_share_the_x_axis(self):
-        """Горб на остатках должен стоять ровно под своей ступенькой."""
+        """A hump in the residuals must stand exactly under its step."""
         first, second = self.window.views
         frame = first.frame()
         first._zoom_to(
@@ -243,7 +248,7 @@ class ChartWindowTests(unittest.TestCase):
         self.assertEqual(first.x_span(), second.x_span())
 
     def test_linked_charts_keep_their_own_y_axis(self):
-        """У остатков размах в килобайтах, у кривой — в мегабайтах."""
+        """The residuals span kilobytes, the curve spans megabytes."""
         first, second = self.window.views
         frame = first.frame()
         first._zoom_to(
@@ -260,7 +265,7 @@ class ChartWindowTests(unittest.TestCase):
         self.assertFalse(any(view.zoomed for view in self.window.views))
 
     def test_a_picked_point_is_explained_in_place(self):
-        """Таблица живёт в главном окне; подсвечивать в ней строку некуда."""
+        """The table lives in the main window; no row to highlight here."""
         self.window.views[0].pointPicked.emit(1, "том 512\nметаданные 17")
         self.assertIn("том 512", self.window.detail.text())
 
@@ -286,7 +291,7 @@ class MainWindowChartTests(unittest.TestCase):
                 self.assertTrue(self.window._charts[key].views)
 
     def test_opening_twice_raises_the_same_window(self):
-        """Второе окно потеряло бы и масштаб, и растянутый руками размер."""
+        """A second window would lose the zoom and the size set by hand."""
         self.window.open_chart(CHART_NTFS)
         first = self.window._charts[CHART_NTFS]
         self.window.open_chart(CHART_NTFS)
@@ -297,12 +302,13 @@ class MainWindowChartTests(unittest.TestCase):
         self.assertNotIn("такого нет", self.window._charts)
 
     def test_a_new_measurement_reaches_the_open_window(self):
-        """Иначе окно показывает вчерашнюю картинку, и отличить её нечем.
+        """Otherwise the window shows yesterday's picture.
 
-        Замер кладётся тем же путём, что и автоматический сбор:
-        `add_calibration_point` поднял бы модальный диалог, а закрыть его из
-        теста нечем — по тому же правилу, по которому логика не поднимает
-        модальных окон сама.
+        And nothing tells it apart from today's. The measurement is stored
+        the same way automatic collection stores it: `add_calibration_point`
+        would raise a modal dialog, and the test has nothing to close it
+        with. It is the same rule by which logic raises no modal windows
+        itself.
         """
         self.window.open_chart(CHART_NTFS)
         window = self.window._charts[CHART_NTFS]
@@ -321,17 +327,18 @@ class MainWindowChartTests(unittest.TestCase):
         self.assertEqual(mine(), before + 1)
 
     def test_a_new_measurement_keeps_the_scale(self):
-        """Сбор идёт шагами, и на каждом картинка прыгала бы к полному виду.
+        """Collection runs step by step; each step would snap to full view.
 
-        Разглядывать участок кривой во время сбора было нельзя вовсе — а
-        открывают окно ровно за этим.
+        Examining a section of the curve during collection was impossible
+        altogether, and that is exactly what the window is opened for.
         """
         self.window.open_chart(CHART_NTFS)
         window = self.window._charts[CHART_NTFS]
         view = window.views[0]
         frame = view.frame()
-        # Середина поля, а не угол: в углу может не оказаться ни одной точки,
-        # и масштаб сбросится по правилу «в кадре пусто».
+        # The middle of the plot area, not a corner: a corner may hold no point
+        # at all, and the zoom would be reset by the "nothing in the frame"
+        # rule.
         view._zoom_to(
             QPointF(frame.left + frame.width * 0.2, frame.top + frame.height * 0.2),
             QPointF(frame.left + frame.width * 0.8, frame.top + frame.height * 0.8),
@@ -352,7 +359,7 @@ class MainWindowChartTests(unittest.TestCase):
         self.assertEqual(view.x_span(), span)
 
     def test_a_picked_point_follows_the_data(self):
-        """Замер мог измениться, и строка рассказывала бы вчерашние числа."""
+        """A measurement may have changed; the line would show old numbers."""
         self.window.open_chart(CHART_NTFS)
         window = self.window._charts[CHART_NTFS]
         point = window.views[0].chart().series[2].points[0]
@@ -370,7 +377,7 @@ class MainWindowChartTests(unittest.TestCase):
         self.assertEqual(window.detail.text(), "")
 
     def test_the_calc_window_follows_the_calculation(self):
-        """Расчёт меняется от каждого нажатия, записи — нет."""
+        """The calculation changes with every keypress; the records do not."""
         self.window.open_chart(CHART_CALC)
         window = self.window._charts[CHART_CALC]
         window.show()
@@ -379,7 +386,7 @@ class MainWindowChartTests(unittest.TestCase):
         self.assertIn("контейнер", window.views[0].chart().title.lower())
 
     def test_the_geometry_is_stored_by_name(self):
-        """От перестановки окон список номеров разъехался бы молча."""
+        """Rearranging windows would silently shift a list stored by number."""
         self.window.open_chart(CHART_SLACK)
         self.window._store_preferences()
         self.assertIsNotNone(self.window.settings.value("chart_slack/geometry"))
@@ -393,7 +400,7 @@ class MainWindowChartTests(unittest.TestCase):
         )
 
     def test_an_empty_calculation_explains_itself(self):
-        """Пустое место без надписи не отличить от поломки."""
+        """An empty area with no caption cannot be told apart from a fault."""
         self.window.open_chart(CHART_CALC)
         window = self.window._charts[CHART_CALC]
         chart = window.views[1].chart()
@@ -402,7 +409,7 @@ class MainWindowChartTests(unittest.TestCase):
 
 
 def mouse(view, kind, button, position):
-    """Событие мыши прямо в виджет: тестам некому его прислать."""
+    """A mouse event right into the widget: in tests no one else sends it."""
     point = QPointF(*position)
     event = QMouseEvent(kind, point, point, button, button, Qt.NoModifier)
     _app.sendEvent(view, event)
@@ -414,7 +421,7 @@ def middle_of(view):
 
 
 class ChartMouseTests(unittest.TestCase):
-    """Правая кнопка возит график, левая выделяет, меню — по двойному щелчку."""
+    """Right button pans, left selects, a double click brings up the menu."""
 
     def setUp(self):
         self.view = ChartView(sample_chart())
@@ -453,7 +460,7 @@ class ChartMouseTests(unittest.TestCase):
         self.assertFalse(self.view.zoomed)
 
     def test_a_double_left_click_does_not_reset(self):
-        """Сброс уехал на правую кнопку вслед за сдвигом."""
+        """The reset moved to the right button, following the pan."""
         frame = self.view.frame()
         self.view._zoom_to(
             QPointF(frame.left + 40, frame.top + 40),
@@ -486,7 +493,7 @@ class ChartMouseTests(unittest.TestCase):
         self.assertEqual(len(opened), 2)
 
     def test_the_right_button_no_longer_opens_a_menu_of_its_own(self):
-        """Иначе меню выскакивает поверх графика на каждой панораме."""
+        """Otherwise the menu pops up over the chart on every pan."""
         self.assertEqual(self.view.contextMenuPolicy(), Qt.PreventContextMenu)
 
     def test_the_menu_offers_a_reset_only_when_there_is_something_to_reset(self):
@@ -532,7 +539,7 @@ class CrosshairTests(unittest.TestCase):
         self.assertFalse(self.view.image(1.0).isNull())
 
     def test_the_crosshair_stays_out_of_the_saved_picture(self):
-        """В картинке перекрестье означало бы, что там что-то измерено."""
+        """In a picture a crosshair would say something was measured there."""
         plain = self.view.image(1.0).toImage()
         mouse(self.view, QMouseEvent.MouseMove, Qt.NoButton, middle_of(self.view))
         with_cursor = self.view.image(1.0).toImage()
@@ -540,7 +547,7 @@ class CrosshairTests(unittest.TestCase):
 
 
 class KeepViewTests(unittest.TestCase):
-    """Обновление данных не сбрасывает то, что человек настроил руками."""
+    """A data update does not reset what the user has set up by hand."""
 
     def setUp(self):
         self.view = ChartView(sample_chart())
@@ -562,7 +569,7 @@ class KeepViewTests(unittest.TestCase):
         self.assertIn("модель", self.view._hidden)
 
     def test_a_series_shown_by_hand_stays_shown(self):
-        """Спрятанную по умолчанию серию вернули щелчком — она и остаётся."""
+        """A series hidden by default and shown with a click stays shown."""
         hidden = Series("край", (Point(1.0, 1.0),), KIND_DOTS, visible=False)
         chart = Chart("проба", Axis("x"), Axis("y"), (hidden,))
         self.view.set_chart(chart)
@@ -576,7 +583,7 @@ class KeepViewTests(unittest.TestCase):
         self.assertGreater(self.view._outside, 0)
 
     def test_an_empty_view_gives_the_scale_back(self):
-        """Держать масштаб, в котором не осталось ни одной точки, не за что."""
+        """A zoom with not a single point left in it is not worth keeping."""
         far = Chart(
             "далеко",
             Axis("Размер тома", AXIS_BYTES, log=True),
@@ -611,7 +618,7 @@ class DetachTests(unittest.TestCase):
         self.assertLess(self.window.height(), before)
 
     def test_a_detached_chart_still_gets_fresh_data(self):
-        """Список графиков окна ходит по номерам, а не по тому, кто где живёт."""
+        """The window's list goes by number, not by where each chart lives."""
         self.window.detach(2)
         self.window.refresh()
         self.assertIsNotNone(self.window.views[2].chart())
@@ -655,7 +662,7 @@ class DetachTests(unittest.TestCase):
         self.assertIsNotNone(second._linked_x)
 
     def test_a_single_chart_window_offers_no_detaching(self):
-        """Отсоединять единственный график не от чего."""
+        """A single chart has nothing to be detached from."""
         alone = ChartWindow("один", "Один", (sample_chart,))
         self.assertFalse(alone.views[0].detachable)
         alone.close()
@@ -678,7 +685,7 @@ class DetachTests(unittest.TestCase):
 
 
 class NegativeBarTests(unittest.TestCase):
-    """Столбик с отрицательным значением закрашивается вниз от нуля."""
+    """A bar with a negative value is filled downward from zero."""
 
     def setUp(self):
         wide = Series(
@@ -718,13 +725,13 @@ class NegativeBarTests(unittest.TestCase):
         self.assertNotEqual(image.pixelColor(x, middle), background)
 
     def test_the_dot_series_stays_dots(self):
-        """Точка ниже нуля — отдельная величина, а не часть столбика."""
+        """A dot below zero is a separate quantity, not part of the bar."""
         frame = self.view.frame()
         image = self.view.image(1.0).toImage()
         background = image.pixelColor(3, 3)
         x = int(frame.px(1.0))
-        # Точка — это точка: между нею и концом столбика её цвета быть не
-        # должно, иначе она нарисована столбиком до самого нуля.
+        # A dot is a dot: its colour must not appear between it and the end of
+        # the bar, otherwise it was drawn as a bar all the way to zero.
         dot = image.pixelColor(x, int(frame.py(-6.0)))
         self.assertNotEqual(dot, background)
         between = int((frame.py(-3.0) + frame.py(-6.0)) / 2)
@@ -741,10 +748,11 @@ def long_caption_chart() -> Chart:
 
 
 class CaptionFitTests(unittest.TestCase):
-    """Подпись оси Y длиннее поля графика — обычное дело, а не исключение.
+    """A Y axis label longer than the plot area is the norm, not an exception.
 
-    «Измерено минус модель, B» — это 288 пикселей при поле высотой 186 в окне
-    на три графика: подпись обрезалась ровно посередине слова.
+    «Измерено минус модель, B» is 288 pixels against a plot area 186 high in
+    a window with three charts: the label was cut right in the middle of a
+    word.
     """
 
     def test_a_long_caption_gets_a_second_line(self):
@@ -754,7 +762,7 @@ class CaptionFitTests(unittest.TestCase):
         self.assertEqual(view._y_caption_lines(chart, frame.y), 2)
 
     def test_the_second_line_gets_its_own_room_on_the_left(self):
-        """Иначе вторая строка ложится поверх подписей делений."""
+        """Otherwise the second line lies on top of the tick labels."""
         short = Chart(
             "проба",
             Axis("x", AXIS_BYTES, log=True),
@@ -768,17 +776,18 @@ class CaptionFitTests(unittest.TestCase):
         self.assertGreater(two.frame().left, one.frame().left)
 
     def test_the_caption_room_is_measured_by_the_widget_not_the_frame(self):
-        """Подпись стоит сбоку от поля и его высотой не ограничена."""
+        """The label sits beside the plot area, not limited by its height."""
         view = ChartView(sample_chart())
         view.resize(640, 300)
         self.assertGreater(view._y_caption_room(), view.frame().height)
 
     def test_both_lines_of_the_caption_are_inside_the_widget(self):
-        """После rotate(-90) координата y уходит в экранный x.
+        """After rotate(-90) the y coordinate turns into screen x.
 
-        С прямоугольником, растущим влево, подпись рисовалась левее отступа: в
-        одну строку ей срезало край, а вторая строка не попадала в виджет
-        вовсе — снаружи это и выглядело как «подпись оси обрезана».
+        With a rectangle growing to the left, the label was drawn left of the
+        padding: on one line it lost its edge, and the second line missed the
+        widget entirely. From the outside this is exactly what looked like
+        "the axis label is cut off".
         """
         from PySide6.QtGui import QFontMetricsF
 
@@ -800,7 +809,7 @@ class CaptionFitTests(unittest.TestCase):
         self.assertEqual(inked(range(0, PADDING)), [])
         painted = inked(range(0, int(view.frame().left)))
         self.assertTrue(painted)
-        # Две строки занимают вдвое больше одной — значит, обе нарисованы.
+        # Two lines take twice the room of one, so both are drawn.
         metrics = QFontMetricsF(view.font())
         self.assertGreater(painted[-1] - painted[0], metrics.lineSpacing())
 
@@ -817,11 +826,12 @@ class CaptionFitTests(unittest.TestCase):
 
 
 class TitleBandTests(unittest.TestCase):
-    """Заголовок обязан целиком помещаться в виджет.
+    """The title must fit entirely inside the widget.
 
-    Полоса заголовка отсчитывалась вверх от отступа (`PADDING - height`) и
-    начиналась на два пикселя выше нуля: у букв срезало верх, а на глаз это
-    выглядело как наползающий сверху разделитель между графиками.
+    The title band was measured upward from the padding (`PADDING - height`)
+    and started two pixels above zero: the tops of the letters were cut off,
+    and to the eye it looked like the splitter between charts creeping down
+    from above.
     """
 
     def setUp(self):
@@ -832,8 +842,8 @@ class TitleBandTests(unittest.TestCase):
         image = self.view.image(1.0).toImage()
         background = image.pixelColor(3, self.view.height() // 2)
         middle = range(self.view.width() // 2 - 120, self.view.width() // 2 + 120)
-        # Только полоса заголовка: ниже начинается само поле графика, и его
-        # пиксели к заголовку отношения не имеют.
+        # Only the title band: the plot area itself starts below it, and its
+        # pixels have nothing to do with the title.
         return [
             y
             for y in range(0, int(self.view.frame().top))
@@ -874,10 +884,11 @@ class DetachButtonTests(unittest.TestCase):
         self.assertEqual(self.view.detach_button.text(), RETURN_TEXT)
 
     def test_the_corner_leaves_the_title_its_room(self):
-        """Кнопки стоят в строке заголовка и отнимают у него ширину.
+        """The buttons sit in the title row and take width away from the title.
 
-        В сетке их пять на график вдвое уже обычного, и по мерке QToolButton
-        четыре стрелки съедали у заголовка двести пикселей.
+        In the grid there are five of them on a chart half the usual width,
+        and at QToolButton's own size the four arrows ate two hundred pixels
+        of the title.
         """
         self.view.set_detachable(True)
         self.view.set_place(1, 4, 2)
@@ -902,7 +913,7 @@ class DetachButtonTests(unittest.TestCase):
         self.assertLess(button.y(), 10)
 
     def test_the_button_stays_out_of_the_saved_picture(self):
-        """В картинке ей делать нечего: это управление, а не график."""
+        """It has no place in the picture: it is a control, not the chart."""
         self.view.set_detachable(True)
         self.view.show()
         _app.processEvents()
@@ -930,7 +941,7 @@ class SplitterTests(unittest.TestCase):
         self.assertTrue(handle.toolTip())
 
     def test_a_double_click_evens_the_heights(self):
-        """Попасть обратно в «поровну», таская разделитель, нельзя."""
+        """Dragging the splitter can never get back to "equal"."""
         self.window.splitter.setSizes([500, 200, 100])
         _app.processEvents()
         self.window.splitter.even_out()
@@ -938,7 +949,7 @@ class SplitterTests(unittest.TestCase):
         self.assertLessEqual(max(sizes) - min(sizes), 2)
 
     def test_the_window_keeps_its_height_across_a_round_trip(self):
-        """Ужать окно мешает минимум раскладки, а расти обратно ничто не мешает."""
+        """The layout minimum blocks shrinking; nothing blocks growing back."""
         before = self.window.height()
         for _ in range(3):
             self.window.detach(1)
@@ -954,7 +965,7 @@ class SplitterTests(unittest.TestCase):
         self.assertLess(self.window.height(), before)
 
     def test_the_two_sizes_are_kept_apart(self):
-        """Высота в общем окне и размер своего окна — разные величины."""
+        """Common-window height and own-window size are different values."""
         self.window.detach(1)
         _app.processEvents()
         self.window._windows[1].resize(900, 320)
@@ -966,11 +977,11 @@ class SplitterTests(unittest.TestCase):
         self.assertEqual(self.window._windows[1].height(), 320)
 
     def test_the_height_stays_with_its_own_chart(self):
-        """Меняются местами графики, а не размеры.
+        """Charts swap places, sizes do not.
 
-        Обмен высотами вдобавок к обмену местами оставлял в памяти одно, на
-        экране другое, и следующая же смена раскладки раздавала графикам чужие
-        размеры.
+        Swapping heights on top of swapping places left one thing in memory
+        and another on screen, and the very next layout change handed the
+        charts each other's sizes.
         """
         self.window.resize(760, 1200)
         _app.processEvents()
@@ -980,7 +991,7 @@ class SplitterTests(unittest.TestCase):
         self.window.move_view(0, 1)
         _app.processEvents()
         after = self.window.splitter.sizes()
-        # Первый график уехал на второе место — и высота уехала вместе с ним.
+        # The first chart moved to second place, and its height moved with it.
         self.assertEqual(after[1], before[0])
         self.assertEqual(after[0], before[1])
 
@@ -1015,7 +1026,7 @@ class StemDrawingTests(unittest.TestCase):
         self.assertNotEqual(image.pixelColor(x, middle), background)
 
     def test_the_stem_is_thinner_than_a_bar(self):
-        """Величина остаётся точкой: стебель только показывает отклонение."""
+        """The value stays a dot: the stem only shows the deviation."""
         bars = Chart(
             "столбики",
             Axis("x"),
@@ -1027,10 +1038,10 @@ class StemDrawingTests(unittest.TestCase):
         other.resize(640, 420)
 
         def painted(view):
-            """Ширина закраски цветом серии на полпути от нуля к точке.
+            """Width painted in the series colour halfway from zero to the dot.
 
-            Именно цветом, а не «не фоном»: на этой высоте лежит ещё и линия
-            сетки во всю ширину, и она одна перекрывает всякую разницу.
+            By that colour, not by "not background": a full-width grid line
+            also lies at this height, and it alone outweighs any difference.
             """
             frame = view.frame()
             image = view.image(1.0).toImage()
@@ -1047,7 +1058,7 @@ class StemDrawingTests(unittest.TestCase):
 
 
 class CompactHeightTests(unittest.TestCase):
-    """Полосе разделитель отдавал столько же, сколько настоящему графику."""
+    """The splitter gave the bar as much room as a real chart."""
 
     def bar(self):
         points = tuple(Point(0.0, float(value), f"часть {value}") for value in (5, 3, 2))
@@ -1065,7 +1076,7 @@ class CompactHeightTests(unittest.TestCase):
         self.assertLess(bar.sizeHint().height(), plain.minimumHeight())
 
     def test_the_bar_lowers_its_own_minimum(self):
-        """Явный минимум виджета сильнее minimumSizeHint."""
+        """An explicit widget minimum beats minimumSizeHint."""
         view = ChartView(self.bar())
         self.assertEqual(view.minimumHeight(), view.sizeHint().height())
 
@@ -1077,7 +1088,7 @@ class CompactHeightTests(unittest.TestCase):
 
 
 class SplitSyncTests(unittest.TestCase):
-    """Масштаб и перекрестье связываются порознь."""
+    """Zoom and crosshair are linked separately."""
 
     def setUp(self):
         self.window = ChartWindow(
@@ -1097,7 +1108,7 @@ class SplitSyncTests(unittest.TestCase):
         self.assertTrue(self.detached.cross_check.isVisibleTo(self.detached))
 
     def test_the_crosshair_survives_an_unlinked_scale(self):
-        """Линия ставится по значению — каждый рисует её в своём масштабе."""
+        """The line goes by value; each chart draws it at its own scale."""
         self.detached.sync_check.setChecked(False)
         first, second = self.window.views
         first.resize(640, 300)
@@ -1128,7 +1139,7 @@ class SplitSyncTests(unittest.TestCase):
 
 
 class GridLayoutTests(unittest.TestCase):
-    """Четыре графика столбцом просят тысячу пикселей высоты, сеткой — половину."""
+    """A column of four charts asks for 1000 px of height, a grid for half."""
 
     def setUp(self):
         self.window = ChartWindow(
@@ -1144,7 +1155,7 @@ class GridLayoutTests(unittest.TestCase):
         self.window.close()
 
     def rows(self):
-        """Что лежит в разделителе: ряд из нескольких или график целиком."""
+        """What the splitter holds: a row of several, or a single chart."""
         out = []
         for place in range(self.window.splitter.count()):
             item = self.window.splitter.widget(place)
@@ -1169,7 +1180,7 @@ class GridLayoutTests(unittest.TestCase):
         self.assertEqual(flat, self.window.views)
 
     def test_an_odd_last_chart_takes_the_whole_row(self):
-        """Половина ряда пустой — это просто выброшенное место."""
+        """An empty half of a row is just wasted space."""
         self.window.detach(3)
         self.window.set_grid(True)
         _app.processEvents()
@@ -1190,9 +1201,10 @@ class GridLayoutTests(unittest.TestCase):
         self.assertEqual(self.window.grid_button.text(), "Столбцом")
 
     def test_each_layout_keeps_its_own_window_size(self):
-        """Сетке нужна ширина, столбцу высота: одним числом их не описать."""
-        # Высота выше минимума раскладки: четыре графика столбцом сами по
-        # себе просят под тысячу, и меньшее число окно просто не примет.
+        """A grid needs width, a column height: one number cannot hold both."""
+        # A height above the layout minimum: four charts in a column ask for
+        # close to a thousand on their own, and the window simply will not
+        # accept a smaller number.
         self.window.resize(700, 1100)
         _app.processEvents()
         tall = self.window.height()
@@ -1223,7 +1235,7 @@ class GridLayoutTests(unittest.TestCase):
 
 
 class ChartOrderTests(unittest.TestCase):
-    """Порядок графиков — дело того, кто смотрит."""
+    """Chart order is up to the viewer."""
 
     def setUp(self):
         self.window = ChartWindow(
@@ -1268,13 +1280,13 @@ class ChartOrderTests(unittest.TestCase):
         self.assertFalse(last.down_button.isEnabled())
 
     def test_a_column_shows_no_sideways_arrows(self):
-        """Соседей по горизонтали там нет, и обещать движение нечем."""
+        """There are no horizontal neighbours there, so no move to promise."""
         view = self.window.views[0]
         self.assertFalse(view.left_button.isVisibleTo(view))
         self.assertFalse(view.right_button.isVisibleTo(view))
 
     def test_moving_steps_over_a_detached_chart(self):
-        """Иначе нажатие выглядит несработавшим: видимый порядок тот же."""
+        """Otherwise the click looks ignored: the visible order is the same."""
         self.window.detach(1)
         _app.processEvents()
         self.window.move_view(2, -1)
@@ -1311,7 +1323,7 @@ class ChartOrderTests(unittest.TestCase):
         again.close()
 
     def test_a_stale_order_is_ignored(self):
-        """Число графиков могло измениться, а порядок остаться от прежнего."""
+        """The chart count may have changed while the order is from before."""
         settings = QSettings(
             str(Path(tempfile.mkdtemp()) / "settings.ini"), QSettings.IniFormat
         )
@@ -1325,7 +1337,7 @@ class ChartOrderTests(unittest.TestCase):
 
 
 class GridSizesTests(unittest.TestCase):
-    """Сетка обязана оставаться сеткой: столбцы у всех рядов общие."""
+    """A grid must stay a grid: all rows share the same columns."""
 
     def setUp(self):
         self.window = ChartWindow(
@@ -1350,7 +1362,7 @@ class GridSizesTests(unittest.TestCase):
         ]
 
     def test_dragging_a_column_moves_it_in_every_row(self):
-        """Два ряда с разными границами — это уже не сетка, а две пары."""
+        """Two rows with different boundaries are not a grid but two pairs."""
         first, second = self.rows()
         first.moveSplitter(900, 1)
         _app.processEvents()
@@ -1363,7 +1375,7 @@ class GridSizesTests(unittest.TestCase):
         self.assertEqual(self.window._columns, first.sizes())
 
     def test_a_double_click_on_the_vertical_handle_lines_the_grid_up(self):
-        """Ровнять надо ряды между собой, а не всё к середине."""
+        """The rows must line up with each other, not all to the middle."""
         first, second = self.rows()
         second.setSizes([900, 300])
         _app.processEvents()
@@ -1381,7 +1393,7 @@ class GridSizesTests(unittest.TestCase):
         self.assertLessEqual(abs(first.sizes()[0] - first.sizes()[1]), 2)
 
     def test_reordering_keeps_the_grid_lined_up(self):
-        """Ширины уезжали вместе с виджетами, и сетка расползалась."""
+        """The widths travelled with the widgets, and the grid fell apart."""
         first, second = self.rows()
         first.moveSplitter(900, 1)
         _app.processEvents()
@@ -1401,7 +1413,7 @@ class GridSizesTests(unittest.TestCase):
         self.assertEqual(self.window.splitter.sizes(), heights)
 
     def test_a_chart_cannot_be_squeezed_out_of_existence(self):
-        """Схлопнутый график не сворачивается в заголовок, он исчезает."""
+        """A collapsed chart does not fold into its title, it disappears."""
         first = self.rows()[0]
         first.moveSplitter(5000, 1)
         _app.processEvents()
@@ -1419,7 +1431,7 @@ class GridSizesTests(unittest.TestCase):
 
 
 class GridMoveTests(unittest.TestCase):
-    """В сетке «выше» — это на целый ряд назад, а «левее» — на одно место."""
+    """In a grid "up" is a whole row back, and "left" is one place back."""
 
     def setUp(self):
         self.window = ChartWindow(
@@ -1447,7 +1459,7 @@ class GridMoveTests(unittest.TestCase):
         self.assertEqual(self.window._order, [1, 0, 2, 3])
 
     def test_the_left_arrow_is_off_in_the_first_column(self):
-        """Иначе она меняла график с концом прошлого ряда."""
+        """Otherwise it swapped the chart with the end of the previous row."""
         self.assertFalse(self.window.views[0].left_button.isEnabled())
         self.assertTrue(self.window.views[1].left_button.isEnabled())
 

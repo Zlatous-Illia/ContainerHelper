@@ -1,7 +1,7 @@
-"""Автоматический сбор запаса на копирование: план, место, один шаг.
+"""Automatic collection of copy slack: the plan, the space, one step.
 
-Отдельно от test_collect.py: там замер пустого тома, здесь — заполненного.
-Общее у них только то, что VeraCrypt в обоих подменён.
+Kept apart from test_collect.py: that one measures an empty volume, this one
+a filled one. All they share is that VeraCrypt is faked in both.
 """
 
 import tempfile
@@ -46,25 +46,27 @@ from tests.test_veracrypt import Fake, make_install
 
 GIB = 1024 * MIB
 
-#: Крохотные наборы: шагу всё равно, какой он, а гигабайты в наборе тестов
-#: писать незачем. Разные по объёму — на этом проверяется порядок плана.
+#: Tiny file sets: the step does not care which one it gets, and there is no
+#: point writing gigabytes in the test suite. They differ in size, and that is
+#: what the plan order is checked on.
 TINY_SET = FileSet("tiny", "10 файлов по 1 KiB", (Group(10, KIB),))
 FAT_SET = FileSet("fat", "4 файла по 1 MiB", (Group(4, MIB),))
 
 
 def factory_model() -> NtfsModel:
-    """Модель на заводских точках — та же, что собирает Store."""
+    """A model on the factory points, the same one Store builds."""
     return NtfsModel(
         [(point.mounted_bytes, point.ntfs_bytes) for point in factory_data().points]
     )
 
 
 class SlackPlanTests(unittest.TestCase):
-    """Что программа обещает под набор и какой контейнер под него делает."""
+    """What the program promises for a set and which container it makes."""
 
     def test_the_promise_is_kept_separately_from_the_container(self):
-        """Контейнер крупнее обещанного намеренно: промахнись модель вниз,
-        набор не влез бы, и вместо замера вышла бы неудача."""
+        """The container is larger than promised on purpose: should the model
+        miss low, the set would not fit, and a failure would replace the
+        measurement."""
         step = slack_step(TINY_SET)
         self.assertEqual(step.container_mib, step.predicted_mib + SLACK_CUSHION_MIB)
 
@@ -75,17 +77,18 @@ class SlackPlanTests(unittest.TestCase):
         self.assertEqual(step.predicted_mib, expected.container_mib)
 
     def test_the_safety_it_promised_is_remembered_too(self):
-        """Без него промах не разложить на погрешность и намеренный запас."""
+        """Without it a miss cannot be split into error and intended margin."""
         self.assertGreater(slack_step(TINY_SET).predicted_safety_mib, 0)
 
     def test_the_container_avoids_the_coverage_table_sizes(self):
-        """Иначе «К заводскому» в той строке отключил бы и замер запаса."""
+        """Otherwise the Use factory button in that row would disable the
+        copy-slack measurement too."""
         plain = slack_step(TINY_SET)
         nudged = slack_step(TINY_SET, forbidden=(plain.container_mib,))
         self.assertNotEqual(nudged.container_mib, plain.container_mib)
 
     def test_cheap_sets_go_first(self):
-        """Одна нехватка места не должна отменять то, что прекрасно влезло бы."""
+        """One shortage of space must not cancel what would fit just fine."""
         steps = slack_plan([FAT_SET, TINY_SET])
         self.assertEqual([step.fileset.key for step in steps], ["tiny", "fat"])
 
@@ -94,7 +97,7 @@ class SlackPlanTests(unittest.TestCase):
         self.assertEqual([step.fileset.key for step in steps], ["fat"])
 
     def test_sets_are_skipped_by_key_not_by_file_count(self):
-        """Два набора с n = 1 различаются объёмом, и снимать надо оба."""
+        """Two sets with n = 1 differ in size, and both must be measured."""
         small = FileSet("small-one", "1 файл 1 MiB", (Group(1, MIB),))
         big = FileSet("big-one", "1 файл 8 MiB", (Group(1, 8 * MIB),))
         steps = slack_plan([small, big], covered=(small.key,))
@@ -105,21 +108,22 @@ class SlackPlanTests(unittest.TestCase):
 
 
 class SpaceTests(unittest.TestCase):
-    """Динамический контейнер стоит метаданных, а не своего размера."""
+    """A dynamic container costs its metadata, not its size."""
 
     def test_a_terabyte_of_empty_volume_costs_megabytes(self):
-        """Не терабайта: динамический контейнер ложится на диск метаданными.
+        """Not a terabyte: a dynamic container lands on disk as its metadata.
 
-        Считается по заводским точкам — то есть ровно так, как в живой
-        программе: Store всегда подмешивает их в модель.
+        Computed from the factory points, that is, exactly as in the live
+        program: Store always mixes them into the model.
         """
         self.assertLess(required_bytes(Step(1024 * 1024), factory_model()), 512 * MIB)
 
     def test_an_uncalibrated_model_only_overestimates(self):
-        """Ошибиться тут можно только в сторону лишней осторожности.
+        """The only possible mistake here is too much caution.
 
-        Модель по умолчанию завышает метаданные терабайта в тринадцать раз, и
-        шаг был бы пропущен зря — но не начат на диске, где ему не хватит.
+        The default model overestimates the metadata of a terabyte thirteen
+        times over, and a step would be skipped needlessly, but never started
+        on a disk where it will not fit.
         """
         self.assertGreater(
             required_bytes(Step(1024 * 1024)),
@@ -137,17 +141,17 @@ class SpaceTests(unittest.TestCase):
         self.assertGreaterEqual(with_files - empty, FAT_SET.alloc_bytes(4096))
 
     def test_the_margin_is_only_in_the_requirement(self):
-        """Вес — про работу, требование — про осторожность."""
+        """Weight is about work, the requirement is about caution."""
         step = Step(2048)
         self.assertGreaterEqual(
             required_bytes(step) - disk_bytes(step), SPACE_MARGIN_BYTES
         )
 
     def test_creating_files_adds_to_the_weight_but_not_to_the_space(self):
-        """Иначе десять тысяч мелких файлов полоса проскакивала бы мгновенно.
+        """Otherwise the bar would flash past ten thousand small files.
 
-        И наоборот: приписать эту поправку требуемому месту значило бы зря
-        пропускать шаги, которые прекрасно помещаются.
+        And the other way round: adding this correction to the required space
+        would mean needlessly skipping steps that fit perfectly well.
         """
         many = FileSet("many", "many", (Group(10_000, KIB),))
         step = Step(200, fileset=many)
@@ -163,14 +167,14 @@ class SpaceTests(unittest.TestCase):
 
 
 class ProgressShareTests(unittest.TestCase):
-    """Доля шага считается тем же весом, каким взвешен весь план."""
+    """A step's share uses the same weight the whole plan is weighed by."""
 
     def test_outside_writing_the_share_is_zero(self):
-        """Сколько байт VeraCrypt уложил при создании, снаружи не видно."""
+        """How much VeraCrypt writes while creating is not visible outside."""
         self.assertEqual(Progress(PHASE_CREATE).share, 0.0)
 
     def test_bytes_and_files_count_together(self):
-        """Порознь врут обе: одна стоит на мелких файлах, другая на крупном."""
+        """Alone each lies: one stalls on small files, one on a big file."""
         half = Progress(
             PHASE_WRITE,
             files_done=5,
@@ -181,7 +185,7 @@ class ProgressShareTests(unittest.TestCase):
         self.assertAlmostEqual(half.share, 0.5)
 
     def test_a_set_of_small_files_still_reaches_the_end(self):
-        """Логический объём мелких файлов вдвадцатеро меньше кластерного."""
+        """Small files' logical size is 1/20 of their cluster-rounded size."""
         done = Progress(
             PHASE_WRITE,
             files_done=500,
@@ -203,10 +207,10 @@ class ProgressShareTests(unittest.TestCase):
         self.assertEqual(Progress(PHASE_CREATE).detail, "")
 
     def test_the_detail_names_the_written_volume_too(self):
-        """Набор из одного файла — одна граница файла на минуты записи.
+        """A one-file set has a single file boundary in minutes of writing.
 
-        Счётчик файлов на нём стоит неподвижно всю запись, и по нему нельзя
-        отличить работающую программу от повисшей.
+        On it the file counter stands still for the whole write, and it cannot
+        tell a working program from a hung one.
         """
         writing = Progress(
             PHASE_WRITE,
@@ -223,7 +227,7 @@ class ProgressShareTests(unittest.TestCase):
         self.assertEqual(total_bytes(steps), sum(weight_bytes(s) for s in steps))
 
     def test_a_calibrated_model_sharpens_the_estimate(self):
-        """Место оценивает та самая модель, которую сбор и калибрует."""
+        """Space is estimated by the very model the collection calibrates."""
         volume = 2048 * MIB - VC_HEADER_BYTES
         model = NtfsModel([(volume, 3 * MIB), (2 * volume, 4 * MIB)])
         self.assertLess(required_bytes(Step(2048), model), required_bytes(Step(2048)))
@@ -252,7 +256,7 @@ class Fixture(unittest.TestCase):
 
 
 class SlackMeasureTests(Fixture):
-    """Весь путь замера запаса на подменённом VeraCrypt."""
+    """The whole copy-slack measurement path on a faked VeraCrypt."""
 
     def test_the_measured_slack_is_what_the_volume_actually_lost(self):
         result = measure(self.vc, self.workdir, slack_step(TINY_SET))
@@ -262,19 +266,19 @@ class SlackMeasureTests(Fixture):
         )
 
     def test_the_payload_is_measured_by_walking_the_volume(self):
-        """Не по замыслу набора: файл мог лечь не так, как задумано."""
+        """Not by the set's design: a file may have landed otherwise."""
         result = measure(self.vc, self.workdir, slack_step(TINY_SET))
         self.assertEqual(result.file_count, TINY_SET.file_count)
         self.assertEqual(result.file_alloc_bytes, TINY_SET.alloc_bytes(4096))
         self.assertEqual(result.file_bytes, TINY_SET.logical_bytes)
 
     def test_the_empty_volume_is_measured_before_the_files_land(self):
-        """Один шаг даёт и точку NTFS, и замер запаса."""
+        """One step gives both an NTFS point and a copy-slack measurement."""
         result = measure(self.vc, self.workdir, slack_step(TINY_SET))
         self.assertEqual(result.ntfs_bytes, self.fake.ntfs)
 
     def test_the_left_space_is_read_on_a_freshly_mounted_volume(self):
-        """Модель предсказывает Left space — то, что покажет VeraCrypt."""
+        """The model predicts Left space, which is what VeraCrypt will show."""
         measure(self.vc, self.workdir, slack_step(TINY_SET))
         mounts = [item for item in self.fake.commands if "/volume" in item]
         self.assertEqual(len(mounts), 2)
@@ -299,7 +303,7 @@ class SlackMeasureTests(Fixture):
         self.assertEqual(self.fake.drives, ["C:"])
 
     def test_a_failure_mid_write_still_cleans_up(self):
-        """Иначе четыре гигабайта остались бы на диске молча."""
+        """Otherwise four gigabytes would silently stay on the disk."""
 
         def boom(_done):
             raise OSError("диск устал")
@@ -310,7 +314,7 @@ class SlackMeasureTests(Fixture):
         self.assertEqual(self.fake.drives, ["C:"])
 
     def test_a_volume_too_small_for_the_set_is_refused_before_writing(self):
-        """Кластер тома читается, а не предполагается: на 65536 набор вырастает."""
+        """The volume cluster is read, not assumed: at 65536 the set grows."""
         self.fake.cluster_bytes = 65536
         with self.assertRaises(VeraCryptError) as caught:
             measure(self.vc, self.workdir, Step(2, fileset=FAT_SET))
@@ -352,11 +356,11 @@ class SlackMeasureTests(Fixture):
         self.assertIn("из", writing[-1].detail)
 
     def test_a_volume_that_refuses_the_first_unmounts_is_still_measured(self):
-        """Ровно так сорвались четыре замера первого настоящего прогона.
+        """Exactly how four measurements of the first real run failed.
 
-        Отказ приходил на перемонтировании: том, только что заполненный
-        файлами, VeraCrypt не отдавала. Спасал случайный повтор в уборке —
-        теперь повтор делается намеренно, и замер доходит до конца.
+        The refusal came on remounting: VeraCrypt would not release a volume
+        just filled with files. An accidental retry in cleanup was what saved
+        it; now the retry is deliberate, and the measurement runs to the end.
         """
         self.fake.stubborn = 2
         result = measure(self.vc, self.workdir, slack_step(TINY_SET))
@@ -366,7 +370,7 @@ class SlackMeasureTests(Fixture):
         self.assertEqual(self.fake.drives, ["C:"])
 
     def test_a_volume_that_never_lets_go_fails_the_step_but_cleans_up(self):
-        """Уборка берёт том силой: контейнер всё равно удаляется."""
+        """Cleanup forces the volume off: the container is deleted anyway."""
         self.fake.stubborn = 99
         with self.assertRaises(VeraCryptError):
             measure(self.vc, self.workdir, slack_step(TINY_SET))
@@ -374,7 +378,10 @@ class SlackMeasureTests(Fixture):
         self.assertEqual(self.fake.drives, ["C:"])
 
     def test_two_sets_of_the_same_size_do_not_share_a_container_file(self):
-        """Первый ещё не удалён, второй уже создаётся — VeraCrypt молча откажет."""
+        """The first is not yet deleted when the second is being created.
+
+        VeraCrypt would refuse silently.
+        """
         first = Step(64, fileset=TINY_SET)
         second = Step(64, fileset=FAT_SET)
         for step in (first, second):
@@ -388,7 +395,7 @@ class SlackMeasureTests(Fixture):
 
 
 class CollectorSpaceTests(Fixture):
-    """Шаг, которому не хватает места, пропускается, а не считается неудачей."""
+    """A step short of space is skipped, not counted as a failure."""
 
     def collector(self, steps, free):
         return Collector(
@@ -423,7 +430,7 @@ class CollectorSpaceTests(Fixture):
         self.assertTrue(self.collector([step], free=lambda: 64 * GIB).run_step(step).ok)
 
     def test_space_running_out_mid_write_stops_that_step_only(self):
-        """Запись в динамический контейнер на кончившемся диске рвёт том."""
+        """Writing to a dynamic container on a full disk breaks the volume."""
         readings = iter([64 * GIB])
         step = slack_step(TINY_SET)
         collector = self.collector([step], free=lambda: next(readings, MIB))

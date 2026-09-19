@@ -1,4 +1,4 @@
-"""Проверка вкладки «Записи», диалога правки и связки с расчётом."""
+"""Tests of the Records tab, the edit dialog and the link to Calculation."""
 
 import os
 import tempfile
@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
 
-# Настройки уводятся в отдельный каталог, чтобы прогон тестов не трогал
-# реальный реестр пользователя.
+# Settings are moved to a separate folder so that a test run does not touch
+# the user's real registry.
 _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
@@ -28,10 +28,10 @@ from tests import reference  # noqa: E402
 
 
 def column_of(title: str) -> int:
-    """Номер столбца по заголовку.
+    """The column index for a header title.
 
-    По имени, а не числом: столбцы в таблице добавляются, и привязка к
-    номеру ломается молча — тест продолжает сравнивать, только уже не то.
+    By name, not by number: columns get added to the table, and a tie to the
+    number breaks silently — the test keeps comparing, just the wrong thing.
     """
     for index, (name, _kind, _tip) in enumerate(COLUMNS):
         if name == title:
@@ -82,7 +82,7 @@ class RecordsTabTests(unittest.TestCase):
         self.assertEqual(statuses["Cache 2"], "ошибки")
 
     def test_deviation_is_measured_against_the_uncalibrated_baseline(self):
-        """Иначе колонка была бы нулевой: модель точна в своих же точках."""
+        """Else the column is all zero: the model is exact at its points."""
         values = [
             int(self.tab.table.item(row, 4).text().replace(" ", "")) for row in range(3)
         ]
@@ -214,8 +214,8 @@ class WiringTests(unittest.TestCase):
         window.calc_tab._on_manual_edit()
         before = window.calc_tab.result_label.text()
 
-        # Заводские точки покрывают 1–100 GiB, поэтому экстраполяции здесь
-        # уже нет — модель откалибрована с первого запуска.
+        # The factory points cover 1–100 GiB, so there is no extrapolation
+        # here any more — the model is calibrated from the first launch.
         self.assertTrue(window.models()[0].calibrated)
 
         window.records_tab.store.records = list(reference.ALL)
@@ -226,7 +226,8 @@ class WiringTests(unittest.TestCase):
             int(window.calc_tab.result_label.text().replace(" ", "")),
             int(before.replace(" ", "")),
         )
-        # Размер попал внутрь покрытого замерами диапазона — предупреждать не о чем.
+        # The size fell inside the range the measurements cover — nothing to
+        # warn about.
         self.assertEqual(window.calc_tab.notes_label.text(), "")
 
     def test_saving_writes_the_file_and_a_backup(self):
@@ -243,7 +244,10 @@ class WiringTests(unittest.TestCase):
 
 
 class ModelessDialogTests(unittest.TestCase):
-    """Окна правки немодальны: их бывает несколько, и вкладка «Расчёт» жива."""
+    """Edit windows are modeless.
+
+    There can be several of them, and the Calculation tab stays alive.
+    """
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -267,7 +271,7 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertTrue(second.isVisible())
 
     def test_the_same_record_opens_only_once(self):
-        """Два окна на одну строку — гонка, где выигрывает нажавший последним."""
+        """Two windows on one row are a race won by whoever clicks last."""
         record = self.tab.store.records[0]
         first = self.tab.open_record(record)
         self.assertIs(self.tab.open_record(record), first)
@@ -277,7 +281,7 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertFalse(dialog.isModal())
 
     def test_saving_lands_in_the_same_record_after_the_list_shifted(self):
-        """Номер, взятый при открытии, показал бы уже на чужую строку."""
+        """An index taken on opening would already point at another row."""
         record = self.tab.store.records[2]
         dialog = self.tab.open_record(record)
         dialog.id_edit.setText("Переименована")
@@ -296,7 +300,7 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertNotIn("Призрак", [item.id for item in self.tab.store.records])
 
     def test_deleting_a_record_closes_its_open_window(self):
-        """Иначе «Сохранить» в нём выглядит работающим, а сохранять некуда."""
+        """Else its Save button looks working, but there is nowhere to save."""
         self.tab.table.selectRow(0)
         record = self.tab.store.records[0]
         dialog = self.tab.open_record(record)
@@ -305,7 +309,7 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertEqual(self.tab._editors, {})
 
     def test_changing_the_file_closes_every_window(self):
-        """Открытое окно держит запись прежнего хранилища."""
+        """An open window holds a record of the previous store."""
         dialog = self.tab.open_record(self.tab.store.records[0])
         other = Path(self._dir.name) / "other.json"
         seeded_store(other)
@@ -320,15 +324,15 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertEqual(self.tab.store.records[0].id, "Cache 1")
 
     def test_several_new_records_can_be_drafted_at_once(self):
-        """Пока запись не сохранена, мешать друг другу окнам нечем."""
+        """Until a record is saved, the windows cannot clash in any way."""
         first = self.tab._add()
         second = self.tab._add()
         self.assertIsNot(first, second)
         self.assertEqual(len(self.tab._creators), 2)
         first.id_edit.setText("Свежая")
         first.container_edit.setText("2048")
-        # setText не поднимает textEdited, а «Сохранить» включается по нему:
-        # без имени сохранять нечего, и кнопка выключена.
+        # setText does not raise textEdited, and Save is enabled by it: with
+        # no name there is nothing to save, and the button is disabled.
         first._refresh()
         first.save_button.click()
         self.assertIn("Свежая", [item.id for item in self.tab.store.records])
@@ -353,7 +357,7 @@ class ModelessDialogTests(unittest.TestCase):
 
 
 class FieldValidationTests(unittest.TestCase):
-    """Буква в поле байт — промах по клавише, а не «значение, что не разобралось»."""
+    """A letter in a byte field is a slipped key, not an unparsable value."""
 
     def typed(self, field, text):
         field.setText("")
@@ -380,7 +384,7 @@ class FieldValidationTests(unittest.TestCase):
                 )
 
     def test_a_pasted_number_with_separators_still_fits(self):
-        """Из Проводника число приходит с пробелами — их разбор и так выбрасывает."""
+        """Explorer gives numbers with spaces — parsing drops them anyway."""
         dialog = RecordDialog()
         dialog.mounted_edit.setText("")
         dialog.mounted_edit.insert("11 599 081 472")
@@ -391,7 +395,7 @@ class FieldValidationTests(unittest.TestCase):
         self.assertIsNotNone(dialog.cluster_combo.validator())
 
     def test_text_fields_refuse_control_characters(self):
-        """В JSON они уезжают экранированными и глазом потом не находятся."""
+        """In JSON they end up escaped and later cannot be found by eye."""
         dialog = RecordDialog()
         self.assertEqual(self.typed(dialog.id_edit, "Cache\t5"), "Cache5")
         self.assertEqual(self.typed(dialog.note_edit, "за\rметка"), "заметка")

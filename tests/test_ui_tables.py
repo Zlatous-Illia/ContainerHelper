@@ -1,7 +1,7 @@
-"""Сортировка, ширина столбцов, единицы отображения и перенос данных с «Расчёта».
+"""Sorting, column widths, display units and taking data from Calculation.
 
-Всё, что здесь проверяется, появилось вместе с правкой таблиц, поэтому лежит
-отдельным модулем, а не подмешано к проверкам самой вкладки «Записи».
+Everything tested here arrived with the table rework, so it lives in a
+separate module rather than mixed into the tests of the Records tab itself.
 """
 
 import os
@@ -35,8 +35,8 @@ from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
 from containerhelper.ui.records_tab import RecordsTab  # noqa: E402
 from containerhelper.ui.table import fit_widget_columns  # noqa: E402
 
-#: Имена намеренно не совпадают с порядком по размеру: иначе сортировку не
-#: отличить от исходного порядка строк.
+#: The names deliberately do not follow size order: otherwise sorting could
+#: not be told apart from the original row order.
 UNSORTED = (
     Record(
         id="Zeta",
@@ -110,7 +110,7 @@ class SortingTests(TableFixture):
 
 
 class SelectionAfterSortingTests(TableFixture):
-    """Номер строки и позиция в хранилище расходятся — брать надо индекс."""
+    """Row number and position in the store diverge — take the index."""
 
     def test_selected_index_points_at_the_right_record(self):
         self.tab.table.sortItems(2, Qt.AscendingOrder)
@@ -162,13 +162,13 @@ class DisplayUnitTests(TableFixture):
         self.assertIn("100.000", self.column(2))
 
     def test_auto_names_the_unit_in_each_cell(self):
-        """В «Авто» единица у каждой строки своя, и заголовок её не назовёт."""
+        """In Auto each row has its own unit, and the header cannot name it."""
         self.tab.set_unit(UNIT_AUTO)
         self.assertEqual(self.tab.table.horizontalHeaderItem(2).text(), "Ёмкость тома")
         self.assertTrue(all(cell.endswith(("MiB", "GiB")) for cell in self.column(2)))
 
     def test_container_init_is_not_a_byte_column(self):
-        """Container init задаётся в MiB в самом VeraCrypt — переводить нечего."""
+        """VeraCrypt itself takes Container init in MiB: nothing to convert."""
         self.tab.set_unit(UNIT_GIB)
         self.assertEqual(
             self.tab.table.horizontalHeaderItem(1).text(), "Container init, MiB"
@@ -182,7 +182,7 @@ class DisplayUnitTests(TableFixture):
 
 
 class PayloadHandoffTests(unittest.TestCase):
-    """Перенос размера и числа файлов с вкладки «Расчёт» в запись."""
+    """Carrying size and file count from the Calculation tab to a record."""
 
     def test_button_fills_the_measured_payload_fields(self):
         payload = Payload(
@@ -199,7 +199,7 @@ class PayloadHandoffTests(unittest.TestCase):
         self.assertEqual(record.file_alloc_bytes, 2_048_000)
 
     def test_measured_alloc_keeps_copy_slack_honest(self):
-        """Без него разница между Σ ceil и ceil Σ уехала бы в запас."""
+        """Without it, Σ ceil minus ceil Σ would end up in the slack."""
         payload = Payload(
             logical_bytes=624_750,
             alloc_bytes=2_048_000,
@@ -261,7 +261,7 @@ class MainWindowWiringTests(unittest.TestCase):
         )
 
     def test_container_init_never_leaves_mib(self):
-        """Это число вводят в VeraCrypt как есть, единица на него не влияет."""
+        """This number goes into VeraCrypt as is; the unit cannot touch it."""
         self.window.calc_tab.size_edit.setText("10941734967")
         self.window.calc_tab._on_manual_edit()
         before = self.window.calc_tab.result_label.text()
@@ -271,10 +271,10 @@ class MainWindowWiringTests(unittest.TestCase):
 
 
 class WidgetColumnTests(unittest.TestCase):
-    """Кнопки в ячейках подгонкой по содержимому не меряются вовсе.
+    """Fitting to contents does not measure buttons in cells at all.
 
-    Столбец с «Переснять» и «К заводскому» вставал в 97 px при нужных 284, и
-    обе кнопки показывали по три буквы.
+    The column with Re-measure and Use factory came out at 97 px instead of
+    the 284 it needed, and both buttons showed three letters each.
     """
 
     def setUp(self):
@@ -293,7 +293,7 @@ class WidgetColumnTests(unittest.TestCase):
         self.assertGreaterEqual(self.table.columnWidth(1), needed)
 
     def test_a_wider_column_is_left_alone(self):
-        """Натянутую руками ширину сужать нельзя."""
+        """A width stretched by hand must not be narrowed."""
         self.table.setColumnWidth(1, 900)
         fit_widget_columns(self.table)
         self.assertEqual(self.table.columnWidth(1), 900)
