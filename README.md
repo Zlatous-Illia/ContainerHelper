@@ -1,284 +1,313 @@
 # ContainerHelper
 
-Считает, какой размер контейнера (`Container init`, MiB) задать в VeraCrypt,
-чтобы в него влез заданный набор данных, и накапливает замеры, которыми этот
-расчёт уточняется.
+Calculates which container size (`Container init`, MiB) to enter in VeraCrypt
+so that a given data set fits into it, and accumulates the measurements that
+refine this calculation.
 
-Файлы приложение **не копирует**. Оно считает размер и читает свободное место с
-уже смонтированного тома — независимо от того, чем этот том заполнен.
+The application does **not copy** files. It calculates the size and reads the
+free space from an already mounted volume, whatever that volume is filled with.
 
-Windows, Python 3.12, PySide6. Из внешних зависимостей — только PySide6.
+Windows, Python 3.12, PySide6. PySide6 is the only external dependency.
 
-## Зачем это нужно
+The interface is currently in Russian only, so the Russian labels of controls
+are given in «» next to their English names.
 
-VeraCrypt спрашивает размер контейнера, а полезного места внутри всегда меньше.
-Разницу съедают три вещи, и ни одну из них VeraCrypt заранее не называет:
+## Why this is needed
 
-| Слагаемое | Поведение | Пример на 700 MiB данных |
+VeraCrypt asks for the container size, but the usable space inside is always
+smaller. The difference is eaten by three things, and VeraCrypt names none of
+them in advance:
+
+| Component | Behaviour | Example for 700 MiB of data |
 |---|---|---|
-| Заголовок VeraCrypt | константа 266 240 B | 0,25 MiB |
-| Метаданные NTFS | зависят от размера **тома**, не от содержимого | 16,7 MiB |
-| Запас на копирование | запись MFT на файл + рост индексов каталогов | 0,01 MiB |
-| Кластерный хвост | каждый файл округляется вверх до кластера | входит в данные |
-| Страховочный запас | поправка на погрешность моделей | 4 MiB |
+| VeraCrypt header | constant 266 240 B | 0.25 MiB |
+| NTFS metadata | depends on the **volume** size, not on its contents | 16.7 MiB |
+| Copy slack | an MFT record per file + growth of directory indexes | 0.01 MiB |
+| Cluster tail | each file is rounded up to a whole cluster | part of the data |
+| Safety margin | allowance for the error of the models | 4 MiB |
 
-Промахнуться легко в обе стороны: под 700 MiB данных нужен контейнер на 721 MiB,
-а на 400 мелких файлах выбор размера кластера меняет занятое место с 1,2 до
-25 MiB. Программа считает это заранее, а не после того, как копирование
-оборвалось на середине.
+It is easy to miss in either direction: 700 MiB of data needs a 721 MiB
+container, and with 400 small files the choice of cluster size changes the
+used space from 1.2 to 25 MiB. The program calculates this in advance, not
+after the copy has broken off halfway.
 
-## Как считает
+## How it calculates
 
-Размер тома зависит от размера контейнера, а метаданные — от размера тома,
-поэтому решение итеративное (`model.solve_container_mib`, сходится за две-три
-итерации).
+The volume size depends on the container size, and the metadata depends on the
+volume size, so the solution is iterative (`model.solve_container_mib`,
+converges in two or three iterations).
 
-Метаданные NTFS моделируются **кусочно-линейной интерполяцией** по измеренным
-точкам, а не одной прямой: `$LogFile` почти не растёт с томом и упирается в
-потолок 64 MiB, линейно растёт только `$Bitmap`. За пределами измеренного
-диапазона наклон берётся базовый, а не подогнанный — локальный наклон, вынесенный
-далеко за собственный размах, промахивается на порядок.
+NTFS metadata is modelled by **piecewise-linear interpolation** over measured
+points, not by a single straight line: `$LogFile` barely grows with the volume
+and hits a ceiling of 64 MiB, and only `$Bitmap` grows linearly. Outside the
+measured range the slope is the baseline one, not a fitted one: a local slope
+carried far beyond its own span misses by an order of magnitude.
 
-**Свойство безопасности:** расчёт не имеет права вернуть контейнер меньше
-нужного. Перезаклад стоит места, занижение — не влезших данных. Соответствующие
-тесты (`tests/test_model.py::SolverTests`) привязаны к трём настоящим замерам и
-ослаблять их нельзя.
+**Safety property:** the calculation must never return a container smaller
+than needed. An overestimate costs space, an underestimate costs data that does
+not fit. The corresponding tests (`tests/test_model.py::SolverTests`) are tied
+to three real measurements and must not be weakened.
 
-Все внутренние вычисления — в целых числах. Float допустим только как
-коэффициент модели и тут же округляется вверх; float, просочившийся в счётчик
-байтов, — дефект, а не придирка стиля.
+All internal calculations are in integers. A float is allowed only as a model
+coefficient and is rounded up at once; a float that leaks into a byte counter
+is a defect, not a style nitpick.
 
-## Установка и запуск
+## Installation and running
 
 ```bash
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 
 .venv\Scripts\python.exe -m containerhelper
-.venv\Scripts\python.exe -m containerhelper --data <путь>   # чужая папка данных
+.venv\Scripts\python.exe -m containerhelper --data <path>   # a different data folder
 ```
 
-Тесты — единственный автоматический контур, линтера и проверки типов нет:
+Tests are the only automated check; there is no linter and no type checking:
 
 ```bash
 .venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"
 ```
 
-887 тестов, почти половина — GUI. Они сами ставят `QT_QPA_PLATFORM=offscreen`
-до импорта PySide6, окон не открывают и настройки уводят во временный каталог;
-отдельной подготовки среды не нужно.
+889 tests, almost half of them GUI tests. They set `QT_QPA_PLATFORM=offscreen`
+themselves before importing PySide6, open no windows and redirect the settings
+to a temporary directory; no separate environment setup is needed.
 
-## Где лежат данные
+## Where the data lives
 
-Программа портативная: всё состояние — в папке `data` рядом с исполняемым файлом,
-реестр не трогается вовсе.
+The program is portable: all its state is in the `data` folder next to the
+executable, and the registry is not touched at all.
 
 ```
 data/
-  Records.json        записи о копировании
-  Calibration.json    замеры пустых томов и запаса — калибровка этой машины
-  settings.ini        окно, столбцы, единицы, диалог выбора, раскладка графиков
-  *.bak               по одной резервной копии на файл
+  Records.json        copy records
+  Calibration.json    empty-volume and copy-slack measurements: this machine's calibration
+  settings.ini        window, columns, units, file and folder picker, chart layout
+  *.bak               one backup per file
 ```
 
-Папка ищется по порядку: аргумент `--data <путь>` → папка рядом с программой →
-запомненный ранее выбор. Если ничего не подошло — программа **спрашивает**, а не
-уезжает молча в чужой каталог: тихий переезд ломает портативность незаметно.
+The folder is looked up in order: the `--data <path>` argument → the folder
+next to the program → the choice remembered earlier. If none of them fits, the
+program **asks** instead of silently moving to a foreign directory: a silent
+move breaks portability without anyone noticing.
 
-## Вкладки
+## Tabs
 
-Четыре, в порядке работы: **Расчёт** → **Записи** → **Модель** → **Калибровка**.
+Four, in working order: **Calculation** («Расчёт») → **Records** («Записи») →
+**Model** («Модель») → **Calibration** («Калибровка»).
 
-- **Расчёт.** Выбор файлов и папок одним диалогом (в контейнер кладут и то, и
-  другое, обычно вместе), перетаскивание мышью из Проводника, либо ручной ввод
-  размера. Результат — `Container init` в MiB и разбивка по слагаемым.
+- **Calculation.** Choose files and folders in one dialog (a container holds
+  both, usually together), drag them with the mouse from Explorer, or type the
+  size by hand. The result is `Container init` in MiB and its breakdown into
+  components.
 
-  Диалог выбора помнит вид, размер и показанную папку; без запоминания он
-  открывается на «Компьютере», списком дисков, а не в папке программы — данные
-  лежат где угодно, только не рядом с ней. Числовые поля не принимают ничего,
-  кроме цифр и разделителей разрядов: буква там — промах по клавише, а не
-  значение, которое не разобралось.
-- **Записи.** Реальные копирования: что за контейнер, что в него легло, сколько
-  осталось. По ним калибруется запас на копирование и проверяется прогноз.
+  The file and folder picker remembers its view, its size and the folder it
+  shows; with Remember folder («Запоминать папку») off, it opens at My Computer
+  («Компьютер»), the list of drives, and not in the program's folder: the data
+  lives anywhere but next to the program. Numeric fields accept nothing but
+  digits and digit-group separators: a letter there is a mistyped key, not a
+  value that failed to parse.
+- **Records.** Real copy operations: which container, what went into it, how much
+  space was left. They calibrate copy slack and check the prediction.
 
-  Окна правки немодальны, и их бывает несколько: запись заполняют, глядя на
-  «Расчёт», — он и есть источник размера и числа файлов. На одну запись окно
-  всё-таки одно: два окна на одну строку — гонка, где выигрывает нажавший
-  «Сохранить» последним.
-- **Модель.** На чём стоят обе модели и насколько они промахиваются на своих же
-  замерах — каждый предсказан моделью, собранной **без него**. Править нечего,
-  это диагностика.
-- **Калибровка.** Покрытие размеров замерами пустых томов. Данные для такого
-  замера не нужны: метаданные зависят только от размера тома.
+  Edit windows are modeless, and there can be several of them: a record is
+  filled in while looking at the Calculation tab, which is the source of the
+  size and of the file count. Still, there is only one window per record: two
+  windows on one row are a race won by whoever presses Save («Сохранить») last.
+- **Model.** What both models rest on and how far they miss on their own
+  measurements, each one predicted by a model built **without it**. There is
+  nothing to edit here; this is diagnostics.
+- **Calibration.** Coverage of sizes by empty-volume measurements. No data is
+  needed for such a measurement: the metadata depends only on the volume size.
 
-## Калибровка
+## Calibration
 
-В пакете едут заводские данные: **26 замеров пустых томов** от 512 MiB до 1 TiB
-(по одному на каждую строку таблицы рекомендуемых размеров) и **7 замеров запаса
-на копирование**. Новая копия считает осмысленно с первого запуска.
+The package ships factory data: **26 empty-volume measurements** from 512 MiB
+to 1 TiB (one per row of the recommended-sizes table) and **7 copy-slack
+measurements**. A new copy gives meaningful results from the first launch.
 
-Свой замер всегда вытесняет заводской на том же размере тома — не «большее из
-двух»: заводское значение снято на чужой машине, а размер метаданных решает не
-NTFS вообще, а конкретный код форматирования, то есть сборка Windows и версия
-VeraCrypt. Пока отрезок держится только на заводских точках, к страховке
-добавляется надбавка в 4 MiB.
+An own measurement always supersedes the factory one at the same volume size,
+not "the larger of the two": the factory value was taken on another machine,
+and the metadata size is decided not by NTFS in general but by the specific
+formatting code, that is, by the Windows build and the VeraCrypt version. While
+a segment rests on factory points only, a factory margin of 4 MiB is added to
+the safety margin.
 
-### Автоматический сбор
+### Automatic collection
 
-Кнопка «Снять автоматически…» создаёт контейнеры недостающих размеров через
-VeraCrypt CLI, замеряет и удаляет их. Вручную это два десятка контейнеров и целый
-вечер; автоматически — около трёх минут на весь ряд.
+The Collect automatically… button («Снять автоматически…») creates containers
+of the missing sizes through the VeraCrypt CLI, measures them and deletes them.
+By hand that is some twenty containers and a whole evening; automatically it
+takes about three minutes for the whole series.
 
-Что нужно знать:
+What you need to know:
 
-- **Нужны права администратора.** Из-за `/filesystem NTFS` UAC иначе спросит на
-  каждый контейнер. Программа перезапускает себя через `runas`, обязательно
-  передавая текущую папку данных, и закрывает прежнее окно: две копии в одной
-  папке писали бы поверх друг друга.
-- **VeraCrypt не ниже 1.24** — раньше нет ни `/nosizecheck`, ни `/quick`. Ключ
-  размонтирования зависит от версии: `/unmount` появился в 1.26.20, до неё только
-  `/dismount`. Непрочитанная версия считается старой.
-- **Код возврата ничего не значит.** `/silent` описан как «operation will fail
-  silently», поэтому результат проверяется только по факту: файл нужного размера,
-  поднявшаяся буква диска, исчезнувшая буква после размонтирования.
-- **Размонтирование повторяется, а не выжидается.** Том, только что заполненный
-  файлами, VeraCrypt отдаёт не сразу.
-- **Место считается той же моделью, которую сбор калибрует.** Динамический
-  контейнер ложится на диск только записанными кластерами: пустой терабайтный том
-  стоит 136 MiB. Некалиброванная модель завышает это в тринадцать раз — ошибка в
-  безопасную сторону, шаг будет зря пропущен, но не начат там, где ему не хватит.
-- **Уборка в `finally` плюс поиск осиротевших** файлов `containerhelper-calibration-*.hc`.
-  Без неё терабайтные файлы копятся молча.
-- **Прогресс меряется байтами, а не шагами**, а часы идут сами, раз в секунду.
-  Прогресс приходит от шага, и на создании контейнера, полном форматировании и
-  монтировании его нет вовсе — время замирало на минуты ровно тогда, когда
-  единственный признак того, что программа жива, и был нужен. У фазы свои часы:
-  общие говорят, сколько идёт сбор, фазовые — сколько программа стоит на одном
-  месте.
+- **Administrator rights are required.** Otherwise, because of
+  `/filesystem NTFS`, UAC would ask for every container. The program restarts
+  itself via `runas`, always passing the current data folder, and closes the
+  old window: two copies in one folder would write over each other.
+- **VeraCrypt 1.24 or later**: earlier versions have neither `/nosizecheck` nor
+  `/quick`. The unmount switch depends on the version: `/unmount` appeared in
+  1.26.20, before it there was only `/dismount`. A version that could not be
+  read is treated as old.
+- **The exit code means nothing.** `/silent` is documented as "operation will
+  fail silently", so the result is checked only by the facts: a file of the
+  right size, a drive letter that came up, a letter that disappeared after
+  unmounting.
+- **Unmounting is retried, not waited out.** VeraCrypt does not let go of a
+  volume that has just been filled with files right away.
+- **Space is estimated with the same model that the collection calibrates.** A
+  dynamic container takes up disk space only for the clusters written to it:
+  an empty terabyte volume costs 136 MiB. An uncalibrated model overestimates
+  this thirteen times over. The error is on the safe side: a step will be
+  skipped for nothing, but never started where there is not enough room for it.
+- **Cleanup in `finally`, plus a search for orphaned**
+  `containerhelper-calibration-*.hc` files. Without it, terabyte files pile up
+  silently.
+- **Progress is measured in bytes, not in steps**, and the clock runs on its
+  own, once a second. Progress comes from the step, and during container
+  creation, full format and mounting there is none at all: the time froze for
+  minutes exactly when the only sign that the program was alive was needed. Each
+  phase has its own clock: the overall one tells how long the collection has
+  been running, the phase one how long the program has been stuck in one place.
 
-Прогон на живой машине состоялся: 22 размера за 3 минуты 10 секунд, все совпали
-с ручными замерами **до байта**. Отдельно прогнан сбор запаса на копирование —
-тридцать шагов, метаданные подтвердились до байта, по-файловая часть запаса
-измерена и устойчива (около 1360 B на файл на рядах 500…10 000).
+A run on a live machine has taken place: 22 sizes in 3 minutes 10 seconds, all
+of them matched the manual measurements **to the byte**. The copy-slack
+collection was run separately: thirty steps, the metadata was confirmed to the
+byte, and the per-file slack is measured and stable (about 1360 B per file on
+the 500…10 000 series).
 
-## Графики
+## Charts
 
-Девять графиков в четырёх немодальных окнах: кривая метаданных NTFS, доля тома
-под ними, промах модели проверкой исключением и наклоны отрезков; запас от числа
-файлов и его промах; промах прогноза по записям; разложение текущего контейнера
-полосой и занятое место от размера кластера.
+Nine charts in four modeless windows: the NTFS metadata curve, the share of the
+volume taken by the metadata, the model's miss under the leave-one-out check and
+the slopes of the segments; copy slack against the file count and its miss; the
+prediction miss across records; the breakdown of the current container as a
+bar, and the used space against the cluster size.
 
-Рисуются своим виджетом на `QPainter`, без графической библиотеки. Решение
-принято по замеру, а не из принципа: собраны четыре portable-сборки одним файлом
-и сравнены — matplotlib стоил бы +33,7 MiB и +548 мс на старт, pyqtgraph
-+22,8 MiB и +428 мс, QtCharts +3,0 MiB. Своё обошлось в **+103 KiB**, и вдобавок
-подписи следуют выбранной в окне единице (B/KiB/MiB/GiB), а цвета берутся из
-палитры окна. Экспорт в PNG, SVG и PDF рисуется тем же кодом, что и экран.
+They are drawn by our own widget on `QPainter`, without a charting library. The
+decision was made by measurement, not on principle: four single-file portable
+builds were made and compared — matplotlib would cost +33.7 MiB and +548 ms at
+startup, pyqtgraph +22.8 MiB and +428 ms, QtCharts +3.0 MiB. Our own widget
+cost **+103 KiB**, and on top of that its labels follow the unit chosen in the
+window (B/KiB/MiB/GiB), and its colours come from the window's palette. Export
+to PNG, SVG and PDF is drawn by the same code as the screen.
 
-Мышь: рамка левой кнопкой — приблизить, колесо — масштаб, правая кнопка зажатой
-— сдвиг, двойной правой или Esc — полный вид. Меню — двойным левым щелчком или
-средней кнопкой. Щелчок по легенде прячет серию, щелчок по точке разбирает её.
-За курсором ходит перекрестье со значениями на осях; на графиках с общей осью X
-оно повторяется у соседей — по значению, каждый рисует его в своём масштабе.
+Mouse: drag a box with the left button to zoom in, the wheel zooms, hold the
+right button to pan, double right-click or Esc for the full view. The menu
+opens on a double left-click or the middle button. Clicking the legend hides a
+series, clicking a point breaks it down. A crosshair with values on the axes
+follows the cursor; on charts with a shared X axis the neighbours repeat it by
+value, each drawing it in its own scale.
 
-Окно раскладывается **столбцом или сеткой** по два в ряд: по вертикали место
-дороже, и четыре графика столбцом просят под тысячу пикселей высоты, а сеткой —
-вдвое меньше. Графики переставляются стрелками в своём углу, а любой можно
-отсоединить в отдельное окно и вернуть обратно. Раскладка, порядок, размеры и то,
-что отсоединено, запоминаются на каждое окно.
+The window lays the charts out **in a column or in a grid** of two per row:
+vertical space is more expensive, and four charts in a column ask for nearly a
+thousand pixels of height, in a grid half that. Charts are reordered with the
+arrows in their corner, and any of them can be detached into a separate window
+and put back. The layout, the order, the sizes and what is detached are
+remembered for each window.
 
-Обновление данных не сбрасывает ни масштаб, ни спрятанные серии, ни выбранную
-точку: окно открывают, чтобы разглядывать участок, а сбор идёт шагами — на каждом
-шаге картинка прыгала бы к полному виду. Масштаб сбрасывается, только если в
-кадре не осталось ни одной точки; сколько их ушло за кадр, написано в углу.
+Updating the data resets neither the zoom, nor the hidden series, nor the
+selected point: a window is opened to examine a region, and collection goes in
+steps, so the picture would jump to the full view at every step. The zoom is
+reset only if not a single point is left in the frame; how many of them went
+out of the frame is written in the corner.
 
-## Ограничения
+## Limitations
 
-- **Только Windows и только NTFS.** Свободное место и размер кластера читаются
-  через `GetDiskFreeSpaceW`, права — через `ShellExecuteW`. Кластеры есть в любой
-  файловой системе, но метаданные меряны только на NTFS.
-- **Все известные числа сняты на одной машине** — одна сборка Windows, одна
-  версия VeraCrypt. Замеров на другой машине нет вовсе; ради этого и живёт
-  надбавка в 4 MiB на заводских отрезках.
-- **Кривая метаданных не выпукла, а внизу — лестница.** `$LogFile` меняется
-  ступенями на дискретных порогах, и между любыми двумя точками может спрятаться
-  ступень, как густо сетку ни делай. Занижение здесь покрывает нижний предел
-  страховки.
-- **Прогноз проверяется постфактум.** Обещание расчёта хранится в записи и не
-  пересчитывается: модели меняются от каждого замера, и пересчёт задним числом
-  ответил бы «что я скажу сегодня», а не «что я сказал тогда».
-- **Тесты не достают до реальности.** Весь путь VeraCrypt прогоняется на
-  подменённых `subprocess` и чтении томов: проверяются команды и порядок, но не
-  сама VeraCrypt. Читаемость окна и вёрстку тоже проверить нечем.
+- **Windows only and NTFS only.** Free space and cluster size are read through
+  `GetDiskFreeSpaceW`, administrator rights go through `ShellExecuteW`.
+  Clusters exist in any filesystem, but the metadata has been measured only on
+  NTFS.
+- **All known numbers were taken on one machine**: one Windows build, one
+  VeraCrypt version. There are no measurements from another machine at all;
+  that is what the 4 MiB factory margin on factory segments is for.
+- **The metadata curve is not convex, and at the bottom it is a staircase.**
+  `$LogFile` changes in steps at discrete thresholds, and a step can hide
+  between any two points, however dense the grid. The underestimate here is
+  covered by the safety floor.
+- **The prediction is checked after the fact.** What the calculation promised is
+  stored in the record and not recalculated: the models change with every
+  measurement, and recalculating after the fact would answer "what would I say
+  today", not "what did I say then".
+- **The tests do not reach reality.** The whole VeraCrypt path runs on a substituted
+  `subprocess` and substituted volume reading: the commands and their order are
+  checked, but not VeraCrypt itself. The readability and the layout of the
+  window cannot be checked by anything either.
 
-## Не входит в объём
+## Out of scope
 
-Перечислено явно, чтобы не возвращалось при доработках: копирование
-пользовательских файлов приложением; темы оформления и горячие клавиши;
-расширенная статистика (медианы, box-plot, CDF, корреляции, срезы по типам);
-экспорт/импорт и фильтрация записей; расширение контейнера через VeraCrypt
-Expander; обратный расчёт процента запаса — процент как понятие не используется.
+Listed explicitly so that it does not come back during further work: copying
+the user's files by the application; themes and keyboard shortcuts; extended
+statistics (medians, box-plot, CDF, correlations, slices by type);
+export/import and filtering of records; enlarging a container with VeraCrypt
+Expander; reverse calculation of the overhead percentage, since percentage is not
+used as a concept at all.
 
-## Устройство
+## Structure
 
-`SPEC.md` — живая спецификация и главный источник истины. Она объясняет не
-только что сделано, но и почему отвергнуты альтернативы, и правится **в том же
-изменении**, что меняет поведение. `CLAUDE.md` — сжатая выжимка тех же правил
-для тех, кто правит код.
+`SPEC.md` is the living specification and the main source of truth. It
+explains not only what has been done but also why the alternatives were
+rejected, and it is edited **in the same change** that changes the behaviour.
+`CLAUDE.md` is a condensed digest of the same rules for those who edit the
+code.
 
-Слоями, снизу вверх. Нижние ничего не знают о Qt и тестируются без него.
+In layers, bottom up. The lower ones know nothing about Qt and are tested
+without it.
 
-| Модуль | Что делает |
+| Module | What it does |
 |---|---|
-| `model.py` | арифметика: модели NTFS, запаса, страховки, решение размера |
-| `records.py` | хранилище JSON (схема 5), проверки правдоподобия, точки калибровки |
-| `sizes.py` | обход исходных данных и чтение смонтированных томов |
-| `fileset.py` | наборы файлов для замера запаса и их генерация на томе |
-| `factory.py` | заводские данные из `containerhelper/data/`, только на чтение |
-| `veracrypt.py` | поиск установки, версия, создать/смонтировать/размонтировать |
-| `collect.py` | порядок автоматического сбора: план, самопроверка, шаг, уборка |
-| `elevation.py` | права администратора и перезапрос |
-| `plot.py` | арифметика графиков: оси, деления, пиксели, попадание |
-| `charts.py` | сборка графиков из замеров и моделей |
-| `ui/` | вкладки, диалоги, таблицы, холст графика и его окно |
+| `model.py` | arithmetic: NTFS, copy slack and safety margin models, solving for the size |
+| `records.py` | JSON storage (schema 5), plausibility checks, calibration points |
+| `sizes.py` | walking the source data and reading mounted volumes |
+| `fileset.py` | file sets for measuring copy slack and generating them on a volume |
+| `factory.py` | factory data from `containerhelper/data/`, read-only |
+| `veracrypt.py` | finding the installation, version, create/mount/unmount |
+| `collect.py` | order of automatic collection: plan, self-check, step, cleanup |
+| `elevation.py` | administrator rights and the elevated restart |
+| `plot.py` | chart arithmetic: axes, ticks, pixels, hit testing |
+| `charts.py` | building charts from measurements and models |
+| `ui/` | tabs, dialogs, tables, the chart canvas and its window |
 
-Почему всё лежит в пакете `containerhelper/`, а не в корне: `python -m containerhelper`
-работает только для пакета; заводские данные читаются через `importlib.resources`
-как ресурс `containerhelper.data`, иначе в сборке одним файлом путь на диск не
-ведёт; папка `data/` рядом с программой — это состояние пользователя, и её надо
-отличать от кода; имена вроде `model.py` или `table.py` в корне столкнулись бы с
-чужими модулями на `sys.path`.
+Why everything lives in the `containerhelper/` package and not in the root:
+`python -m containerhelper` works only for a package; the factory data is read
+through `importlib.resources` as the `containerhelper.data` resource, because
+in a single-file build a path does not lead to the disk; the `data/` folder
+next to the program is the user's state and has to be told apart from the
+code; names like `model.py` or `table.py` in the root would collide with other
+people's modules on `sys.path`.
 
-### Что ломается молча
+### What breaks silently
 
-Правила, нарушение которых не роняет программу, а тихо портит числа. Полный
-список — в `SPEC.md` и в комментариях у соответствующего кода; здесь те, о
-которые спотыкаются первыми:
+Rules whose violation does not crash the program but quietly corrupts the
+numbers. The full list is in `SPEC.md` and in the comments next to the relevant
+code; here are the ones people trip over first:
 
-- **Вычислимое не хранится.** `ntfs_bytes`, `vc_header`, `copy_slack_measured` —
-  свойства, а не поля JSON. Именно дублирование вычислимых полей испортило
-  исходные рукописные записи.
-- **Qt-сигналы с размерами томов обязаны быть 64-битными** (`Signal("qint64", bool)`).
-  Qt-шный `int` — это C++ `int` в четыре байта, и всё от 4 GiB переполняется
-  молча.
-- **`setHorizontalHeaderLabels` стирает подсказки заголовков** — после него
-  всегда `set_header_tooltips(...)`.
-- **Состояние интерфейса хранится именем, а не номером.** Активная вкладка,
-  геометрия окон с графиками — по заголовку: от одной перестановки список номеров
-  разъехался бы, и заметить это нечем.
-- **Логика не поднимает модальных окон.** Показ ошибок и подтверждений —
-  подменяемые атрибуты, иначе диалог из теста нечем закрыть.
-- **Остатки на графиках считаются проверкой исключением.** Кусочно-линейная
-  модель проходит ровно через свои замеры: обычные остатки вышли бы нулевыми
-  везде.
-- **Повёрнутый текст растёт вправо от точки поворота.** После `rotate(-90)`
-  координата `y` уходит в экранный `x`: прямоугольник, заданный «вверх»,
-  оказывается левее отступа, и вторая строка подписи оси не попадает в виджет
-  вовсе. Снаружи это выглядит как «подпись обрезана», и причину ищут не там.
-- **`clicked` у кнопки приходит с булевым аргументом.** Лямбда без пустого
-  первого параметра получает его в своё первое имя: кнопка нажимается и не
-  делает ничего — молча, потому что такого значения просто нет.
+- **Computed values are not stored.** `ntfs_bytes`, `vc_header`,
+  `copy_slack_measured` are properties, not JSON fields. Duplicating computed
+  fields is exactly what spoiled the original handwritten records.
+- **Qt signals carrying volume sizes must be 64-bit** (`Signal("qint64", bool)`).
+  Qt's `int` is a four-byte C++ `int`, and everything from 4 GiB up overflows
+  silently.
+- **`setHorizontalHeaderLabels` erases the header tooltips**: always follow it
+  with `set_header_tooltips(...)`.
+- **UI state is stored by name, not by number.** The active tab and the geometry
+  of chart windows go by title: a single reordering would scramble the list of
+  indices, and there would be no way to notice.
+- **Logic does not raise modal windows.** Showing errors and confirmations goes
+  through substitutable attributes; otherwise a test has no way to close the
+  dialog.
+- **Residuals on charts are computed by the leave-one-out check.** A
+  piecewise-linear model passes exactly through its own measurements: ordinary
+  residuals would come out zero everywhere.
+- **Rotated text grows to the right of the rotation point.** After
+  `rotate(-90)` the `y` coordinate turns into the screen `x`: a rectangle set
+  "upwards" ends up left of the padding, and the second line of the axis label
+  does not get into the widget at all. From outside this looks like "the label
+  is cut off", and the cause is looked for in the wrong place.
+- **A button's `clicked` arrives with a boolean argument.** A lambda without a
+  dummy first parameter receives it into its first name: the button is pressed
+  and does nothing, silently, because there is simply no such value.
 
-## Лицензия
+## License
 
-Не выбрана.
+Not chosen.
