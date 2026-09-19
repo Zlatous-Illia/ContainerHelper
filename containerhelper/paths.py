@@ -1,9 +1,9 @@
-"""Где лежат данные и настройки.
+"""Where the data and the settings live.
 
-Программа рассчитана на портативную папку: рядом с исполняемым файлом
-каталог `data`, в нём записи, резервные копии и настройки. Реестр не
-трогается вовсе — иначе утилита перестаёт быть портативной, а на другой
-машине молча забывает всё.
+The program is built around a portable data folder: a `data` directory next
+to the executable, holding the records, the backups and the settings. The
+registry is not touched at all — otherwise the utility stops being portable,
+and on another machine it silently forgets everything.
 """
 
 from __future__ import annotations
@@ -12,38 +12,40 @@ import os
 import sys
 from pathlib import Path
 
-#: Имя подпапки рядом с исполняемым файлом. Корень папки остаётся чистым:
-#: .bak и .tmp не мешаются под ногами.
+#: Name of the subfolder next to the executable. The folder root stays clean:
+#: .bak and .tmp files do not get underfoot.
 DATA_DIR_NAME = "data"
 
 RECORDS_NAME = "Records.json"
 
-#: Замеры пустых томов лежат своим файлом. Они описывают не работу с данными,
-#: а машину: сборку Windows и версию VeraCrypt. Записи о копировании переносят
-#: с собой, замеры на чужой машине бессмысленны, и держать их в одном файле
-#: значило бы возить чужую калибровку под видом своей.
+#: Empty-volume measurements live in a file of their own. They describe not the
+#: work with data but the machine: the Windows build and the VeraCrypt version.
+#: Copy records travel with the user; measurements from another machine are
+#: meaningless, and keeping both in one file would mean carrying someone
+#: else's calibration around as your own.
 CALIBRATION_NAME = "Calibration.json"
 
 SETTINGS_NAME = "settings.ini"
 
-#: Ключ аргумента командной строки. Прописывается в ярлык и потому не
-#: требует никакого сохранённого состояния — этим он и хорош там, где папка
-#: программы не пишется.
+#: Command-line switch. It goes into the shortcut and so needs no saved state
+#: at all — which is exactly what makes it good where the program folder is not
+#: writable.
 DATA_ARGUMENT = "--data"
 
-#: Единственный след вне портативной папки. Появляется только после того, как
-#: пользователю сказали, что папка не пишется, и он выбрал место сам. Ключ —
-#: путь к папке программы, чтобы две копии не затирали выбор друг друга.
+#: The only trace outside the portable data folder. It appears only after the
+#: user has been told the folder is not writable and has chosen a place
+#: themselves. The key is the path to the program folder, so that two copies
+#: do not overwrite each other's choice.
 LOCATION_ORGANISATION = "ContainerHelper"
 LOCATION_NAME = "location.ini"
 
 
 class DataDirError(Exception):
-    """Каталог данных недоступен и выбрать его автоматически не вышло."""
+    """The data folder is unavailable and could not be chosen automatically."""
 
 
 def program_dir() -> Path:
-    """Папка программы: рядом с exe в сборке, корень проекта в исходниках."""
+    """Program folder: beside the exe in a build, project root in sources."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
@@ -54,7 +56,7 @@ def default_data_dir() -> Path:
 
 
 def data_dir_from_arguments(argv: list[str] | None = None) -> Path | None:
-    """Разобрать `--data <путь>` или `--data=<путь>`."""
+    """Parse `--data <path>` or `--data=<path>`."""
     argv = list(sys.argv[1:] if argv is None else argv)
     for index, item in enumerate(argv):
         if item == DATA_ARGUMENT and index + 1 < len(argv):
@@ -65,7 +67,7 @@ def data_dir_from_arguments(argv: list[str] | None = None) -> Path | None:
 
 
 def is_writable(directory: Path) -> bool:
-    """Проверка записью, а не правами: права на сетевых дисках врут."""
+    """Probe by writing, not by permissions: on network drives they lie."""
     try:
         directory.mkdir(parents=True, exist_ok=True)
         probe = directory / ".write-probe"
@@ -82,7 +84,7 @@ def _location_store() -> Path:
 
 
 def remembered_data_dir() -> Path | None:
-    """Папка, выбранная руками для этой копии программы."""
+    """The folder chosen by hand for this copy of the program."""
     from PySide6.QtCore import QSettings
 
     store = _location_store()
@@ -104,16 +106,16 @@ def remember_data_dir(directory: Path) -> None:
 
 
 def _location_key() -> str:
-    """Ключ по папке программы: две копии не должны сталкиваться."""
+    """Key by the program folder: two copies must not collide."""
     return str(program_dir()).replace("\\", "/").replace("/", "|")
 
 
 def resolve_data_dir(argv: list[str] | None = None) -> tuple[Path | None, str]:
-    """Найти каталог данных. Возвращает путь и то, откуда он взялся.
+    """Find the data folder. Returns the path and where it came from.
 
-    Порядок: аргумент командной строки, папка рядом с программой,
-    запомненный ранее выбор. Ничего не подошло — None, и спросить должен
-    вызывающий: тихо уезжать в чужой каталог программа не должна.
+    Order: the command-line argument, the folder next to the program, the
+    choice remembered earlier. If nothing fits — None, and the caller must ask:
+    the program must not quietly move off into some other folder.
     """
     chosen = data_dir_from_arguments(argv)
     if chosen is not None:

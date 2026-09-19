@@ -1,7 +1,7 @@
-"""Общее поведение таблиц, прокрутки и полей ввода.
+"""Shared behaviour of tables, scrolling and input fields.
 
-Живёт отдельно, потому что нужно всем вкладкам, а заводить между ними
-зависимость ради нескольких помощников не за чем.
+Lives on its own because every tab needs it, and there is no point in making
+the tabs depend on each other for the sake of a few helpers.
 """
 
 from __future__ import annotations
@@ -30,40 +30,40 @@ from PySide6.QtWidgets import (
 
 from ..formatting import IGNORED_IN_INPUT
 
-#: Сколько строк таблица обязана показывать всегда. Меньше двух — и шапка
-#: наезжает на первую строку: у QTableWidget нет своего минимума, он честно
-#: ужимается до нуля вместе с содержимым.
+#: How many rows a table must always show. Fewer than two, and the header
+#: runs over the first row: QTableWidget has no minimum of its own, it
+#: honestly shrinks to zero together with its contents.
 MIN_TABLE_ROWS = 2
 
-#: Потолок на автоматическую высоту. На сотне записей таблица во всю высоту
-#: сделала бы прокрутку вкладки бесконечной.
+#: Ceiling on the automatic height. With a hundred records a full-height
+#: table would make the tab's scrolling endless.
 MAX_AUTO_ROWS = 40
 
-#: Ниже этого таблица перестаёт быть таблицей: столбцы схлопываются в кашу.
+#: Below this a table stops being a table: the columns collapse into a mess.
 MIN_TABLE_WIDTH = 320
 
-#: Высота полоски, за которую таблицу тянут по вертикали.
+#: Height of the strip by which the table is dragged vertically.
 GRIP_HEIGHT = 7
 
-#: Что принимает поле размера: цифры и те разделители разрядов, которые
-#: `parse_bytes` и без того выбрасывает. Буква, минус или запятая в поле байт
-#: — это не «значение, которое не разобралось», а промах по клавише, и ловить
-#: его надо на вводе. Раньше `parse_bytes` молча возвращал None, поле
-#: оставалось с набранным мусором, а Container init превращался в прочерк —
-#: без единого слова о том, что именно не так.
+#: What a size field accepts: digits and the digit-group separators that
+#: `parse_bytes` throws away anyway. A letter, a minus or a comma in a bytes
+#: field is not "a value that failed to parse" but a slip of the finger, and
+#: it has to be caught on input. `parse_bytes` used to return None silently,
+#: the field kept the typed garbage, and Container init turned into a dash —
+#: without a single word about what exactly was wrong.
 BYTES_PATTERN = "[0-9" + "".join(IGNORED_IN_INPUT) + "]*"
 
-#: Что принимает поле имени и заметки: что угодно, кроме управляющих символов.
-#: Они попадают туда вставкой из чужого текста, в JSON уезжают экранированными
-#: и потом не находятся глазом ни в файле, ни в таблице.
+#: What the name and note fields accept: anything except control characters.
+#: Those get in by pasting someone else's text, travel into JSON escaped, and
+#: afterwards cannot be found by eye either in the file or in the table.
 TEXT_PATTERN = r"[^\x00-\x1f\x7f]*"
 
 
 class SortableItem(QTableWidgetItem):
-    """Ячейка, которая сортируется по значению, а не по показанному тексту.
+    """A cell that sorts by value, not by the displayed text.
 
-    Без этого «9 000» вставало бы после «10 000 000», а в режиме «Авто» —
-    ещё и «100.00 GiB» рядом с «1 023.75 MiB».
+    Without this "9 000" would land after "10 000 000", and in Auto mode
+    "100.00 GiB" would also land next to "1 023.75 MiB".
     """
 
     def __init__(self, text: str, key=None) -> None:
@@ -73,11 +73,11 @@ class SortableItem(QTableWidgetItem):
     def __lt__(self, other: QTableWidgetItem) -> bool:
         mine = self._key
         theirs = getattr(other, "_key", None)
-        # Незаполненные величины уходят в хвост при сортировке по возрастанию:
-        # интерес представляют снятые замеры, а не прочерки. При убывании Qt
-        # разворачивает сравнение, и прочерки оказываются сверху — пришпилить
-        # их к одному краю в обоих направлениях можно только своей моделью,
-        # а ради этого её заводить не за чем.
+        # Empty values go to the tail when sorting ascending: what matters is
+        # the measurements taken, not the dashes. When descending, Qt reverses
+        # the comparison and the dashes end up on top — pinning them to one
+        # end in both directions takes a model of our own, and it is not worth
+        # creating one for that.
         if mine is None:
             return False
         if theirs is None:
@@ -86,27 +86,28 @@ class SortableItem(QTableWidgetItem):
 
 
 def height_for_rows(table: QTableWidget, rows: int) -> int:
-    """Высота, при которой видно ровно столько строк и шапка целиком.
+    """The height at which exactly this many rows and the whole header show.
 
-    Считается по фактическим метрикам виджета, а не подбирается числом: тема
-    оформления и размер шрифта меняют и шапку, и строку.
+    Computed from the widget's actual metrics, not tuned by a number: the
+    theme and the font size change both the header and the row.
     """
     header = table.horizontalHeader().sizeHint().height()
     row = table.verticalHeader().defaultSectionSize()
     frame = 2 * table.frameWidth()
-    # Горизонтальная полоса появляется, когда столбцы шире окна, и съедает
-    # высоту у последней строки, если её не заложить.
+    # The horizontal scroll bar appears when the columns are wider than the
+    # window, and eats the last row's height unless it is allowed for.
     scrollbar = table.horizontalScrollBar().sizeHint().height()
     return header + rows * row + frame + scrollbar
 
 
 class TableGrip(QWidget):
-    """Полоска под таблицей, за которую её тянут по высоте.
+    """The height grip: a strip under a table, dragged to change its height.
 
-    Разделитель для этого не годится: он делит фиксированную высоту между
-    соседями и вырасти за неё не может. Высоту вкладки внутри прокрутки
-    задаёт минимум её содержимого, поэтому тянуть надо именно minimumHeight
-    таблицы — тогда вкладка становится выше окна и прокрутка удлиняется.
+    A splitter will not do here: it divides a fixed height between its
+    neighbours and cannot grow beyond it. The height of a tab inside a scroll
+    area is set by the minimum of its contents, so it is the table's
+    minimumHeight that has to be dragged — then the tab grows taller than the
+    window and the scrolling gets longer.
     """
 
     resized = Signal()
@@ -119,8 +120,8 @@ class TableGrip(QWidget):
         self.setFixedHeight(GRIP_HEIGHT)
         self.setCursor(QCursor(Qt.SizeVerCursor))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        # Про перетаскивание не пишем: об этом говорит сам курсор. Про
-        # двойной щелчок написать надо — узнать о нём больше неоткуда.
+        # Nothing about dragging: the cursor itself says that. The double
+        # click has to be mentioned — there is nowhere else to learn of it.
         self.setToolTip("Двойной щелчок вернёт наименьшую высоту")
 
     def floor_height(self) -> int:
@@ -155,14 +156,14 @@ class TableGrip(QWidget):
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """Двойной щелчок возвращает таблицу к минимальной высоте."""
+        """A double click returns the table to its minimum height."""
         apply_table_height(self._table, expand=False)
         self.resized.emit()
         event.accept()
 
 
 def with_grip(table: QTableWidget) -> QWidget:
-    """Обернуть таблицу вместе с ручкой изменения высоты."""
+    """Wrap the table together with its height grip."""
     box = QWidget()
     column = QVBoxLayout(box)
     column.setContentsMargins(0, 0, 0, 0)
@@ -179,19 +180,20 @@ def setup_table(
     sortable: bool = True,
     min_rows: int = MIN_TABLE_ROWS,
 ) -> None:
-    """Сортировка по клику, свободная ширина столбцов, честный минимум высоты.
+    """Sorting on click, free column widths, an honest minimum height.
 
-    Ни один столбец не растягивается по ширине окна. Растянутый столбец
-    съедает весь остаток места, и тогда ширина таблицы намертво равна ширине
-    окна: потянув за край одного столбца, пользователь двигает соседний, а
-    край растянутого не двигается вообще. Здесь сумма столбцов живёт своей
-    жизнью, а если она вылезла за окно — появляется горизонтальная прокрутка.
+    No column stretches to the window width. A stretched column eats all the
+    remaining space, and then the table width is locked to the window width:
+    dragging the edge of one column, the user moves the neighbouring one, and
+    the edge of the stretched one does not move at all. Here the sum of the
+    columns lives its own life, and if it spills past the window, a
+    horizontal scroll bar appears.
     """
     header = table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.Interactive)
     header.setStretchLastSection(False)
     header.setSectionsClickable(True)
-    # Иначе перетаскивание одного края тянет за собой соседние секции.
+    # Otherwise dragging one edge pulls the neighbouring sections along.
     header.setCascadingSectionResizes(False)
     header.setMinimumSectionSize(40)
 
@@ -213,11 +215,11 @@ def setup_table(
 
 
 def _install_sort_cycle(table: QTableWidget) -> None:
-    """Три щелчка по заголовку: по возрастанию, по убыванию, без сортировки.
+    """Three clicks on a header: ascending, descending, unsorted.
 
-    Qt сам умеет только первые два и гоняет их по кругу. Третье состояние —
-    исходный порядок строк, тот же, что при запуске: записи лежат в порядке,
-    в котором их снимали, и это осмысленно само по себе.
+    Qt on its own knows only the first two and cycles through them. The third
+    state is the original row order, the same as at startup: the records lie
+    in the order they were taken, and that is meaningful in itself.
     """
     header = table.horizontalHeader()
 
@@ -229,8 +231,9 @@ def _install_sort_cycle(table: QTableWidget) -> None:
         if clicks >= 3:
             header.setSortIndicator(-1, Qt.AscendingOrder)
             table.setProperty("sort_state", {})
-            # Снять индикатор мало: строки остались в последнем порядке.
-            # Исходный знает только владелец таблицы — он и перезаполняет.
+            # Clearing the indicator is not enough: the rows stay in the last
+            # order. Only the table's owner knows the original one — so the
+            # owner refills the table.
             restore = getattr(table, "restore_order", None)
             if callable(restore):
                 restore()
@@ -241,12 +244,12 @@ def _install_sort_cycle(table: QTableWidget) -> None:
 
 
 def set_restore_order(table: QTableWidget, callback) -> None:
-    """Кто умеет вернуть исходный порядок строк на третьем щелчке."""
+    """Who can bring back the original row order on the third click."""
     table.restore_order = callback
 
 
 def sort_state(table: QTableWidget) -> tuple[int, int]:
-    """Столбец и направление для сохранения. -1 — сортировки нет."""
+    """Column and direction to save. -1 means no sorting."""
     header = table.horizontalHeader()
     section = header.sortIndicatorSection()
     if not table.isSortingEnabled() or section < 0:
@@ -266,7 +269,7 @@ def restore_sort(table: QTableWidget, section: int, order: int) -> None:
 
 
 def apply_table_height(table: QTableWidget, expand: bool) -> None:
-    """Переключить таблицу между «минимум строк» и «во всю высоту»."""
+    """Switch the table between "minimum rows" and "full height"."""
     min_rows = table.property("min_rows") or MIN_TABLE_ROWS
     rows = max(min_rows, min(table.rowCount(), MAX_AUTO_ROWS)) if expand else min_rows
     height = height_for_rows(table, rows)
@@ -279,7 +282,7 @@ def table_height(table: QTableWidget) -> int:
 
 
 def set_table_height(table: QTableWidget, height: int) -> None:
-    """Вернуть высоту, натянутую руками в прошлый раз."""
+    """Restore the height dragged by hand last time."""
     rows = table.property("min_rows") or MIN_TABLE_ROWS
     height = max(height, height_for_rows(table, rows))
     table.setMinimumHeight(height)
@@ -287,12 +290,12 @@ def set_table_height(table: QTableWidget, height: int) -> None:
 
 
 def set_header_tooltips(table: QTableWidget, tips) -> None:
-    """Подсказка на каждый заголовок столбца.
+    """A tooltip on every column header.
 
-    Заголовки короткие по необходимости — иначе столбцы не влезают, — а из
-    двух слов не всегда видно, что именно в столбце лежит и откуда оно
-    берётся. Вызывать после setHorizontalHeaderLabels: тот заводит элементы
-    заголовка заново и подсказки вместе с ними стирает.
+    Headers are short by necessity — otherwise the columns do not fit — and
+    two words do not always make clear what exactly the column holds and
+    where it comes from. Call after setHorizontalHeaderLabels: it creates the
+    header items anew and wipes the tooltips along with them.
     """
     for column, tip in enumerate(tips):
         if column >= table.columnCount():
@@ -305,10 +308,10 @@ def set_header_tooltips(table: QTableWidget, tips) -> None:
 
 
 def fit_columns(table: QTableWidget, padding: int = 16) -> None:
-    """Подогнать ширину столбцов под содержимое — один раз, не насовсем.
+    """Fit the column widths to the contents — once, not for good.
 
-    Дальше ширина принадлежит пользователю: resizeColumnsToContents на каждом
-    обновлении затирал бы то, что он натянул руками.
+    After that the width belongs to the user: resizeColumnsToContents on
+    every refresh would wipe out what they dragged by hand.
     """
     table.resizeColumnsToContents()
     header = table.horizontalHeader()
@@ -317,16 +320,16 @@ def fit_columns(table: QTableWidget, padding: int = 16) -> None:
 
 
 def fit_widget_columns(table: QTableWidget, padding: int = 8) -> None:
-    """Расширить столбцы под виджеты в ячейках. Только расширить.
+    """Widen the columns to fit the widgets in their cells. Only widen.
 
-    `resizeColumnsToContents` меряет элементы, а виджет, положенный через
-    `setCellWidget`, для неё не существует вовсе: столбец с кнопками
-    «Переснять» и «К заводскому» вставал в 97 px при нужных 284, и обе кнопки
-    показывали по три буквы.
+    `resizeColumnsToContents` measures items, and a widget placed with
+    `setCellWidget` does not exist for it at all: the column with the
+    Re-measure and Use factory buttons came out at 97 px instead of the 284
+    needed, and both buttons showed three letters each.
 
-    Только в большую сторону и на каждом обновлении: натянутую руками ширину
-    сужать нельзя, а сохранённая с прежней версии может быть меньше кнопки —
-    тогда её надо поправить, ничего не спрашивая.
+    Only upward, and on every refresh: a width dragged by hand must not be
+    narrowed, while one saved by an earlier version may be smaller than the
+    button — then it has to be corrected without asking anything.
     """
     header = table.horizontalHeader()
     for column in range(header.count()):
@@ -345,7 +348,10 @@ def column_widths(table: QTableWidget) -> list[int]:
 
 
 def set_column_widths(table: QTableWidget, widths: list[int]) -> bool:
-    """Вернуть сохранённые ширины. False — не подошли, надо подгонять заново."""
+    """Restore the saved widths.
+
+    False: they do not match the table, so fit the columns anew.
+    """
     header = table.horizontalHeader()
     if len(widths) != header.count() or not all(width > 0 for width in widths):
         return False
@@ -355,12 +361,12 @@ def set_column_widths(table: QTableWidget, widths: list[int]) -> bool:
 
 
 def wrapped(label: QLabel) -> QLabel:
-    """Подпись, которая переносится по словам и получает под это высоту.
+    """A wrapped label: wraps at word boundaries and gets the height for it.
 
-    Одного `setWordWrap` мало: политика размера у QLabel по умолчанию не
-    сообщает раскладке, что высота зависит от ширины, и та отводит подписи
-    одну строку. Внутри прокрутки это видно сразу — второй строки просто нет,
-    текст обрывается на середине.
+    `setWordWrap` alone is not enough: QLabel's default size policy does not
+    tell the layout that the height depends on the width, and the layout
+    gives the label a single line. Inside a scroll area this shows at once —
+    the second line is simply not there, the text breaks off in the middle.
     """
     label.setWordWrap(True)
     policy = label.sizePolicy()
@@ -370,12 +376,12 @@ def wrapped(label: QLabel) -> QLabel:
 
 
 def digits_only(field: QLineEdit | QComboBox) -> None:
-    """Разрешить в поле только цифры и разделители разрядов.
+    """Allow only digits and digit-group separators in the field.
 
-    Валидатором, а не проверкой при сохранении: поле, которое не принимает
-    букву, объясняет правило само, в тот момент, когда его нарушают. Вставка
-    из буфера проходит тот же валидатор целиком — испорченный текст в поле не
-    окажется и оттуда.
+    By a validator, not by a check on save: a field that refuses a letter
+    explains the rule itself, at the very moment it is broken. A paste from
+    the clipboard goes through the same validator as a whole — corrupted text
+    will not get into the field that way either.
     """
     validator = QRegularExpressionValidator(
         QRegularExpression(BYTES_PATTERN), field
@@ -384,7 +390,7 @@ def digits_only(field: QLineEdit | QComboBox) -> None:
 
 
 def plain_text(field: QLineEdit, limit: int) -> None:
-    """Свободный текст без управляющих символов и не длиннее предела."""
+    """Free text without control characters and no longer than the limit."""
     field.setValidator(
         QRegularExpressionValidator(QRegularExpression(TEXT_PATTERN), field)
     )
@@ -392,10 +398,10 @@ def plain_text(field: QLineEdit, limit: int) -> None:
 
 
 def fit_field(field: QLineEdit, sample: str, padding: int = 24) -> None:
-    """Ширина поля под самое длинное допустимое значение, не под всю форму.
+    """Field width for the longest valid value, not for the whole form.
 
-    Поле кластера шириной в пол-экрана врёт о том, что туда можно вписать:
-    больше 65536 не бывает.
+    A cluster field half a screen wide lies about what can go into it:
+    nothing larger than 65536 exists.
     """
     metrics = QFontMetrics(field.font())
     width = metrics.horizontalAdvance(sample) + padding
@@ -404,10 +410,11 @@ def fit_field(field: QLineEdit, sample: str, padding: int = 24) -> None:
 
 
 def scrollable(content: QWidget, min_width: int = 0) -> QScrollArea:
-    """Обернуть вкладку прокруткой.
+    """Wrap a tab in a scroll area.
 
-    Когда окно ниже или уже содержимого, элементы должны уезжать под
-    прокрутку, а не сплющиваться до нечитаемого состояния.
+    When the window is shorter or narrower than the contents, the elements
+    must slide out of view under the scrolling, not be squashed until they
+    are unreadable.
     """
     if min_width:
         content.setMinimumWidth(min_width)

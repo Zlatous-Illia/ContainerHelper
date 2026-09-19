@@ -1,4 +1,4 @@
-"""Вкладка «Записи»: хранилище замеров и правка."""
+"""The Records tab: the store of measurements and editing."""
 
 from __future__ import annotations
 
@@ -44,19 +44,20 @@ from .table import (
     with_grip,
 )
 
-#: Род столбца определяет и форматирование, и ключ сортировки. Строковое
-#: сравнение здесь не годится: «9 000» встало бы после «10 000 000».
+#: The column kind determines both the formatting and the sort key. String
+#: comparison does not work here: "9 000" would land after "10 000 000".
 COL_TEXT = "text"
 COL_COUNT = "count"
 COL_BYTES = "bytes"
-#: Величина со знаком в MiB. Отдельный род, потому что знак здесь несёт весь
-#: смысл: минус означает, что данные не влезли бы, и потерять его в общем
-#: форматировании нельзя.
+#: A signed value in MiB. A kind of its own, because the sign carries all the
+#: meaning here: minus means the data would not have fit, and it must not be
+#: lost in the common formatting.
 COL_SIGNED = "signed"
 
-#: Заголовок, род и подсказка. Род определяет и форматирование, и то,
-#: дописывать ли к заголовку выбранную единицу. Подсказка обязательна:
-#: заголовки короткие по необходимости, иначе столбцы не влезают в окно.
+#: Title, kind and tooltip. The kind determines both the formatting and
+#: whether the chosen unit is appended to the title. The tooltip is mandatory:
+#: the titles are short out of necessity, otherwise the columns do not fit
+#: into the window.
 COLUMNS = (
     (
         "Имя",
@@ -130,20 +131,20 @@ COLUMNS = (
     ),
 )
 
-#: Роль, в которой у первой ячейки строки лежит индекс записи в хранилище.
-#: При включённой сортировке номер строки в таблице перестаёт совпадать с ним,
-#: и без этой роли правка и удаление попадали бы не в ту запись.
+#: The role under which a row's first cell holds the record's index in the
+#: store. With sorting on, the row number in the table stops matching it, and
+#: without this role editing and deleting would hit the wrong record.
 STORE_INDEX_ROLE = Qt.UserRole
 
-#: Перенос строки в подсказке. Вынесен в константу: экранирование внутри
-#: шаблонов правки этого файла уже один раз схлопывалось.
+#: The line break in a tooltip. Kept in a constant: the escaping inside the
+#: edit templates for this file has already collapsed once.
 LINE_BREAK = chr(10)
 
 
 class RecordsTab(QWidget):
     recordsChanged = Signal()
-    #: Просьба показать окно с графиками — по ключу окна. Открывает
-    #: его главное окно: вкладки друг о друге и об окнах не знают.
+    #: A request to show a chart window, by the window's key. The main window
+    #: opens it: the tabs know neither about each other nor about the windows.
     chartRequested = Signal(str)
 
     def __init__(
@@ -156,42 +157,45 @@ class RecordsTab(QWidget):
         super().__init__(parent)
         self.store = Store(path=Path("records.json"))
         self._unit: Unit = DEFAULT_UNIT
-        #: Проводится в диалог записи: размер и число файлов приложение само
-        #: не знает, их считает вкладка «Расчёт».
+        #: Passed through to the record dialog: the application does not know
+        #: the size and the file count by itself, the Calculation tab computes
+        #: them.
         self._payload_provider = payload_provider
         self._container_provider = container_provider
-        #: Сколько страховки было в расчёте. Хранится в записи ради разбора
-        #: промаха: без неё занижение, прикрытое страховкой, не отличить от
-        #: точного попадания.
+        #: How much safety margin the calculation had. Stored in the record for
+        #: analysing the miss: without it, an underestimate covered by the
+        #: safety margin cannot be told apart from an exact hit.
         self._safety_provider = safety_provider
-        #: Показ ошибок и подтверждений вынесен в подменяемые обработчики:
-        #: модальный диалог посреди логики нечем закрыть из теста.
+        #: Showing errors and confirmations is moved into replaceable handlers:
+        #: a test has no way to close a modal dialog in the middle of the
+        #: logic.
         self.report_error = self._show_error
         self.confirm = self._ask_confirmation
-        #: Некалиброванная модель — единственная база, относительно которой
-        #: отклонение остаётся осмысленным. Калиброванная проходит точно через
-        #: свои же точки, и отклонение в таблице всегда было бы нулём.
+        #: The uncalibrated model is the only baseline against which the
+        #: deviation stays meaningful. The calibrated model passes exactly
+        #: through its own points, and the deviation in the table would always
+        #: be zero.
         self._baseline = NtfsModel()
-        #: Открытые окна правки: id(записи) → окно. Окна немодальны, и на одну
-        #: запись их должно быть не больше одного: два окна на одну строку —
-        #: это гонка, где выигрывает нажавший «Сохранить» последним, а
-        #: потерянную правку заметить нечем.
+        #: Open edit windows: id(record) → window. The windows are modeless,
+        #: and there must be at most one per record: two windows on one row are
+        #: a race won by whoever presses Save last, and there is no way to
+        #: notice the lost edit.
         self._editors: dict[int, RecordDialog] = {}
-        #: Окна новых записей. Их можно открыть сколько угодно: пока запись не
-        #: сохранена, мешать друг другу им нечем.
+        #: Windows for new records. Any number of them can be open: until a
+        #: record is saved, they have nothing to get in each other's way with.
         self._creators: list[RecordDialog] = []
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._build_path_row())
         layout.addLayout(self._build_buttons())
 
-        # Высота таблицы принадлежит пользователю: тянется за разделитель,
-        # ручка которого приходится на нижний контур самой таблицы.
+        # The table's height belongs to the user: it is dragged by a splitter
+        # whose handle sits on the table's own bottom edge.
         layout.addWidget(with_grip(self._build_table()))
         layout.addWidget(self._build_summary())
         layout.addStretch(1)
 
-    # --- построение --------------------------------------------------------
+    # --- construction ------------------------------------------------------
 
     def _build_path_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -222,14 +226,14 @@ class RecordsTab(QWidget):
         return row
 
     def add_calibration_point(self, container_mib: int) -> RecordDialog:
-        """Завести точку калибровки на заданный размер.
+        """Create a calibration point for the given size.
 
-        Имя подставляется, размер тоже — от пользователя нужен только замер
-        смонтированного пустого тома.
+        The name is filled in, and so is the size — all that is needed from the
+        user is the measurement of the mounted empty volume.
 
-        Окно немодальное, как и у обычной записи: замер снимают, глядя на
-        смонтированный том и на вкладку «Расчёт», а модальное окно закрывает
-        и то, и другое.
+        The window is modeless, as for an ordinary record: the measurement is
+        taken while looking at the mounted volume and at the Calculation tab,
+        and a modal window covers both.
         """
         opened = self._editors.get(container_mib)
         if opened is not None:
@@ -238,9 +242,9 @@ class RecordsTab(QWidget):
             id=f"Калибровка {size_label(container_mib)}", container_mib=container_mib
         )
         dialog = RecordDialog(seed, parent=self, calibration=True)
-        # Ключом — размер контейнера, а не id(seed): смысл окна в том, какой
-        # размер оно замеряет, и второе окно на тот же размер сняло бы второй
-        # замер поверх первого.
+        # Keyed by the container size, not id(seed): the point of the window is
+        # which size it measures, and a second window for the same size would
+        # take a second measurement on top of the first.
         self._editors[container_mib] = dialog
         dialog.finished.connect(
             lambda code, key=container_mib, box=dialog: self._point_closed(key, box, code)
@@ -253,14 +257,14 @@ class RecordsTab(QWidget):
             self.store_calibration_point(dialog.result_record())
         dialog.deleteLater()
 
-    # --- немодальные окна правки -------------------------------------------
+    # --- modeless edit windows ---------------------------------------------
 
     def _show(self, dialog: RecordDialog) -> RecordDialog:
-        """Показать окно, не отдавая ему управление.
+        """Show the window without handing control over to it.
 
-        `show`, а не `exec`: пока окно открыто, вкладка «Расчёт» остаётся
-        живой — а она и есть источник размера и числа файлов, и «Взять
-        с „Расчёта“» без неё нажимать бессмысленно.
+        `show`, not `exec`: while the window is open, the Calculation tab stays
+        alive — and it is the source of the size and the file count, so
+        pressing Take from Calculation without it is pointless.
         """
         dialog.show()
         return self._raise(dialog)
@@ -281,7 +285,7 @@ class RecordsTab(QWidget):
         )
 
     def open_record(self, record: Record) -> RecordDialog:
-        """Открыть запись на правку. Уже открытую — поднять, а не открыть заново."""
+        """Open a record for editing; one already open is raised instead."""
         opened = self._editors.get(id(record))
         if opened is not None:
             return self._raise(opened)
@@ -293,11 +297,12 @@ class RecordsTab(QWidget):
         return self._show(dialog)
 
     def _editor_closed(self, record: Record, dialog: RecordDialog, code: int) -> None:
-        """Окно закрылось. Сохранённое кладётся в ту же самую запись.
+        """The window closed. What was saved goes into the very same record.
 
-        Место ищется тождеством в момент сохранения, а не запоминается при
-        открытии: пока окно было открыто, соседнюю запись могли удалить из
-        другого окна, и номер показывал бы уже на чужую строку.
+        The position is found by identity at the moment of saving, not
+        remembered at opening: while the window was open, a neighbouring record
+        may have been deleted from another window, and the number would already
+        point at someone else's row.
         """
         self._editors.pop(id(record), None)
         dialog.deleteLater()
@@ -315,11 +320,11 @@ class RecordsTab(QWidget):
         self._save()
 
     def close_editors(self) -> None:
-        """Закрыть все окна правки. Зовётся при смене файла записей.
+        """Close all edit windows. Called when the records file changes.
 
-        Открытое окно держит запись **прежнего** хранилища: сохранить её в
-        новое некуда, а показывать её рядом с чужой таблицей — врать о том,
-        что правится.
+        An open window holds a record of the **previous** store: there is
+        nowhere to save it in the new one, and showing it next to someone
+        else's table would be lying about what is being edited.
         """
         for dialog in [*self._editors.values(), *self._creators]:
             dialog.close()
@@ -327,24 +332,28 @@ class RecordsTab(QWidget):
         self._creators.clear()
 
     def store_calibration_point(self, record: Record) -> None:
-        """Положить замер в файл замеров, вытеснив прежний того же рода.
+        """Save a measurement, superseding the previous one of the same kind.
 
-        Замер на тот же размер тома заменяет прежний, а не ложится рядом: две
-        точки на одном томе модели не нужны. Замер запаса вытесняет замер с
-        тем же числом файлов — своим ключом, потому что общий выбивал бы
-        точку NTFS замером запаса, снятым на том же размере тома, и наоборот.
+        It goes into the measurements file. A measurement for the same volume
+        size replaces the previous one instead of lying next to it: the model
+        has no use for two points on one volume. A copy-slack measurement
+        supersedes the one with the same file count — by a key of its own,
+        because a shared key would knock out an NTFS point with a copy-slack
+        measurement taken at the same volume size, and vice versa.
 
-        Сохранение сразу же, по одному замеру: автоматический сбор идёт
-        часами, и падение посередине не должно стоить всего, что уже снято.
+        Saved right away, one measurement at a time: automatic collection runs
+        for hours, and a crash halfway must not cost everything already
+        measured.
         """
         self.store.put_calibration(record)
         self._save()
 
     def remove_calibration(self, record: Record) -> None:
-        """Убрать замер из файла замеров. По тождеству, а не по номеру.
+        """Remove a measurement from the measurements file, by identity.
 
-        Номер зависит от порядка в файле, а тот меняется при каждом
-        сохранении: put_calibration переставляет заменённый замер в конец.
+        Not by number: the number depends on the order in the file, and that
+        changes on every save — put_calibration moves a replaced measurement to
+        the end.
         """
         self.store.calibration = [
             item for item in self.store.calibration if item is not record
@@ -414,7 +423,7 @@ class RecordsTab(QWidget):
         return self.table
 
     def _apply_headers(self) -> None:
-        """Заголовки байтовых столбцов несут название выбранной единицы."""
+        """The titles of byte columns carry the name of the chosen unit."""
         labels = [
             title + (unit_suffix(self._unit) if kind == COL_BYTES else "")
             for title, kind, _tip in COLUMNS
@@ -444,7 +453,7 @@ class RecordsTab(QWidget):
         )
         return self.summary_label
 
-    # --- хранилище ---------------------------------------------------------
+    # --- store -------------------------------------------------------------
 
     def load_from(self, path: str | Path) -> bool:
         self.close_editors()
@@ -456,9 +465,10 @@ class RecordsTab(QWidget):
             self.refresh()
             return False
         if self.store.migrated:
-            # Замеры приехали из старого однофайлового хранилища. Записать их
-            # на своё место надо сразу: пока файл записей держит вторую копию,
-            # правка замера уедет в один файл, а чтение — в другой.
+            # The measurements came from the old single-file store. They must
+            # be written to their own place right away: while the records file
+            # holds a second copy, an edit of a measurement goes to one file
+            # and a read comes from the other.
             try:
                 self.store.save()
             except StoreError as exc:
@@ -479,7 +489,7 @@ class RecordsTab(QWidget):
             self.load_from(path)
 
     def save_store(self) -> None:
-        """Сохранить и разослать сигнал. Нужно правкам точек калибровки."""
+        """Save and emit the signal. Needed by edits of calibration points."""
         self._save()
 
     def _save(self) -> None:
@@ -491,13 +501,14 @@ class RecordsTab(QWidget):
         self.refresh()
         self.recordsChanged.emit()
 
-    # --- операции над записями ---------------------------------------------
+    # --- operations on records ---------------------------------------------
 
     def _selected_index(self) -> int | None:
-        """Индекс выбранной записи в хранилище.
+        """The store index of the selected record.
 
-        При сортировке номер строки в таблице и позиция в store расходятся,
-        поэтому индекс берётся из данных ячейки, а не из номера строки.
+        With sorting, the row number in the table and the position in the store
+        diverge, so the index is taken from the cell's data, not from the row
+        number.
         """
         rows = self.table.selectionModel().selectedRows()
         if not rows:
@@ -539,8 +550,9 @@ class RecordsTab(QWidget):
             "Удалить запись", f"Удалить «{record.id}»? Действие не отменяется."
         ):
             return
-        # Окно правки этой записи закрывается заодно: сохранять его было бы
-        # уже некуда, а «Сохранить» в нём выглядело бы работающим.
+        # This record's edit window is closed along with it: there would be
+        # nowhere left to save it to, and Save in it would look as if it
+        # worked.
         opened = self._editors.pop(id(record), None)
         if opened is not None:
             opened.close()
@@ -553,16 +565,17 @@ class RecordsTab(QWidget):
     def _ask_confirmation(self, title: str, text: str) -> bool:
         return QMessageBox.question(self, title, text) == QMessageBox.Yes
 
-    # --- отображение -------------------------------------------------------
+    # --- display -----------------------------------------------------------
 
     def refresh(self) -> None:
         self.path_label.setText(str(self.store.path))
-        # Точки калибровки сюда больше не попадают вовсе: они живут своим
-        # ключом в файле и своей вкладкой. Фильтр стал не нужен.
+        # Calibration points no longer get here at all: they live under their
+        # own key in the file and on their own tab. The filter is no longer
+        # needed.
         shown = list(enumerate(self.store.records))
 
-        # Заполнение при включённой сортировке перемешивало бы строки прямо по
-        # ходу, и ячейки уезжали бы в чужие строки.
+        # Filling with sorting on would reshuffle the rows as it goes, and
+        # cells would drift into other rows.
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(shown))
 
@@ -611,8 +624,8 @@ class RecordsTab(QWidget):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if tooltip:
                     item.setToolTip(tooltip)
-                # Занижение красным. Здесь, а не в подсказке: расчёт, который
-                # не влез бы, надо видеть, не наводя мышь.
+                # Underestimate in red. Here, not in the tooltip: a calculation
+                # that would not have fit must be visible without hovering.
                 if kind == COL_SIGNED and value is not None and value < 0:
                     item.setForeground(QColor("#b00020"))
                     item.setToolTip(
@@ -624,17 +637,18 @@ class RecordsTab(QWidget):
                 self.table.setItem(row, column, item)
 
         self.table.setSortingEnabled(True)
-        # Один раз при первом наполнении. Дальше ширина — дело пользователя, и
-        # затирать её на каждом обновлении нельзя.
+        # Once, on the first fill. After that the width is the user's business,
+        # and it must not be overwritten on every refresh.
         if not self._columns_fitted and shown:
             fit_columns(self.table)
             self._columns_fitted = True
-        # Сводка всегда по всему хранилищу: фильтр прячет строки, а не данные.
+        # The summary always covers the whole store: the filter hides rows,
+        # not data.
         self._refresh_summary(self.store.records)
 
     def _refresh_summary(self, records: list[Record]) -> None:
         def _files_range(samples: list[tuple[int, int]]) -> str:
-            """Разброс по числу файлов; при одном значении — без «от … до»."""
+            """Range of file counts; a single value goes without «от … до»."""
             low = min(count for count, _ in samples)
             high = max(count for count, _ in samples)
             if low == high:
@@ -663,8 +677,9 @@ class RecordsTab(QWidget):
             ),
         ]
 
-        # Проверка прогноза: то, ради чего программа и существует. Считается
-        # только по записям, где обещание расчёта записано и остаток замерен.
+        # Checking the prediction: the very reason the program exists. Counted
+        # only over records where the prediction is recorded and the left space
+        # is measured.
         report = forecast(records)
         if not report.checked:
             parts.append(

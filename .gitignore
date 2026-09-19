@@ -289,14 +289,14 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,pycharm
 ### ContainerHelper ###
 
-# Папка данных: замеры этой машины, записи и настройки окна.
-# Программа создаёт её сама при первом запуске.
+# Data folder: this machine's measurements, the records and the window
+# settings. The program creates it by itself on first launch.
 /data/
 
-# Каталог IDE целиком: он про рабочее место, а не про программу.
+# The whole IDE folder: it is about the workplace, not about the program.
 /.idea/
 
-# Сборка PyInstaller
+# PyInstaller build
 /build/
 /dist/
 *.spec

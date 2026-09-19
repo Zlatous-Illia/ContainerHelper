@@ -1,8 +1,9 @@
-# В репозитории всё хранится с LF, в рабочей копии — как принято в системе.
-# Файлы в проекте сложились вперемешку: часть CRLF, часть LF. Без этой строки
-# разница попала бы в историю и всплывала бы в каждом diff как правка целого
-# файла.
+# The repository stores everything with LF, the working copy as is customary
+# on the system. The project's files ended up mixed: some CRLF, some LF.
+# Without this line the difference would get into history and show up in
+# every diff as an edit of the whole file.
 * text=auto
 
-# Заводские замеры — данные, а не текст для правки, но diff по ним читать надо.
+# Factory measurements are data, not text for editing, but their diffs still
+# have to be readable.
 *.json text

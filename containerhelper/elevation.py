@@ -1,13 +1,13 @@
-"""Права администратора: определить и перезапросить.
+"""Administrator rights: detect them and ask for them again.
 
-Нужны из-за одного ключа: документация `/filesystem NTFS` говорит, что «a UAC
-prompt will be displayed unless the process is run with full administrative
-privileges». На двадцати двух контейнерах это двадцать два запроса UAC подряд,
-и сбор перестаёт быть автоматическим.
+They are needed because of one switch: the documentation of
+`/filesystem NTFS` says that "a UAC prompt will be displayed unless the process
+is run with full administrative privileges". On twenty-two containers that is
+twenty-two UAC prompts in a row, and the collection stops being automatic.
 
-Сбросить права обратно нельзя — процесс с ними живёт до конца, поэтому
-перезапуск предлагается, а не делается сам, и окно после него должно об этом
-говорить вслух.
+Rights cannot be dropped again — a process that has them keeps them to the
+end, so the restart is offered, not done on its own, and the window after it
+must say so out loud.
 """
 
 from __future__ import annotations
@@ -18,16 +18,17 @@ from pathlib import Path
 from .paths import DATA_ARGUMENT, program_dir
 from .sizes import IS_WINDOWS
 
-#: Глагол ShellExecuteW, поднимающий запрос UAC.
+#: The ShellExecuteW verb that raises the UAC prompt.
 RUNAS = "runas"
 
-#: Всё, что ShellExecuteW возвращает не больше этого, — ошибка. Так описано в
-#: документации самой функции: успех отдаёт «псевдо-HINSTANCE» больше 32.
+#: Anything ShellExecuteW returns that is not greater than this is an error.
+#: That is how the function's own documentation puts it: success returns a
+#: "pseudo-HINSTANCE" greater than 32.
 SHELL_EXECUTE_OK = 32
 
 
 def is_admin() -> bool:
-    """Запущены ли мы с полными правами администратора."""
+    """Whether we run with full administrator rights."""
     if not IS_WINDOWS:
         return False
     import ctypes
@@ -39,11 +40,11 @@ def is_admin() -> bool:
 
 
 def relaunch_arguments(data_dir: Path | None) -> tuple[str, list[str]]:
-    """Что запускать при перезапуске: сам exe в сборке, python -m в исходниках.
+    """What to relaunch: the exe itself in a build, python -m from source.
 
-    Папка данных передаётся явным `--data`: у поднятого процесса другое
-    окружение, и полагаться на то, что он найдёт ту же папку сам, нельзя —
-    портативность на этом бы и кончилась.
+    The data folder is passed as an explicit `--data`: the elevated process
+    has a different environment, and relying on it to find the same folder by
+    itself is not an option — portability would end right there.
     """
     arguments: list[str] = []
     if not getattr(sys, "frozen", False):
@@ -54,17 +55,18 @@ def relaunch_arguments(data_dir: Path | None) -> tuple[str, list[str]]:
 
 
 def quote(arguments: list[str]) -> str:
-    """Склеить аргументы в одну строку: ShellExecuteW принимает только её."""
+    """Join the arguments into one string: ShellExecuteW accepts only that."""
     return " ".join(
         f'"{item}"' if " " in item or not item else item for item in arguments
     )
 
 
 def relaunch_as_admin(data_dir: Path | None = None) -> bool:
-    """Запросить перезапуск с правами администратора.
+    """Request a restart with administrator rights.
 
-    True — запрос принят и новая копия пошла подниматься; вызывающий обязан
-    закрыть текущую, иначе две копии станут писать в одну папку данных.
+    True means the request was accepted and the new copy is starting up; the
+    caller must close the current one, otherwise two copies will write to the
+    same data folder.
     """
     if not IS_WINDOWS:
         return False

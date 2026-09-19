@@ -1,4 +1,4 @@
-"""Выбор смонтированного тома и снятие замера."""
+"""Choosing a mounted volume and taking a measurement."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from ..formatting import fmt_both
 from ..sizes import SUPPORTED_FS, cluster_size, mounted_drives, volume_filesystem, volume_usage
 
 
-#: Что диалог делает, когда его открыли без уточнения. Вызывающий обычно
-#: знает больше — какой именно замер он снимает — и передаёт свой текст.
+#: What the dialog does when opened without specifics. The caller usually
+#: knows more — which measurement exactly it is taking — and passes its own
+#: text.
 DEFAULT_PROMPT = (
     "Смонтируйте контейнер и выберите его букву.\n"
     "Пустой том даёт ёмкость и метаданные NTFS, после\n"
@@ -24,7 +25,7 @@ DEFAULT_PROMPT = (
 
 
 class MeasureDialog(QDialog):
-    """Возвращает пару (ёмкость, свободно) для выбранной буквы диска."""
+    """Returns the pair (capacity, free) for the chosen drive letter."""
 
     def __init__(self, parent=None, prompt: str = DEFAULT_PROMPT) -> None:
         super().__init__(parent)
@@ -106,10 +107,11 @@ class MeasureDialog(QDialog):
         )
 
     def volume_facts(self) -> tuple[str, int | None]:
-        """Файловая система и размер кластера выбранного тома.
+        """Filesystem and cluster size of the chosen volume.
 
-        Оба читаются, а не спрашиваются: том уже существует, и гадать про
-        него незачем — на этом и держится проверка, что замер сделан на NTFS.
+        Both are read, not asked for: the volume already exists, and there is
+        no need to guess about it — this is what the check that the
+        measurement was taken on NTFS rests on.
         """
         drive = self.combo.currentData()
         if not drive:
@@ -117,7 +119,7 @@ class MeasureDialog(QDialog):
         return volume_filesystem(drive), cluster_size(drive)
 
     def selected_drive(self) -> str | None:
-        """Буква выбранного тома — нужна, чтобы обойти его содержимое."""
+        """The chosen volume's letter — needed to scan its contents."""
         return self.combo.currentData()
 
     def result_values(self) -> tuple[int, int] | None:

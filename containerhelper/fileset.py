@@ -1,21 +1,22 @@
-"""Наборы файлов для замера запаса на копирование.
+"""File sets for measuring copy slack.
 
-Запас на копирование — это то, во что обходится само появление файлов на
-томе сверх их кластерного размера: запись MFT на каждый файл, рост индекса
-каталога, служебные структуры первой записи. Модель считает его как
-`base + per_file × n`, и по-файловая часть до сих пор не подтверждена ничем:
-разделить две части можно только по замерам с разным числом файлов, а такой
-замер в хранилище был ровно один.
+Copy slack is what the mere appearance of files on the volume costs beyond
+their cluster-rounded size: an MFT record per file, the growth of the folder
+index, the service structures of the first write. The model counts it as
+`base + per_file × n`, and the per-file slack is still confirmed by nothing:
+the two parts can only be separated by measurements with different file
+counts, and the store held exactly one such measurement.
 
-Отсюда наборы: несколько заведомо разных `n`, снятых подряд одной машиной.
-Файлы генерируются **прямо на смонтированном томе**, а не копируются откуда-то
-с диска. Копировать нечего — набора такого вида ни у кого не лежит, — а хосту
-пришлось бы держать вторую копию рядом с контейнером и тратить вдвое больше
-места. Для измеряемой величины это одно и то же: запас меряет появление файлов
-на томе, а не происхождение байтов.
+Hence the file sets: several deliberately different `n`, taken in a row by one
+machine. The files are generated **right on the mounted volume**, not copied
+from somewhere on disk. There is nothing to copy — nobody has a set of this
+shape lying around — and the host would have to keep a second copy next to the
+container and spend twice as much space. For the measured value it is one and
+the same: copy slack measures the appearance of files on the volume, not where
+the bytes came from.
 
-Без Qt: состав наборов и их арифметика — не отображение, и проверяться должны
-без интерфейса.
+No Qt: the composition of the sets and their arithmetic are not display, and
+must be tested without the interface.
 """
 
 from __future__ import annotations
@@ -30,30 +31,32 @@ from .model import DEFAULT_CLUSTER_BYTES, MIB, Payload, round_up
 KIB = 1024
 GIB = 1024 * MIB
 
-#: Самый мелкий файл набора. Килобайт, а не меньше: файл короче примерно
-#: семисот байт NTFS держит прямо в записи MFT и кластера ему не выдаёт вовсе.
-#: Тогда Σ ceil(size / cluster) завышает занятое, измеренный запас выходит
-#: отрицательным, и запись отбраковывается проверкой «занято меньше файла».
+#: The smallest file in a set. A kilobyte, not less: a file shorter than about
+#: seven hundred bytes NTFS keeps right in the MFT record and gives it no
+#: cluster at all. Then Σ ceil(size / cluster) overstates the used space, the
+#: measured slack comes out negative, and the record is rejected by the "used
+#: is smaller than the file" check.
 SMALL_FILE = KIB
 
-#: Имя файла в наборе. Длинное намеренно: запись в индексе каталога тем
-#: больше, чем длиннее имя, и на коротких именах индекс вырос бы меньше, чем
-#: у настоящих данных. Занижение запаса — единственная опасная сторона, и
-#: ошибаться тут надо в другую.
+#: File name in a set. Long on purpose: the longer the name, the larger the
+#: entry in the directory index, and with short names the index would grow less
+#: than with real data. Underestimating the slack is the only dangerous side,
+#: and any error here must lean the other way.
 FILE_NAME = "containerhelper-payload-{index:06d}.bin"
 
-#: Папка на томе, в которую ложится набор. Не корень: данные почти всегда
-#: кладут папкой, а индекс корня устроен не так, как индекс обычного каталога.
+#: Folder on the volume that the set goes into. Not the root: data is almost
+#: always put in as a folder, and the root index is arranged differently from
+#: the index of an ordinary folder.
 PAYLOAD_DIR = "containerhelper-payload"
 
-#: Каким куском писать. Четыре мегабайта — компромисс между числом системных
-#: вызовов и памятью под буфер.
+#: Chunk size to write with. Four megabytes is a compromise between the number
+#: of system calls and the memory for the buffer.
 WRITE_CHUNK = 4 * MIB
 
 
 @dataclass(frozen=True)
 class Group:
-    """Одна размерная группа набора: столько-то файлов такого-то размера."""
+    """One size group of a set: so many files of such a size."""
 
     count: int
     size_bytes: int
@@ -63,18 +66,18 @@ class Group:
         return self.count * self.size_bytes
 
     def alloc_bytes(self, cluster_bytes: int = DEFAULT_CLUSTER_BYTES) -> int:
-        """Сумма кластерных размеров, а не кластерный размер суммы.
+        """Sum of cluster-rounded sizes, not the sum's cluster-rounded size.
 
-        Каждый файл округляется вверх по отдельности: на пятистах файлах по
-        килобайту разница между этими двумя величинами — полтора мегабайта,
-        и вся она уехала бы в измеряемый запас.
+        Each file is rounded up separately: on five hundred files of a
+        kilobyte each, the difference between these two values is one and a
+        half megabytes, and all of it would end up in the measured slack.
         """
         return self.count * round_up(self.size_bytes, cluster_bytes)
 
 
 @dataclass(frozen=True)
 class FileSet:
-    """Набор файлов: из чего состоит и сколько места займёт."""
+    """File set: what it consists of and how much space it will take."""
 
     key: str
     title: str
@@ -92,10 +95,10 @@ class FileSet:
         return sum(group.alloc_bytes(cluster_bytes) for group in self.groups)
 
     def payload(self, cluster_bytes: int = DEFAULT_CLUSTER_BYTES) -> Payload:
-        """Payload, не разворачивая набор в список размеров.
+        """Payload, without unfolding the set into a list of sizes.
 
-        Десять тысяч чисел ради суммы, которая считается умножением, —
-        напрасная работа и на обходе, и в памяти.
+        Ten thousand numbers for a sum that is computed by multiplication are
+        wasted work, both in the loop and in memory.
         """
         return Payload(
             logical_bytes=self.logical_bytes,
@@ -105,16 +108,17 @@ class FileSet:
         )
 
 
-#: Наборы, которыми калибруется запас. Числа файлов выбраны так, чтобы
-#: различных `n` было много: наклон в CopySlackModel.calibrate считается
-#: методом наименьших квадратов и берётся вообще только при двух и более
-#: различных `n`, а зависимость от `n` не совсем прямая — MFT прирастает
-#: кусками, и по двум точкам наклон был бы случайным.
+#: The file sets that calibrate copy slack. The file counts are chosen so that
+#: there are many distinct `n`: the slope in CopySlackModel.calibrate is found
+#: by least squares and is taken at all only with two or more distinct `n`,
+#: and the dependence on `n` is not quite linear — the MFT grows in chunks,
+#: and from two points the slope would be random.
 #:
-#: Объём при этом почти везде маленький: запас зависит от числа файлов, а не
-#: от их размера. Ровно это предположение и проверяют два набора с `n = 1` —
-#: 64 MiB и 4 GiB. Разойдись они, модель «запас зависит только от n» неверна,
-#: и узнать это надо явно, а не подозревать.
+#: The amount of data is small almost everywhere: slack depends on the number
+#: of files, not on their size. Exactly this assumption is what the two sets
+#: with `n = 1` — 64 MiB and 4 GiB — check. Should they diverge, the model
+#: "slack depends only on n" is wrong, and that must be learned explicitly,
+#: not suspected.
 FILE_SETS = (
     FileSet("one", "Один файл 64 MiB", (Group(1, 64 * MIB),)),
     FileSet("fifty", "50 файлов по 10 MiB", (Group(50, 10 * MIB),)),
@@ -138,7 +142,7 @@ def fileset_by_key(key: str) -> FileSet | None:
 
 
 def file_sizes(fileset: FileSet) -> Iterable[int]:
-    """Размеры файлов набора по порядку — тем же, каким они создаются."""
+    """File sizes of a set in order — the same order they are created in."""
     for group in fileset.groups:
         for _ in range(group.count):
             yield group.size_bytes
@@ -150,27 +154,29 @@ def generate(
     on_progress: Callable[[int, int], None] | None = None,
     check: Callable[[int], None] | None = None,
 ) -> int:
-    """Создать набор в папке root. Возвращает число созданных файлов.
+    """Create the set in the root folder. Returns the number of files created.
 
-    `check` зовётся на границе каждого файла и после каждого полного куска
-    большого файла; ему передано число уже записанных байт. Прервать запись
-    он может только исключением — возвращаемое значение не смотрится, потому
-    что молчаливый отказ здесь неотличим от успеха. Через него же работают и
-    отмена, и слежение за свободным местом хоста: терабайтный диск может
-    кончиться посреди записи от постороннего процесса, а запись в динамический
-    контейнер на кончившемся диске рвёт том.
+    `check` is called at the boundary of each file and after each full chunk
+    of a large file; it is passed the number of bytes already written. It can
+    interrupt the write only by an exception — the return value is not looked
+    at, because a silent refusal here is indistinguishable from success. Both
+    cancellation and watching the host's free space work through it: a
+    terabyte disk can run out mid-write because of an unrelated process, and
+    writing into a dynamic container on a disk that has run out tears the
+    volume.
 
-    `on_progress` зовётся там же, где и `check`: на границе файла и после
-    каждого полного куска. Только на границах файлов его звать нельзя — набор
-    «Один файл 4 GiB» — это одна граница на несколько минут записи, и всё это
-    время полоса прогресса стоит, а окно выглядит зависшим. Throttling —
-    забота вызывающего: на десяти тысячах файлов сигнал через границу потока
-    десять тысяч раз забьёт очередь событий.
+    `on_progress` is called in the same places as `check`: at a file boundary
+    and after each full chunk. It must not be called only at file boundaries —
+    the "One 4 GiB file" set is one boundary per several minutes of writing,
+    and all that time the progress bar stands still and the window looks hung.
+    Throttling is the caller's concern: on ten thousand files, a signal across
+    the thread boundary ten thousand times would clog the event queue.
     """
     root.mkdir(parents=True, exist_ok=True)
-    # Не нули: том свежий и без сжатия, но зависеть от того, что нули на нём
-    # ничем не свернутся, незачем. Буфер не больше самого большого файла —
-    # набору из килобайтных файлов четыре мегабайта случайных байт ни к чему.
+    # Not zeros: the volume is fresh and uncompressed, but there is no reason
+    # to depend on zeros not being folded away by anything on it. The buffer
+    # is no larger than the largest file — a set of kilobyte files has no use
+    # for four megabytes of random bytes.
     largest = max((group.size_bytes for group in fileset.groups), default=0)
     buffer = os.urandom(max(min(largest, WRITE_CHUNK), 1))
 

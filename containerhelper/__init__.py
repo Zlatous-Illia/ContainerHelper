@@ -1,4 +1,4 @@
-"""Расчёт размеров контейнеров VeraCrypt и калибровка по накопленным замерам."""
+"""Sizing VeraCrypt containers and calibrating by accumulated measurements."""
 
 from .model import (
     DEFAULT_CLUSTER_BYTES,

@@ -1,13 +1,13 @@
-"""Диалог автоматического сбора замеров через VeraCrypt.
+"""Dialog for automatic collection of measurements through VeraCrypt.
 
-Логика сбора живёт в `collect.py` и Qt не знает вовсе. Здесь только то, ради
-чего диалог и нужен: найти VeraCrypt (а не найдя — спросить), показать, что
-происходит, и дать остановить.
+The collection logic lives in `collect.py` and knows nothing about Qt. Here is
+only what the dialog exists for: find VeraCrypt (and ask if it is not found),
+show what is going on, and let the user stop it.
 
-Шаги крутятся в отдельном потоке. Создание и монтирование контейнера — это
-секунды, на полном форматировании минуты, а запись набора в четыре гигабайта
-и того дольше; в потоке окна всё это встало бы намертво, и «Остановить»
-нажать было бы нечем.
+The steps run in a separate thread. Creating and mounting a container takes
+seconds, minutes with a full format, and writing a four-gigabyte file set
+longer still; in the window's thread all of this would freeze it solid, and
+there would be no way to press Stop.
 """
 
 from __future__ import annotations
@@ -63,8 +63,9 @@ from ..veracrypt import (
     version_notice,
 )
 
-#: Ключи в settings.ini. Путь к VeraCrypt запоминается только тот, что указан
-#: руками: стандартные места ищутся заново каждый раз и запоминать их незачем.
+#: Keys in settings.ini. Only a VeraCrypt path chosen by hand is remembered:
+#: the standard locations are searched anew every time, and there is no point
+#: remembering them.
 PATH_KEY = "veracrypt/path"
 WORKDIR_KEY = "veracrypt/workdir"
 
@@ -74,33 +75,35 @@ NOT_FOUND = (
     "«{format_exe}» и «{mount_exe}»."
 ).format(format_exe=FORMAT_NAMES[0], mount_exe=MOUNT_NAMES[0])
 
-#: Перенос строки в подсказках. Константой, как и в остальных вкладках:
-#: экранирование внутри шаблонов правки уже один раз схлопывалось.
+#: Line break in tooltips. A constant, as in the other tabs: escaping inside
+#: edit templates has already collapsed once.
 LINE_BREAK = chr(10)
 
-#: Как часто прогресс уходит в окно. Набор из десяти тысяч файлов дал бы
-#: десять тысяч сигналов через границу потока и забил бы очередь событий
-#: раньше, чем окно успело бы их отрисовать.
+#: How often progress is sent to the window. A set of ten thousand files would
+#: send ten thousand signals across the thread boundary and clog the event
+#: queue before the window could paint them.
 PROGRESS_INTERVAL = 0.1
 
-#: С какой доли пути оценка оставшегося времени перестаёт быть гаданием.
-#: Раньше неё скорость меряется по первым секундам создания контейнера и
-#: врёт в разы.
+#: The share of the way after which the remaining-time estimate stops being a
+#: guess. Before it, the speed is measured over the first seconds of creating
+#: a container and is off several times over.
 ETA_AFTER_PERCENT = 5
 
-#: Ниже этого содержимое диалога перестаёт быть читаемым: подписи наборов
-#: схлопываются, а строка кнопок под ними уезжает за край. Дальше включается
-#: горизонтальная прокрутка — то же решение, что и у вкладок главного окна.
+#: Below this the dialog's content stops being readable: the file set labels
+#: collapse and the row of buttons under them slides off the edge. Past it,
+#: horizontal scrolling kicks in — the same solution as in the main window's
+#: tabs.
 MIN_CONTENT_WIDTH = 640
 
-#: Отступ подписей под галочкой — тем же числом, что и у самих галочек.
+#: Indent of the labels under a check box — the same number as the check
+#: boxes themselves.
 NOTE_INDENT = 20
 
-#: Как часто окно перерисовывает часы само по себе, миллисекунды. Время шло
-#: только вместе с прогрессом, а прогресс приходит от шага: на полном
-#: форматировании и на монтировании его нет вовсе, и часы стояли минутами —
-#: единственный признак того, что программа жива, замирал ровно тогда, когда
-#: он и был нужен.
+#: How often the window repaints the clock on its own, in milliseconds. Time
+#: used to move only together with progress, and progress comes from the
+#: step: during a full format and during mounting there is none at all, and
+#: the clock stood still for minutes — the only sign that the program was
+#: alive froze exactly when it was needed.
 CLOCK_INTERVAL = 1000
 
 ModelProvider = Callable[[], "tuple[NtfsModel, CopySlackModel]"]
@@ -108,7 +111,7 @@ SafetyProvider = Callable[[], SafetyModel]
 
 
 def _clock(seconds: float) -> str:
-    """Секунды в «м:сс» или «ч:мм:сс» — как их читают глазом."""
+    """Seconds as "m:ss" or "h:mm:ss" — the way the eye reads them."""
     seconds = int(max(seconds, 0))
     hours, rest = divmod(seconds, 3600)
     minutes, secs = divmod(rest, 60)
@@ -118,15 +121,15 @@ def _clock(seconds: float) -> str:
 
 
 class CollectWorker(QObject):
-    """Крутит шаги в своём потоке и рассказывает о них сигналами."""
+    """Runs the steps in its own thread and reports on them through signals."""
 
     stepStarted = Signal(int, str)
     stepFinished = Signal(object)
-    #: Номер шага и что внутри него происходит. Throttling здесь же: без него
-    #: сигналов было бы столько же, сколько файлов в наборе.
+    #: The step number and what is happening inside it. Throttling is here
+    #: too: without it there would be as many signals as files in the set.
     stepProgress = Signal(int, object)
     note = Signal(str)
-    #: Пусто — прошло до конца. Иначе причина остановки.
+    #: Empty — ran to the end. Otherwise the reason it stopped.
     done = Signal(str)
 
     def __init__(self, collector: Collector) -> None:
@@ -140,13 +143,15 @@ class CollectWorker(QObject):
         collector.should_stop = self.stopping
 
     def stop(self) -> None:
-        """Остановить сбор.
+        """Stop the collection.
 
-        Между шагами — сразу. Внутри шага отмена доходит до записи набора:
-        четыре гигабайта пишутся минутами, и ждать их конца незачем, недописанный
-        набор всё равно выбрасывается вместе с контейнером. А вот запущенный
-        VeraCrypt не прервать, не оставив за собой поднятый том и файл на
-        терабайт, — создание и форматирование доводятся до конца.
+        Between steps — at once. Inside a step the cancel reaches down into
+        the writing of the file set: four gigabytes take minutes to write, and
+        there is no point waiting for the end, the unfinished set is thrown
+        away together with the container anyway. But a running VeraCrypt
+        cannot be interrupted without leaving behind a mounted volume and a
+        terabyte file — creation and formatting are carried through to the
+        end.
         """
         self._stop = True
 
@@ -184,19 +189,20 @@ class CollectWorker(QObject):
                     reason = result.error
                     break
         finally:
-            # Сигнал обязан прозвучать даже на неожиданной ошибке: иначе окно
-            # останется «в работе» навсегда, и закрыть его будет нечем.
+            # The signal must fire even on an unexpected error: otherwise the
+            # window stays "running" forever, and there is no way to close it.
             self.done.emit(reason)
 
 
 class CollectDialog(QDialog):
-    """Найти VeraCrypt, спланировать сбор и провести его."""
+    """Find VeraCrypt, plan the collection and carry it out."""
 
-    #: Снятый замер. Уходит наружу сразу же, по одному: сбор идёт часами, и
-    #: падение посередине не должно стоить всего, что уже снято.
+    #: A measurement just taken. It goes out at once, one at a time: the
+    #: collection runs for hours, and a crash halfway must not cost everything
+    #: already measured.
     pointMeasured = Signal(object)
-    #: Перезапуск от администратора состоялся — окно должно закрыться, иначе
-    #: две копии станут писать в одну папку данных.
+    #: The elevated restart has happened — the window must close, otherwise
+    #: two copies will write into one data folder.
     relaunchRequested = Signal()
 
     def __init__(
@@ -219,54 +225,58 @@ class CollectDialog(QDialog):
         self._sizes = tuple(sizes)
         self._covered = tuple(covered)
         self._filesets = tuple(filesets)
-        #: Ключи наборов, на которых свой замер уже есть. Ключами, а не
-        #: числами файлов: два набора с n = 1 различаются объёмом, и
-        #: снимать надо оба — на их сверке держится проверка того, что
-        #: запас от размера файлов не зависит.
+        #: Keys of the file sets that already have an own measurement. Keys,
+        #: not file counts: two sets with n = 1 differ in size, and both
+        #: must be measured — comparing them is what checks that copy slack
+        #: does not depend on file size.
         self._slack_covered = tuple(slack_covered)
         self._models = models
         self._safety = safety
-        #: Размеры, на которые замеру запаса садиться нельзя: это строки
-        #: таблицы покрытия, и кнопка «К заводскому» в такой строке отключала
-        #: бы заодно и замер запаса.
+        #: Sizes a copy-slack measurement must not land on: they are rows of
+        #: the coverage table, and the Use factory button in such a row would
+        #: disable the copy-slack measurement along with it.
         self._forbidden = tuple(forbidden_sizes)
         self._settings = settings
         self._data_dir = data_dir
-        #: Ставится до сборки виджетов: перерисовка области сбора
-        #: спрашивает свободное место, а она случается уже при поиске
-        #: VeraCrypt.
+        #: Set before the widgets are built: redrawing the collection scope
+        #: asks for free space, and that happens already during the VeraCrypt
+        #: search.
         self._workdir = Path(tempfile.gettempdir())
         self._install = None
-        #: Годится ли найденная версия для сбора: у совсем старой нет ключей,
-        #: без которых он не идёт.
+        #: Whether the version found is good enough for collection: a very
+        #: old one lacks switches the collection cannot run without.
         self._supported = False
         self._thread: QThread | None = None
         self._worker: CollectWorker | None = None
         self._measured = 0
         self._failed = 0
         self._skipped = 0
-        #: Окно попросили закрыть посреди сбора: закроется, когда шаг кончится.
+        #: The window was asked to close mid-collection: it closes when the
+        #: step ends.
         self._closing = False
-        #: Вес шагов и их нарастающая сумма — знаменатель и точки отсчёта для
-        #: полосы прогресса.
+        #: Step weights and their running sum — the denominator and the
+        #: reference points for the progress bar.
         self._weights: list[int] = []
         self._before: list[int] = [0]
         self._total_weight = 0
         self._started = 0.0
         self._index = 0
-        #: Что идёт сейчас и с какой секунды. Фаза отдельно от подробности:
-        #: «запись файлов» держится минутами, а число записанных байт в ней
-        #: меняется десять раз в секунду, и часы фазы сбрасывались бы вместе
-        #: с ним.
+        #: What is running now and since which second. The phase is kept
+        #: apart from the detail: "writing files" lasts for minutes, while the
+        #: number of bytes written changes ten times a second, and the phase
+        #: clock would reset along with it.
         self._phase = ""
         self._detail = ""
         self._phase_started = 0.0
-        #: Наибольшая доля текущего шага. Полоса не имеет права пятиться.
+        #: The largest share of the current step reached. The bar has no
+        #: right to move backwards.
         self._share = 0.0
 
-        #: Подменяемые обработчики: модальное окно посреди логики нечем
-        #: закрыть из теста, а перезапуск от администратора нечем отменить.
-        #: Часы окна. Идут сами, а не от прогресса: см. CLOCK_INTERVAL.
+        #: Replaceable handlers: a modal window in the middle of the logic
+        #: cannot be closed from a test, and an elevated restart cannot be
+        #: undone.
+        #: The window's clock. It runs on its own, not from progress: see
+        #: CLOCK_INTERVAL.
         self._clock = QTimer(self)
         self._clock.setInterval(CLOCK_INTERVAL)
         self._clock.timeout.connect(self._show_progress)
@@ -279,11 +289,11 @@ class CollectDialog(QDialog):
         self.relaunch = relaunch_as_admin
         self.make_veracrypt = VeraCrypt
 
-        # Всё, кроме кнопок, живёт под прокруткой. Окно просит 1178 пикселей
-        # высоты — больше, чем есть у экрана, — и без прокрутки Qt сплющивает
-        # подписи: у строки с ценой набора высота становилась нулевой, и текст
-        # исчезал целиком. Кнопки остаются снаружи: «Остановить» обязана быть
-        # под рукой, не прокручивая окно.
+        # Everything except the buttons lives under scrolling. The window asks
+        # for 1178 pixels of height — more than the screen has — and without
+        # scrolling Qt squashes the labels: the line with a file set's cost
+        # got zero height, and the text vanished entirely. The buttons stay
+        # outside: Stop must be at hand without scrolling the window.
         content = QWidget()
         inner = QVBoxLayout(content)
         inner.setContentsMargins(0, 0, 0, 0)
@@ -304,7 +314,7 @@ class CollectDialog(QDialog):
         self._refresh_rights()
         self._refresh_scope()
 
-    # --- построение --------------------------------------------------------
+    # --- building ----------------------------------------------------------
 
     def _build_intro(self) -> QLabel:
         text = QLabel(
@@ -424,7 +434,7 @@ class CollectDialog(QDialog):
         layout.setContentsMargins(NOTE_INDENT, 0, 0, 0)
 
         self.only_missing = QRadioButton()
-        # Без подсказки: она пересказывала подпись самого переключателя.
+        # No tooltip: it retold the radio button's own label.
         self.only_missing.setChecked(True)
         self.only_missing.toggled.connect(self._refresh_scope)
         layout.addWidget(self.only_missing)
@@ -453,22 +463,23 @@ class CollectDialog(QDialog):
         return box
 
     def _build_slack_options(self) -> QWidget:
-        """Галочка на каждый набор: «замерить все» и «замерить некоторые».
+        """A check box per file set: "measure all" and "measure some".
 
-        Списком галочек, а не таблицей: набор описывается одной строкой, а
-        выбирать надо мышью и по одному — как раз тогда, когда часть наборов
-        уже снята или не помещается на диск.
+        A list of check boxes, not a table: a file set is described in one
+        line, and the choice is made with the mouse, one at a time — exactly
+        when some of the sets are already measured or do not fit on the disk.
         """
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(NOTE_INDENT, 0, 0, 0)
 
         self.fileset_boxes: dict[str, QCheckBox] = {}
-        #: Цена набора и его состояние — отдельной подписью под галочкой.
-        #: В самой галочке им не место: QCheckBox не переносит строк, а строка
-        #: «10 000 файлов по 1 KiB — 10000 файлов, 39.06 MiB по кластерам,
-        #: нужно 61.5 MiB, свой замер уже есть» просит 1224 пикселя при окне
-        #: в 660 и обрезалась ровно на самом важном — на «уже есть».
+        #: A file set's cost and state go in a separate label under the check
+        #: box. They do not belong in the check box itself: QCheckBox does not
+        #: wrap lines, and the Russian line "10 000 files of 1 KiB — 10000
+        #: files, 39.06 MiB by clusters, 61.5 MiB needed, own measurement
+        #: already exists" asks for 1224 pixels in a 660-pixel window and got
+        #: cut off exactly at the most important part — at «уже есть».
         self.fileset_notes: dict[str, QLabel] = {}
         for item in self._filesets:
             check = QCheckBox(item.title)
@@ -615,7 +626,7 @@ class CollectDialog(QDialog):
         remembered = self._stored(PATH_KEY)
         return remembered or ""
 
-    # --- рабочая папка -----------------------------------------------------
+    # --- working folder ----------------------------------------------------
 
     def _restore_workdir(self) -> None:
         remembered = self._stored(WORKDIR_KEY)
@@ -642,7 +653,7 @@ class CollectDialog(QDialog):
         self._remember(WORKDIR_KEY, chosen)
         self._refresh_workdir()
 
-    # --- права -------------------------------------------------------------
+    # --- permissions -------------------------------------------------------
 
     def _refresh_rights(self) -> None:
         elevated = self.is_admin()
@@ -669,11 +680,11 @@ class CollectDialog(QDialog):
                 "«Запуск от имени администратора» сами.",
             )
             return
-        # Две копии в одной папке данных писали бы поверх друг друга.
+        # Two copies in one data folder would write over each other.
         self.accept()
         self.relaunchRequested.emit()
 
-    # --- план --------------------------------------------------------------
+    # --- plan --------------------------------------------------------------
 
     def current_models(self) -> tuple[NtfsModel, CopySlackModel]:
         return self._models() if self._models is not None else (NtfsModel(), CopySlackModel())
@@ -688,11 +699,12 @@ class CollectDialog(QDialog):
         ]
 
     def steps(self) -> list[Step]:
-        """План целиком: сначала пустые тома, потом наборы от дешёвых к дорогим.
+        """The whole plan: empty volumes first, then file sets cheapest first.
 
-        Наборы после точек NTFS намеренно. Они и дороже по месту, и точнее
-        считаются, когда модель метаданных уже уточнена свежими замерами:
-        именно ею оценивается контейнер под набор.
+        File sets come after the NTFS points on purpose. They cost more space,
+        and they are computed more precisely once the metadata model has been
+        refined by fresh measurements: it is that model that sizes the
+        container for a file set.
         """
         steps: list[Step] = []
         if self.want_ntfs.isChecked():
@@ -742,10 +754,10 @@ class CollectDialog(QDialog):
         return total_bytes(steps, ntfs)
 
     def _refresh_fileset_labels(self) -> None:
-        """Дописать к каждому набору его цену и состояние.
+        """Add each file set's cost and state to it.
 
-        Число файлов и объём — то, ради чего набор выбирают; требуемое место
-        и «уже снят» — то, из-за чего от него отказываются.
+        The file count and volume are what a set is chosen for; the space
+        required and "already measured" are what it is turned down for.
         """
         if not self._filesets:
             return
@@ -776,13 +788,14 @@ class CollectDialog(QDialog):
 
     @staticmethod
     def _set_note(note: QLabel, text: str) -> None:
-        """Подпись под галочкой набора вместе с высотой под перенос.
+        """The label under a file set's check box, with height for wrapping.
 
-        Высоту приходится ставить руками: под прокруткой раскладка ужимает
-        переносимую подпись до одной строки и ниже — у QLabel минимальная
-        высота не зависит от ширины, — и вторая строка исчезала целиком.
-        Ширина берётся не текущая, а гарантированная: уже неё содержимое не
-        станет, дальше включается горизонтальная прокрутка.
+        The height has to be set by hand: under scrolling the layout squeezes
+        a wrapped label down to one line and below — a QLabel's minimum
+        height does not depend on its width — and the second line vanished
+        entirely. The width taken is not the current one but the guaranteed
+        one: the content will not get narrower than that, past it horizontal
+        scrolling kicks in.
         """
         note.setText(text)
         width = max(note.width(), MIN_CONTENT_WIDTH - NOTE_INDENT * 2)
@@ -823,7 +836,7 @@ class CollectDialog(QDialog):
             )
         self.scope_summary.setText(text)
 
-    # --- ход сбора ---------------------------------------------------------
+    # --- collection run ----------------------------------------------------
 
     def _start(self) -> None:
         if self._install is None:
@@ -911,11 +924,11 @@ class CollectDialog(QDialog):
         self._show_progress()
 
     def _set_phase(self, phase: str, detail: str = "") -> None:
-        """Запомнить фазу и когда она началась.
+        """Remember the phase and when it started.
 
-        Часы фазы нужны ровно там, где нет прогресса: «создание контейнера» на
-        полном форматировании держится минутами, и без бегущей секунды окно
-        неотличимо от повисшего.
+        The phase clock is needed exactly where there is no progress:
+        "creating the container" with a full format lasts for minutes, and
+        without a ticking second the window cannot be told from a hung one.
         """
         if phase != self._phase:
             self._phase = phase
@@ -923,16 +936,18 @@ class CollectDialog(QDialog):
         self._detail = detail
 
     def _advance(self, index: int, share: float) -> None:
-        """Полоса — доля пройденного веса от веса всего плана.
+        """The bar is the share of weight done out of the whole plan's weight.
 
-        Долю шага считает сам Progress тем же весом, каким взвешен план:
-        байты записи плюс поправка на создание файлов.
+        The step's share is computed by Progress itself, with the same weight
+        the plan is weighed by: bytes written plus an allowance for creating
+        the files.
 
-        Доля запоминается по наибольшей за шаг, и вот почему. Вне записи она
-        нулевая — сколько байт VeraCrypt уложил при создании контейнера,
-        снаружи не видно, — а после записи идут ещё четыре фазы: сверка,
-        перемонтирование, замер остатка, уборка. Не запоминай мы достигнутое,
-        полоса на каждой из них откатывалась бы к началу шага.
+        The share is kept at the largest reached in the step, and here is why.
+        Outside writing it is zero — how many bytes VeraCrypt laid down while
+        creating the container is not visible from outside — and after
+        writing come four more phases: verification, remount, left-space
+        measurement, cleanup. If we did not keep what was reached, the bar
+        would roll back to the start of the step on each of them.
         """
         if index >= len(self._before) - 1:
             return
@@ -941,11 +956,12 @@ class CollectDialog(QDialog):
         self.progress.setValue(min(done // MIB, self.progress.maximum()))
 
     def _show_progress(self) -> None:
-        """Собрать строку под полосой из того, что известно сейчас.
+        """Build the line under the bar from what is known right now.
 
-        Ничего не принимает и зовётся откуда угодно — и от прогресса шага, и
-        от таймера раз в секунду: иначе часы шли бы только тогда, когда шаг о
-        себе сообщает, а молчит он как раз в самых долгих местах.
+        Takes nothing and is called from anywhere — both from the step's
+        progress and from the once-a-second timer: otherwise the clock would
+        move only when the step reports on itself, and it is silent exactly in
+        the longest places.
         """
         if not self._weights:
             return
@@ -969,8 +985,9 @@ class CollectDialog(QDialog):
             self._say(f"    пропущен: {result.error}")
             return
         if result.measurement is not None:
-            # Замер уходит наружу даже при неудавшейся самопроверке: он
-            # настоящий, и второй из пары — как раз обычный контейнер.
+            # The measurement goes out even when the self-check fails: it is
+            # real, and the second of the pair is precisely the ordinary
+            # container.
             self.pointMeasured.emit(result.measurement.as_record(self._note()))
             self._measured += 1
             self._say(self._measurement_line(result))
@@ -991,11 +1008,12 @@ class CollectDialog(QDialog):
                 f"{plural(measurement.file_count, 'файле', 'файлах', 'файлах')}"
             )
             if slack < 0:
-                # Занято меньше самих данных — так не бывает. Чаще всего это
-                # значит, что мелкий файл уместился прямо в запись MFT и
-                # кластера не получил, а Σ ceil(size / cluster) его посчитал.
-                # Замер в калибровку запаса не пойдёт, но точка NTFS из него
-                # годится, и выбрасывать её незачем.
+                # Less is used than the data itself — that cannot happen. Most
+                # often it means a small file fit right into its MFT record
+                # and got no cluster, while Σ ceil(size / cluster) counted it.
+                # The measurement will not go into the copy-slack
+                # calibration, but its NTFS point is valid, and there is no
+                # reason to throw it away.
                 line += (
                     f"{LINE_BREAK}    ⚠ запас вышел отрицательным — в "
                     f"калибровку запаса такой замер не идёт; точка NTFS из "
@@ -1035,7 +1053,7 @@ class CollectDialog(QDialog):
             super().reject()
 
     def _finish_thread(self) -> None:
-        """Закрыть поток. Зовётся, когда run() уже вернулся, и не ждёт."""
+        """Close the thread. Called once run() has returned; does not wait."""
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait()
@@ -1049,17 +1067,18 @@ class CollectDialog(QDialog):
     def _say(self, text: str) -> None:
         self.log.appendPlainText(text)
 
-    # --- служебное ---------------------------------------------------------
+    # --- housekeeping ------------------------------------------------------
 
     def running(self) -> bool:
         return self._thread is not None
 
     def reject(self) -> None:
-        """Закрытие во время сбора не рвёт текущий шаг, а дожидается его.
+        """Closing mid-collection does not cut the current step; it waits.
 
-        Не блокируя окно: закрытие откладывается до конца шага. Оборвать
-        VeraCrypt на середине значило бы оставить поднятый том и файл на
-        терабайт, а ждать блокирующим wait() — заморозить окно на минуты.
+        Without blocking the window: closing is put off until the step ends.
+        Cutting VeraCrypt off halfway would leave a mounted volume and a
+        terabyte file, and waiting with a blocking wait() would freeze the
+        window for minutes.
         """
         if self.running():
             if not self.confirm(
@@ -1080,8 +1099,9 @@ class CollectDialog(QDialog):
         return str(self._settings.value(key, "", type=str))
 
     def _remember(self, key: str, value: str) -> None:
-        # Сразу на диск: путь к VeraCrypt ищут руками один раз, и терять его
-        # из-за того, что программу закрыли не по-хорошему, обидно.
+        # Straight to disk: the VeraCrypt path is found by hand once, and
+        # losing it because the program was not closed cleanly would be a
+        # shame.
         if self._settings is not None:
             self._settings.setValue(key, value)
             self._settings.sync()

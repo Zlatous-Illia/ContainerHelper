@@ -1,4 +1,4 @@
-"""Главное окно."""
+"""The main window."""
 
 from __future__ import annotations
 
@@ -62,35 +62,37 @@ STATE_KEY = "window_state"
 ACTIVE_TAB_KEY = "active_tab"
 REMEMBER_TAB_KEY = "remember_tab"
 SHOW_HIDDEN_KEY = "show_hidden_files"
-#: Настройки диалога выбора файлов. Своей группой: их четыре, и растащить их
-#: по General значило бы забыть половину при следующей правке. Ключ скрытых
-#: файлов остался прежним — его писали ещё до появления группы, и переезд
-#: молча сбросил бы галочку у тех, у кого она стоит.
+#: Settings of the file and folder picker. In a group of their own: there are
+#: four of them, and scattering them over General would mean forgetting half
+#: of them at the next edit. The hidden-files key stayed as it was — it was
+#: written before the group existed, and moving it would silently clear the
+#: check box for those who have it ticked.
 PICKER_REMEMBER_KEY = "picker/remember_dir"
 PICKER_DIR_KEY = "picker/directory"
 PICKER_WIDTH_KEY = "picker/width"
 PICKER_HEIGHT_KEY = "picker/height"
 PICKER_LAYOUT_KEY = "picker/layout"
 
-#: Названия вкладок. Вынесены в константы, потому что имя активной вкладки
-#: уходит в настройки: раньше туда уходил номер, и одной перестановки вкладок
-#: хватило, чтобы программа стала открываться не на той странице.
+#: Tab titles. Kept in constants because the active tab's name goes into the
+#: settings: the number used to go there, and one reordering of the tabs was
+#: enough for the program to start opening on the wrong page.
 TAB_CALC = "Расчёт"
 TAB_RECORDS = "Записи"
 TAB_MODEL = "Модель"
 TAB_CALIBRATION = "Калибровка"
 
-#: Куда открывать программу, когда запоминание вкладки выключено. Расчёт —
-#: то, ради чего её открывают в девяти случаях из десяти.
+#: Where to open the program when remembering the tab is off. Calculation is
+#: what it is opened for nine times out of ten.
 DEFAULT_TAB = TAB_CALC
 
-#: Уже этого окно перестаёт быть пригодным: подписи форм режутся, а таблицы
-#: схлопываются в кашу. Дальше включается горизонтальная прокрутка вкладки.
+#: Narrower than this, the window stops being usable: form labels get cut and
+#: tables collapse into a mess. Beyond that, the tab's horizontal scrolling
+#: kicks in.
 MIN_WINDOW_WIDTH = 720
 MIN_TAB_WIDTH = 680
 
-#: Что делает каждая вкладка. Названия из одного слова не говорят ни о
-#: порядке работы, ни о том, чем «Калибровка» отличается от «Записей».
+#: What each tab does. One-word titles say nothing about the order of work,
+#: nor about how Calibration differs from Records.
 TAB_TIPS = {
     "calc": (
         "Выбрать файлы и папки — или ввести размер руками — и получить "
@@ -123,15 +125,16 @@ class MainWindow(QMainWindow):
         self.setMinimumWidth(MIN_WINDOW_WIDTH)
 
         self.data_dir = data_dir or self._ask_data_dir()
-        # Настройки лежат рядом с данными, а не в реестре: портативную папку
-        # носят целиком, и след вне неё оставлять нечего.
+        # The settings live next to the data, not in the registry: the portable
+        # data folder is carried around whole, and there is no reason to leave
+        # a trace outside it.
         self.settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
 
         self._ntfs = NtfsModel()
         self._slack = CopySlackModel()
         self._safety = SafetyModel()
-        #: Подтверждения — подменяемым обработчиком, как на вкладках: закрыть
-        #: модальное окно посреди логики из теста нечем.
+        #: Confirmations go through a replaceable handler, as on the tabs: a
+        #: test has no way to close a modal window in the middle of the logic.
         self.confirm = self._ask_confirmation
 
         self.calc_tab = CalcTab(self.models, self.safety)
@@ -140,23 +143,23 @@ class MainWindow(QMainWindow):
             container_provider=self.calc_tab.current_container_mib,
             safety_provider=self.calc_tab.current_safety_mib,
         )
-        # Проверка идёт по всему, на чём стоит модель: записи о копировании,
-        # свои замеры и заводские точки. Иначе отчёт молчал бы как раз о тех
-        # двадцати двух точках, которые держат кривую NTFS.
+        # The check covers everything the model rests on: copy records, own
+        # measurements and factory points. Otherwise the report would be silent
+        # about exactly those twenty-two points that hold up the NTFS curve.
         self.model_tab = ModelTab(
             self.models, lambda: self.records_tab.store.all_for_model()
         )
-        # Оба рода машинных замеров живут в одном файле и различаются
-        # признаком: у замера запаса есть и данные, и остаток. Вкладке они
-        # отдаются порознь — таблицы у них разные.
+        # Both kinds of machine measurements live in one file and are told
+        # apart by a property: a copy-slack measurement has both data and left
+        # space. The tab gets them separately — their tables differ.
         self.calibration_tab = CalibrationTab(
             lambda: self.records_tab.store.calibration_points(),
             lambda: self.records_tab.store.slack_measurements(),
         )
 
-        #: Открытые окна графиков по ключу. Окно создаётся при первом
-        #: показе и живёт до закрытия программы: пересобирать его на
-        #: каждый показ значило бы терять и масштаб, и размер окна.
+        #: Open chart windows by key. A window is created on first show and
+        #: lives until the program closes: rebuilding it on every show would
+        #: mean losing both the zoom and the window size.
         self._charts: dict[str, ChartWindow] = {}
 
         self.records_tab.recordsChanged.connect(self._on_records_changed)
@@ -198,14 +201,14 @@ class MainWindow(QMainWindow):
         self.model_tab.set_auto_safety(self.calc_tab.auto_safety.isChecked())
         self._restore_preferences()
 
-    # --- каталог данных ----------------------------------------------------
+    # --- data folder -------------------------------------------------------
 
     def _ask_data_dir(self) -> Path:
-        """Найти папку данных, а если рядом с программой не пишется — спросить.
+        """Find the data folder; ask if the program's folder is not writable.
 
-        Тихо уезжать в чужой каталог нельзя: тогда портативная папка перестаёт
-        быть портативной молча, и на другой машине данные не поедут вместе с
-        ней.
+        Quietly moving to some other directory is not allowed: the portable
+        data folder would then silently stop being portable, and on another
+        machine the data would not travel with it.
         """
         try:
             found, _origin = resolve_data_dir()
@@ -226,7 +229,7 @@ class MainWindow(QMainWindow):
         remember_data_dir(target)
         return target
 
-    # --- модели ------------------------------------------------------------
+    # --- models ------------------------------------------------------------
 
     def models(self) -> tuple[NtfsModel, CopySlackModel]:
         return self._ntfs, self._slack
@@ -245,25 +248,25 @@ class MainWindow(QMainWindow):
         if self.expand_tables.isChecked():
             self._on_expand_toggled(True)
 
-    # --- окна графиков -----------------------------------------------------
+    # --- chart windows -----------------------------------------------------
 
     def _chart_specs(self) -> dict:
-        """Что за окна бывают: заголовок, из чего собрать и делят ли ось X.
+        """Window kinds: title, builders, whether the X axis is shared.
 
-        Собирается заново на каждый показ, потому что замыкания должны брать
-        сегодняшнее хранилище: `records_tab.store` переоткрывается при смене
-        папки данных, и захваченное однажды указывало бы на прежнюю.
+        Built anew on every show, because the closures must take today's
+        store: `records_tab.store` is reopened when the data folder changes,
+        and a store captured once would point to the previous one.
         """
         store = lambda: self.records_tab.store
         return {
             CHART_NTFS: (
                 "Метаданные NTFS",
                 (
-                    # Список рекомендуемых размеров — чтобы кривая сказала
-                    # подписью, какие из них не покрыты ни одним замером.
+                    # The list of recommended sizes — so that the curve can say
+                    # in its caption which of them no measurement covers.
                     lambda: charts.ntfs_curve(store(), RECOMMENDED_MIB),
-                    # Доля тома — та же кривая, но в единицах, которыми
-                    # метаданные меряют на глаз.
+                    # Share of the volume — the same curve, but in the units
+                    # metadata is sized up in by eye.
                     lambda: charts.ntfs_share(store()),
                     lambda: charts.ntfs_residuals(store()),
                     lambda: charts.ntfs_slopes(store()),
@@ -312,7 +315,7 @@ class MainWindow(QMainWindow):
         return charts.cluster_tail(sizes, CLUSTER_CHOICES, self.calc_tab.current_cluster())
 
     def open_chart(self, key: str) -> None:
-        """Показать окно графика; уже открытое — поднять, а не создать второе."""
+        """Show a chart window; one already open is raised, not duplicated."""
         specs = self._chart_specs()
         if key not in specs:
             return
@@ -321,8 +324,8 @@ class MainWindow(QMainWindow):
             title, builders, link_x = specs[key]
             window = ChartWindow(key, title, builders, link_x, self)
             window.set_unit(unit_by_key(self.unit_combo.currentData()))
-            # Вместе с геометрией возвращаются и отсоединённые графики: окно,
-            # разложенное по экрану, собирают один раз, а не каждый запуск.
+            # Detached charts come back together with the geometry: a window
+            # spread out over the screen is arranged once, not on every launch.
             window.restore_layout(self.settings)
             self._charts[key] = window
         else:
@@ -336,22 +339,23 @@ class MainWindow(QMainWindow):
             window.refresh()
 
     def _refresh_calc_chart(self) -> None:
-        """Окно текущего расчёта следует за расчётом, а не за записями.
+        """The current-calculation window tracks the calculation, not records.
 
-        Отдельно от остальных: расчёт меняется от каждого нажатия в поле
-        размера, а перерисовывать из-за этого кривую NTFS незачем.
+        Separate from the rest: the calculation changes with every keystroke in
+        the size field, and there is no reason to redraw the NTFS curve for
+        that.
         """
         window = self._charts.get(CHART_CALC)
         if window is not None and window.isVisible():
             window.refresh()
 
-    # --- точки калибровки --------------------------------------------------
+    # --- calibration points ------------------------------------------------
 
     def _take_point(self, container_mib: int) -> None:
         self.records_tab.add_calibration_point(container_mib)
 
     def covered_sizes(self) -> list[int]:
-        """Размеры, на которых свой замер пустого тома уже есть и работает."""
+        """Sizes that already have a working own empty-volume measurement."""
         return [
             record.container_mib
             for record in self.records_tab.store.calibration_points()
@@ -359,15 +363,16 @@ class MainWindow(QMainWindow):
         ]
 
     def covered_filesets(self) -> list[str]:
-        """Наборы, на которых **свой** замер запаса уже есть.
+        """File sets that already have an **own** copy-slack measurement.
 
-        Ключами набора, а не числами файлов: два набора с `n = 1` заведены
-        разными по объёму нарочно, и снять надо оба — на их сверке держится
-        проверка того, что запас от размера файлов не зависит.
+        By file-set key, not by file count: two sets with `n = 1` are made
+        different in total size on purpose, and both must be measured —
+        comparing them is what checks that copy slack does not depend on file
+        size.
 
-        Только свои, как и с размерами: «недостающее» — это то, чего нет на
-        этой машине. Заводской замер закрывает набор лишь до тех пор, пока
-        своего нет, и предлагать снять его — правильно.
+        Only own ones, as with the sizes: "missing" means what is absent on
+        this machine. A factory measurement covers a set only until there is
+        an own one, and offering to measure it is right.
         """
         store = self.records_tab.store
         return sorted(
@@ -381,11 +386,12 @@ class MainWindow(QMainWindow):
         )
 
     def build_collect_dialog(self) -> CollectDialog:
-        """Собрать диалог автоматического сбора и подключить его к хранилищу.
+        """Build the automatic collection dialog and connect it to the store.
 
-        Диалог заводит окно, а не вкладка: сбору нужны и хранилище, куда
-        складывать замеры, и папка данных — её приходится передавать себе же
-        при перезапуске от администратора, иначе портативность кончится.
+        The window creates the dialog, not the tab: collection needs both the
+        store to put measurements into and the data folder — it has to be
+        passed on to the program itself on an elevated restart, otherwise
+        portability ends.
         """
         dialog = CollectDialog(
             sizes=RECOMMENDED_MIB,
@@ -407,12 +413,12 @@ class MainWindow(QMainWindow):
         self.build_collect_dialog().exec()
 
     def _remove_slack(self, record) -> None:
-        """Убрать замер запаса. Насовсем: отключать его незачем.
+        """Remove a copy-slack measurement for good: disabling it is pointless.
 
-        У точки калибровки отключение осмысленно — под ней лежит заводское
-        значение, к которому можно вернуться. У замера запаса заводского на
-        то же число файлов может не быть вовсе, и «отключено» означало бы
-        просто спрятанные числа.
+        For a calibration point disabling makes sense — under it lies a factory
+        value to go back to. A copy-slack measurement may have no factory one
+        for the same file count at all, and "disabled" would mean simply hidden
+        numbers.
         """
         if not self.confirm(
             "Удалить замер",
@@ -423,12 +429,13 @@ class MainWindow(QMainWindow):
         self.records_tab.remove_calibration(record)
 
     def _set_point_disabled(self, volume_bytes: int, disabled: bool) -> None:
-        """Отключить или вернуть точку калибровки на этом томе.
+        """Disable or restore the calibration point on this volume.
 
-        Только точку: замеры запаса лежат в том же списке, и общий проход по
-        mounted_bytes задел бы и их. Совпасть размеры не должны — контейнер
-        под набор намеренно уводится с рекомендованных, — но полагаться на
-        это, когда достаточно проверить признак, незачем.
+        Only the point: copy-slack measurements lie in the same list, and a
+        shared pass over mounted_bytes would touch them too. The sizes should
+        not coincide — the container for a file set is moved off the
+        recommended sizes on purpose — but there is no reason to rely on that
+        when checking the property is enough.
         """
         store = self.records_tab.store
         for index, record in enumerate(store.calibration):
@@ -437,11 +444,11 @@ class MainWindow(QMainWindow):
         self.records_tab.save_store()
 
     def _disable_all_points(self) -> None:
-        """Вернуться к заводским по всем точкам. Замеров запаса не касается.
+        """Revert all points to factory. Copy-slack measurements are untouched.
 
-        У них заводского на то же число файлов может не быть вовсе, и
-        «отключить» означало бы потерять калибровку запаса целиком, ничего об
-        этом не сказав.
+        Those may have no factory measurement for the same file count at all,
+        and "disable" would mean losing the copy-slack calibration entirely
+        without saying a word about it.
         """
         store = self.records_tab.store
         live = [
@@ -465,7 +472,7 @@ class MainWindow(QMainWindow):
         ]
         self.records_tab.save_store()
 
-    # --- вид ---------------------------------------------------------------
+    # --- view --------------------------------------------------------------
 
     def _build_view_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -532,13 +539,13 @@ class MainWindow(QMainWindow):
         self.settings.setValue(REMEMBER_TAB_KEY, remember)
 
     def _select_tab(self, title: str) -> None:
-        """Открыть вкладку по имени; неизвестное имя — первая вкладка.
+        """Open a tab by name; an unknown name opens the first tab.
 
-        По имени, а не по номеру. Номер меняется от любой перестановки вкладок,
-        и программа тогда молча открывается не на той странице — а заметить это
-        нечем, потому что открылась-то она успешно. Заодно так переживается и
-        старая настройка с номером: «2» не совпадёт ни с одним заголовком и
-        честно уедет на первую вкладку.
+        By name, not by number. The number changes with any reordering of the
+        tabs, and the program then silently opens on the wrong page — with no
+        way to notice, because it did open successfully. This also survives
+        the old setting that held a number: "2" matches no title and honestly
+        falls back to the first tab.
         """
         titles = [self.tabs.tabText(index) for index in range(self.tabs.count())]
         self.tabs.setCurrentIndex(titles.index(title) if title in titles else 0)
@@ -546,7 +553,7 @@ class MainWindow(QMainWindow):
     def current_tab_title(self) -> str:
         return self.tabs.tabText(self.tabs.currentIndex())
 
-    # --- преференции -------------------------------------------------------
+    # --- preferences -------------------------------------------------------
 
     def _restore_preferences(self) -> None:
         stored = self.settings.value(UNIT_KEY, DEFAULT_UNIT.key, type=str)
@@ -581,10 +588,11 @@ class MainWindow(QMainWindow):
                 restore_sort(table, section, order)
 
     def _restore_picker(self) -> None:
-        """Вернуть диалогу выбора его вид, размер и обе галочки.
+        """Give the picker back its view, size and both check boxes.
 
-        Всё это ставят в самом диалоге, а хранит окно: диалог живёт один
-        показ, и настройка, оставшаяся в нём, не пережила бы даже «Отмену».
+        All of this is set in the dialog itself, but the window keeps it: the
+        dialog lives for one showing, and a setting left inside it would not
+        survive even Cancel.
         """
         self.calc_tab.set_picker_state(
             PickerState(
@@ -608,15 +616,15 @@ class MainWindow(QMainWindow):
 
     def _store_preferences(self) -> None:
         self.settings.setValue(GEOMETRY_KEY, self.saveGeometry())
-        # При выключенном запоминании имя не перезаписывается: программа в
-        # такой сессии всё равно открылась на «Расчёте», и записать его значило
-        # бы затереть запомненное, ничего не спросив.
+        # With remembering off, the name is not overwritten: in such a session
+        # the program opened on Calculation anyway, and writing that would wipe
+        # out what was remembered without asking.
         if self.remember_tab.isChecked():
             self.settings.setValue(ACTIVE_TAB_KEY, self.current_tab_title())
         self.settings.setValue(REMEMBER_TAB_KEY, self.remember_tab.isChecked())
         self._store_picker()
-        # Расположение окон графиков — своим именем, а не номером: то же
-        # правило, что и для активной вкладки.
+        # The chart windows' layout is stored under its own name, not by
+        # number: the same rule as for the active tab.
         for window in self._charts.values():
             window.save_layout(self.settings)
         for name, table in self.all_tables().items():

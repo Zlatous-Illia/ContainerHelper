@@ -1,7 +1,7 @@
-"""Модели накладных расходов и расчёт размера контейнера VeraCrypt.
+"""Overhead models and the VeraCrypt container size calculation.
 
-Весь модуль работает в целых байтах. Единственное место, где появляется float, —
-коэффициенты моделей; результат немедленно округляется вверх до целого.
+The whole module works in whole bytes. The only place a float appears is the
+model coefficients; the result is immediately rounded up to an integer.
 """
 
 from __future__ import annotations
@@ -12,64 +12,64 @@ from typing import Iterable, Sequence
 
 MIB = 1024 * 1024
 
-#: Заголовок VeraCrypt. Измерено на трёх контейнерах, совпало до байта:
-#: container_bytes - mounted_bytes == 266240 для 8050, 10475 и 11130 MiB.
+#: VeraCrypt header. Measured on three containers, matched to the byte:
+#: container_bytes - mounted_bytes == 266240 for 8050, 10475 and 11130 MiB.
 VC_HEADER_BYTES = 266_240
 
-#: Модель метаданных NTFS по умолчанию: 19 MiB + 0.17 % от размера тома.
-#: Максимальная недооценка на трёх имеющихся измерениях — 0.55 MiB.
+#: Default NTFS metadata model: 19 MiB + 0.17 % of the volume size.
+#: The largest underestimate on the three available measurements is 0.55 MiB.
 DEFAULT_NTFS_BASE = 19 * MIB
 DEFAULT_NTFS_RATE = 0.0017
 
-#: Запас на копирование, когда нет вообще никаких замеров — ни своих, ни
-#: заводских. Обе части намеренно осторожны, но по разным причинам.
+#: Copy slack when there are no measurements at all — neither own nor
+#: factory. Both parts are deliberately cautious, but for different reasons.
 #:
-#: По-файловая часть измерена: на рядах 500, 5 000 и 10 000 файлов скорость
-#: вышла 1363 B на файл и держалась в пределах двух байт. Она и раскладывается
-#: физически — 1024 B на запись MFT плюс ~339 B на запись в индексе каталога.
-#: Здесь взято с запасом, потому что вторая половина зависит от длины имени
-#: файла: замеры сняты на именах в 34 символа, а у настоящих данных они бывают
-#: и вдвое длиннее.
+#: The per-file slack is measured: on the series of 500, 5 000 and 10 000
+#: files the rate came out at 1363 B per file and held within two bytes. It
+#: also breaks down physically — 1024 B per MFT record plus ~339 B per entry
+#: in the directory index. Here it is taken with headroom, because the second
+#: half depends on the file name length: the measurements were taken on
+#: 34-character names, and in real data they can be twice as long.
 #:
-#: Постоянная часть осталась прежней, хотя синтетический замер при n = 1 дал
-#: всего 4096 B — один кластер. Расхождение с ручными записями (114 688 и
-#: 143 360 B при том же n = 1) не объяснено: их копировали Проводником, а не
-#: писали программой, и что именно Windows добавляет вокруг настоящего
-#: копирования, неизвестно. Пользователь копирует Проводником, поэтому здесь
-#: держится большее из двух: 192 KiB стоят ничего рядом со страховкой в
-#: мегабайты, а занижение — единственная опасная сторона.
+#: The constant part stayed as it was, although the synthetic measurement at
+#: n = 1 gave only 4096 B — one cluster. The discrepancy with the manual
+#: records (114 688 and 143 360 B at the same n = 1) is not explained: those
+#: were copied with Explorer, not written by the program, and what exactly
+#: Windows adds around a real copy is unknown. The user copies with Explorer,
+#: so the larger of the two is kept here: 192 KiB costs nothing next to a
+#: safety margin of megabytes, and underestimate is the only dangerous side.
 DEFAULT_SLACK_BASE = 192 * 1024
 DEFAULT_SLACK_PER_FILE = 1536
 
 DEFAULT_SAFETY_BYTES = 4 * MIB
 DEFAULT_CLUSTER_BYTES = 4096
 
-#: Нижняя граница предсказания метаданных NTFS. Защищает от вырожденной
-#: экстраполяции по двум близким шумным точкам.
+#: Lower bound of the NTFS metadata prediction. Protects against degenerate
+#: extrapolation from two close, noisy points.
 MIN_NTFS_BYTES = MIB
 
 
 def ceil_div(value: int, divisor: int) -> int:
-    """Деление с округлением вверх, только на целых."""
+    """Division rounding up, on integers only."""
     return -(-value // divisor)
 
 
 def round_up(value: int, unit: int) -> int:
-    """Округление вверх до кратного unit."""
+    """Round up to a multiple of unit."""
     return ceil_div(value, unit) * unit
 
 
 class NtfsModel:
-    """Метаданные NTFS как функция размера смонтированного тома.
+    """NTFS metadata as a function of the mounted volume size.
 
-    Меньше двух точек — аффинная модель по умолчанию. Две и больше —
-    кусочно-линейная интерполяция по измеренным точкам, за пределами
-    диапазона линейная экстраполяция по двум крайним.
+    Fewer than two points — the default affine model. Two or more —
+    piecewise-linear interpolation over the measured points, and outside the
+    range linear extrapolation from the two outermost ones.
 
-    Кусочно-линейная форма выбрана потому, что зависимость не пропорциональна:
-    $LogFile почти не растёт с томом и упирается в потолок 64 MiB, линейно
-    растёт только $Bitmap. Одна прямая через 1 GiB и 100 GiB дала бы
-    систематическую ошибку.
+    The piecewise-linear form was chosen because the dependence is not
+    proportional: $LogFile barely grows with the volume and hits a ceiling of
+    64 MiB, only $Bitmap grows linearly. One straight line through 1 GiB and
+    100 GiB would give a systematic error.
     """
 
     def __init__(
@@ -84,10 +84,10 @@ class NtfsModel:
 
     @staticmethod
     def _dedupe(points: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
-        """Свернуть совпадающие размеры тома, оставив наибольшее значение.
+        """Collapse matching volume sizes, keeping the largest value.
 
-        Наибольшее, а не среднее: ошибка модели должна уходить в безопасную
-        сторону.
+        The largest, not the average: the model's error must go to the safe
+        side.
         """
         best: dict[int, int] = {}
         for volume, overhead in points:
@@ -103,7 +103,7 @@ class NtfsModel:
 
     @property
     def covered_range(self) -> tuple[int, int] | None:
-        """Диапазон размеров тома, покрытый измерениями."""
+        """Range of volume sizes covered by measurements."""
         if not self.points:
             return None
         return self.points[0][0], self.points[-1][0]
@@ -144,22 +144,25 @@ class NtfsModel:
         ]
 
     def interpolation_bound(self, volume_bytes: int) -> int:
-        """Насколько модель может занизить именно в этой точке.
+        """How much the model can underestimate at exactly this point.
 
-        Между двумя замерами модель ведёт прямую, а настоящая зависимость
-        прямой не является. Там, где она выпукла, хорда идёт сверху и занизить
-        нельзя. Там, где вогнута — а выше 16 GiB она именно такая, потому что
-        составляющие метаданных по очереди упираются в свои потолки, — хорда
-        проходит под кривой, и вот этот зазор и есть риск.
+        Between two measurements the model draws a straight line, and the
+        real dependence is not a straight line. Where it is convex, the chord
+        runs above and cannot underestimate. Where it is concave — and above
+        16 GiB it is exactly that, because the parts of the metadata hit their
+        ceilings one after another — the chord passes under the curve, and
+        that gap is the risk.
 
-        Сверху кривая ограничена двумя прямыми: из левого конца с наклоном
-        предыдущего отрезка и из правого с наклоном следующего. Ближайшая из
-        них минус хорда и даёт границу. За последним отрезком наклон
-        считается нулевым: это самое осторожное предположение, и оно же
-        близко к правде — на больших томах растёт только $Bitmap.
+        From above, the curve is bounded by two straight lines: one from the
+        left end with the slope of the previous segment and one from the right
+        end with the slope of the next. The nearer of them minus the chord
+        gives the bound. Beyond the last segment the slope is taken as zero:
+        this is the most cautious assumption, and it is also close to the
+        truth — on large volumes only $Bitmap grows.
 
-        Вне измеренного диапазона возвращается ноль: там работает не
-        интерполяция, а экстраполяция, и её погрешность оценивается иначе.
+        Outside the measured range zero is returned: there it is not
+        interpolation but extrapolation at work, and its error is estimated
+        differently.
         """
         if not self.calibrated:
             return 0
@@ -184,28 +187,29 @@ class NtfsModel:
         return max(0, math.ceil(ceiling - chord))
 
     def _extend(self, anchor: tuple[int, int], volume_bytes: int) -> int:
-        """Продлить зависимость за пределы измеренного диапазона.
+        """Extend the dependence beyond the measured range.
 
-        Наклон берётся не подогнанный, а базовый — тот же, что в модели по
-        умолчанию, — и привязывается к ближайшей измеренной точке. Подогнанный
-        наклон за пределами данных ненадёжен: замеры часто стоят вплотную,
-        и их локальный наклон, вынесенный в разы дальше собственного размаха,
-        промахивается на порядок. Проверка исключением давала на этом 10.8 MiB
-        недооценки при страховке в 4 MiB.
+        The slope taken is not the fitted one but the baseline one — the same
+        as in the default model — anchored to the nearest measured point. A
+        fitted slope beyond the data is unreliable: measurements often stand
+        close together, and their local slope, carried many times further
+        than its own span, misses by an order of magnitude. The leave-one-out
+        check gave 10.8 MiB of underestimate on this with a safety margin of
+        4 MiB.
 
-        Внутри диапазона верны измерения, снаружи — физический прирост
-        (`$Bitmap` линеен по размеру тома, `$LogFile` упирается в потолок),
-        сдвинутый так, чтобы совпасть с краем измеренного.
+        Inside the range the measurements are right; outside it is the
+        physical growth (`$Bitmap` is linear in the volume size, `$LogFile`
+        hits a ceiling), shifted so as to meet the edge of the measured range.
         """
         x_anchor, y_anchor = anchor
         return y_anchor + math.ceil(self.rate * (volume_bytes - x_anchor))
 
 
 class CopySlackModel:
-    """Место, которое занимают сами файлы сверх своего кластерного размера.
+    """Space the files themselves take beyond their cluster-rounded size.
 
-    Запись MFT на каждый файл, рост индексов каталогов, служебные структуры
-    первой записи на томе.
+    An MFT record per file, growth of the directory indexes, the service
+    structures of the first write on the volume.
     """
 
     def __init__(
@@ -226,7 +230,7 @@ class CopySlackModel:
 
     @property
     def per_file_calibrated(self) -> bool:
-        """Отделить по-файловую составляющую можно только при разных n."""
+        """The per-file slack can be separated only with different n."""
         return len(set(self.file_counts)) >= 2
 
     def slack(self, file_count: int) -> int:
@@ -234,12 +238,13 @@ class CopySlackModel:
 
     @classmethod
     def calibrate(cls, samples: Sequence[tuple[int, int]]) -> "CopySlackModel":
-        """Подобрать коэффициенты по парам (число файлов, измеренный запас).
+        """Fit the coefficients to pairs (file count, measured slack).
 
-        Наклон берётся методом наименьших квадратов, но только если записи
-        покрывают хотя бы два разных n и наклон вышел неотрицательным; иначе
-        остаётся значение по умолчанию. Свободный член после этого поднимается
-        до верхней огибающей, чтобы модель не занижала ни одну из записей.
+        The slope is found by least squares, but only if the records cover
+        at least two different n and the slope came out non-negative;
+        otherwise the default value stays. The intercept is then raised to
+        the upper envelope, so that the model underestimates none of the
+        records.
         """
         usable = [(n, value) for n, value in samples if n >= 1 and value >= 0]
         if not usable:
@@ -271,7 +276,7 @@ class CopySlackModel:
 
 @dataclass(frozen=True)
 class Payload:
-    """То, что предстоит положить в контейнер."""
+    """What is to be put into the container."""
 
     logical_bytes: int
     alloc_bytes: int
@@ -299,10 +304,10 @@ class Payload:
         sizes: Iterable[int],
         cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
     ) -> "Payload":
-        """Сумма кластерных размеров, а не логических.
+        """Sum of cluster-rounded sizes, not logical ones.
 
-        Стоимость записей MFT сюда не входит — она целиком относится к
-        CopySlackModel, чтобы не задваиваться.
+        The cost of MFT records is not included here — it belongs entirely to
+        CopySlackModel, so as not to be counted twice.
         """
         logical = 0
         alloc = 0
@@ -321,7 +326,7 @@ class Payload:
 
 @dataclass(frozen=True)
 class Solution:
-    """Разложение результата по слагаемым — для таблицы на вкладке «Расчёт»."""
+    """Result breakdown by component — for the table on the Calculation tab."""
 
     container_mib: int
     container_bytes: int
@@ -345,11 +350,11 @@ def solve_container_mib(
     safety_bytes: int = DEFAULT_SAFETY_BYTES,
     max_iterations: int = 8,
 ) -> Solution:
-    """Найти минимальный размер контейнера в MiB, в который влезет payload.
+    """Find the minimal container size in MiB that the payload fits into.
 
-    Метаданные NTFS зависят от размера тома, а он — от искомого результата,
-    поэтому решение итеративное. Сходится за две-три итерации: NTFS меняется
-    много медленнее, чем сам том.
+    NTFS metadata depends on the volume size, and the volume size depends on
+    the result being sought, so the solution is iterative. It converges in two
+    or three iterations: NTFS changes much more slowly than the volume itself.
     """
     ntfs = ntfs or NtfsModel()
     slack = slack or CopySlackModel()
@@ -392,30 +397,31 @@ def solve_container_mib(
     )
 
 
-#: Надбавка, пока отрезок держится только на заводских замерах. Совпадает
-#: со значением по умолчанию: чужие данные стоят ровно столько же доверия,
-#: сколько модель без калибровки вообще.
+#: Factory margin while a segment rests only on factory measurements. It
+#: equals the default value: someone else's data deserves exactly as much
+#: trust as a model with no calibration at all.
 FACTORY_MARGIN_BYTES = 4 * MIB
 
-#: Ниже этого страховка не опускается никогда. Замер свободного места сам по
-#: себе слегка шумит, и советовать ноль было бы враньём о точности.
+#: The safety margin never goes below this. A free-space measurement is
+#: slightly noisy in itself, and advising zero would be a lie about precision.
 MIN_SAFETY_BYTES = MIB
 
-#: Во сколько раз может отличаться число файлов. Здесь окно шире: по-файловая
-#: часть меняется медленно, а замеров будет мало.
+#: By how many times the file count may differ. The window is wider here: the
+#: per-file slack changes slowly, and there will be few measurements.
 SLACK_NEIGHBOUR_RATIO = 8.0
 
 
 @dataclass(frozen=True)
 class SafetyAdvice:
-    """Сколько страховки нужно именно этому расчёту и почему."""
+    """How much safety margin this very calculation needs, and why."""
 
     total_bytes: int
     ntfs_bytes: int
     slack_bytes: int
     ntfs_reason: str
     slack_reason: str
-    #: Имена записей, на которых построен совет. Пусто — значит не на чем.
+    #: Names of the records the advice is built on. Empty means there is
+    #: nothing to build it on.
     basis: tuple[str, ...] = ()
 
     @property
@@ -424,32 +430,32 @@ class SafetyAdvice:
 
 
 class SafetyModel:
-    """Страховка под конкретный размер, а не одно число на все случаи.
+    """Safety margin for a specific size, not one number for all cases.
 
-    Общий «наибольший промах по всем записям» — величина бесполезная: она
-    берётся с того размера, где модель слабее всего, и тащит эту слабость на
-    расчёты, которым до неё нет дела. Контейнер на 5 GiB не должен платить за
-    то, что кривая ломается в районе 48 GiB.
+    A general "largest miss over all records" is a useless value: it is taken
+    from the size where the model is weakest, and drags that weakness onto
+    calculations that have nothing to do with it. A 5 GiB container must not
+    pay for the curve breaking somewhere around 48 GiB.
 
-    Совет складывается из двух независимых частей:
+    The advice is made of two independent parts:
 
-    * NTFS — граница интерполяции ровно в этой точке и промахи на записях
-      похожего размера, приведённые к ширине нужного отрезка;
-    * запас на копирование — промахи на замерах с похожим числом файлов.
+    * NTFS — the interpolation bound at exactly this point and the misses on
+      records of similar size, scaled to the width of the segment in question;
+    * copy slack — the misses on measurements with a similar file count.
 
-    Про приведение к ширине. Промах берётся из проверки исключением: только
-    она показывает, как модель ведёт себя там, где точки не было. Но она
-    меряет модель без одной точки, то есть с прорехой примерно вдвое шире
-    настоящей, и брать её промах как есть — это и был тот самый общий
-    «наибольший промах», от которого здесь уходим: он не спадает от
-    добавления замеров, потому что каждый новый замер тут же выкалывают.
-    Погрешность линейной интерполяции растёт как квадрат ширины прорехи, так
-    что промах, снятый на прорехе `h_loo`, пересчитывается на настоящий
-    отрезок `h` множителем `(h / h_loo)²`. Взять остаток полной модели было
-    бы бесполезно: на своей же точке он ноль по построению.
+    About scaling to width. The miss is taken from the leave-one-out check:
+    only it shows how the model behaves where there was no point. But it
+    measures the model without one point, that is, with a gap about twice as
+    wide as the real one, and taking its miss as is was exactly that general
+    "largest miss" this class moves away from: it does not shrink as
+    measurements are added, because each new measurement is immediately left
+    out in its turn. The error of linear interpolation grows as the square of
+    the gap width, so a miss taken on a gap `h_loo` is rescaled to the real
+    segment `h` by the factor `(h / h_loo)²`. Taking the residual of the full
+    model would be useless: at its own point it is zero by construction.
 
-    Там, где записей рядом нет, честный ответ — значение по умолчанию, а не
-    оптимистичный ноль.
+    Where there are no records nearby, the honest answer is the default
+    value, not an optimistic zero.
     """
 
     def __init__(
@@ -466,16 +472,17 @@ class SafetyModel:
         self.ntfs = ntfs or NtfsModel()
         self.ntfs_deviations = tuple(ntfs_deviations)
         self.slack_deviations = tuple(slack_deviations)
-        #: Что закладывать за краем замеров: там локальных свидетельств нет
-        #: вовсе, и осторожность — единственный доступный ответ.
+        #: What to budget beyond the edge of the measurements: there is no
+        #: local evidence there at all, and caution is the only answer
+        #: available.
         self.extrapolation_bytes = extrapolation_bytes
         self.floor = floor
         self.default_bytes = default_bytes
-        #: Тома, покрытые только заводскими данными, и надбавка за них. Чужая
-        #: сборка Windows могла выбрать другой размер $LogFile; занижение —
-        #: единственная опасная сторона, поэтому пока оба конца отрезка
-        #: заводские, к страховке добавляется постоянная величина. Свой замер
-        #: рядом её снимает.
+        #: Volumes covered only by factory data, and the factory margin for
+        #: them. Another Windows build could have chosen a different $LogFile
+        #: size; underestimate is the only dangerous side, so while both ends
+        #: of a segment are factory ones, a constant is added to the safety
+        #: margin. An own measurement nearby removes it.
         self.factory_volumes = set(factory_volumes or ())
         self.factory_margin = factory_margin
 
@@ -483,7 +490,7 @@ class SafetyModel:
     def _nearby(
         samples: Sequence[tuple[int, int, str]], target: int, ratio: float
     ) -> list[tuple[int, int, str]]:
-        """Записи, размер которых отличается от искомого не больше чем в ratio раз."""
+        """Records whose size is within a factor of ratio of the target."""
         if target <= 0:
             return []
         low, high = target / ratio, target * ratio
@@ -491,7 +498,7 @@ class SafetyModel:
 
     @staticmethod
     def _worst(samples: Sequence[tuple[int, int, str]]) -> int:
-        """Наибольшая недооценка среди выборки. Перезаклады не в счёт."""
+        """Largest underestimate in the sample. Overestimates do not count."""
         return max((deviation for _, deviation, _ in samples), default=0)
 
     def _advise_ntfs(self, volume_bytes: int) -> tuple[int, str, tuple[str, ...]]:
@@ -514,9 +521,10 @@ class SafetyModel:
         span = self._segment_span(volume_bytes)
         neighbours = self._segment_endpoints(volume_bytes)
 
-        # Вес обнуляет чужой промах на самих замерах и поднимает его к
-        # середине прорехи: ровно там линейная интерполяция и ошибается,
-        # а в узлах она точна по построению.
+        # The weight zeroes a neighbour's miss at the measurements themselves
+        # and raises it towards the middle of the gap: that is exactly where
+        # linear interpolation errs, while at the nodes it is exact by
+        # construction.
         weight = self._segment_weight(volume_bytes)
         scaled = 0
         for volume, deviation, _ in neighbours:
@@ -542,7 +550,7 @@ class SafetyModel:
         return value, reason, names
 
     def _leans_on_factory(self, volume_bytes: int) -> bool:
-        """Оба конца отрезка — заводские точки, своих замеров рядом нет."""
+        """Both segment ends are factory points; no own measurements nearby."""
         if not self.factory_volumes or not self.ntfs.calibrated:
             return False
         points = self.ntfs.points
@@ -555,13 +563,13 @@ class SafetyModel:
     def _segment_endpoints(
         self, volume_bytes: int
     ) -> list[tuple[int, int, str]]:
-        """Записи, между которыми лежит искомый размер.
+        """Records between which the target size lies.
 
-        «Похожий размер» — это именно они, а не всё, что попало в окно по
-        отношению размеров. Окно шириной вдвое затягивало бы соседей через
-        одного: рядом с 90 GiB оказывалась запись на 48 GiB, где у кривой
-        излом, и её промах уезжал в плоскую область, где по замерам растёт
-        одна битовая карта.
+        "Similar size" means exactly these, not everything that fell into a
+        window by size ratio. A window of a factor of two would pull in
+        next-but-one neighbours: next to 90 GiB a record at 48 GiB turned up,
+        where the curve has a knee, and its miss was carried into a flat
+        region where, by the measurements, only the bitmap grows.
         """
         points = self.ntfs.points
         index = 0
@@ -571,10 +579,11 @@ class SafetyModel:
         return [item for item in self.ntfs_deviations if item[0] in edges]
 
     def _segment_weight(self, volume_bytes: int) -> float:
-        """Насколько глубоко искомый размер сидит внутри отрезка.
+        """How deep the target size sits inside the segment.
 
-        Ноль на концах, единица посередине. На самом замере модель точна, и
-        приписывать ей там чужую погрешность нечестно.
+        Zero at the ends, one in the middle. At the measurement itself the
+        model is exact, and attributing someone else's error to it there is
+        unfair.
         """
         points = self.ntfs.points
         index = 0
@@ -588,7 +597,7 @@ class SafetyModel:
         return 4 * position * (1 - position)
 
     def _segment_span(self, volume_bytes: int) -> int:
-        """Ширина отрезка между замерами, в который попал искомый размер."""
+        """Width of the segment between measurements where the target falls."""
         points = self.ntfs.points
         index = 0
         while index + 1 < len(points) - 1 and points[index + 1][0] < volume_bytes:
@@ -596,10 +605,10 @@ class SafetyModel:
         return points[index + 1][0] - points[index][0]
 
     def _loo_span(self, volume_bytes: int) -> int:
-        """Ширина прорехи, которая возникает при исключении этой точки.
+        """Width of the gap that appears when this point is left out.
 
-        Она и есть та ширина, на которой измерен промах: слева и справа
-        остаются соседи выколотой точки.
+        It is exactly the width the miss was measured on: to the left and to
+        the right remain the neighbours of the left-out point.
         """
         points = self.ntfs.points
         volumes = [volume for volume, _ in points]
@@ -611,13 +620,13 @@ class SafetyModel:
         return high - low
 
     def _fallback_slack(self, file_count: int) -> tuple[int, str, tuple[str, ...]]:
-        """Сколько закладывать, когда замеров запаса нет вовсе.
+        """What to budget when there are no copy-slack measurements at all.
 
-        Риск здесь зависит от числа файлов, а не от их объёма. Постоянная
-        часть измерена и мала — сотни килобайт, поэтому одному файлу хватает
-        нижней границы. По-файловая часть не подтверждена ничем, и вот она на
-        большом числе файлов может уехать далеко: там берётся полное значение
-        по умолчанию.
+        The risk here depends on the file count, not on their total size. The
+        constant part is measured and small — hundreds of kilobytes — so the
+        safety floor is enough for one file. The per-file slack is confirmed
+        by nothing, and it is the part that can drift far on a large number
+        of files: there the full default value is taken.
         """
         if file_count <= 1:
             return (

@@ -1,4 +1,4 @@
-"""Добавление и правка записи измерений."""
+"""Adding and editing a measurement record."""
 
 from __future__ import annotations
 
@@ -24,15 +24,16 @@ from PySide6.QtWidgets import (
 from ..formatting import DASH, fmt_both, fmt_bytes, parse_bytes
 from ..model import DEFAULT_CLUSTER_BYTES, Payload
 
-#: Пределы ввода. Байты — до петабайта с разделителями разрядов;
-#: MiB — до терабайтного контейнера; кластер — до 65536; файлов — до
-#: сотни миллионов, дальше обход папки упрётся во время, а не в поле.
+#: Input limits. Bytes — up to a petabyte with digit-group separators;
+#: MiB — up to a terabyte container; cluster — up to 65536; files — up to
+#: a hundred million, beyond that the folder scan runs into time, not into
+#: the field.
 MAX_BYTES_CHARS = 24
 MAX_MIB_CHARS = 10
 MAX_CLUSTER_CHARS = 7
 MAX_COUNT_CHARS = 11
-#: Имя и заметка — свободный текст, но не бесконечный: имя стоит в таблицах и
-#: в подписях графиков, а заметка целиком уходит в подсказку строки.
+#: The name and the note are free text, but not endless: the name appears in
+#: tables and in chart labels, and the note goes whole into the row tooltip.
 MAX_ID_CHARS = 80
 MAX_NOTE_CHARS = 400
 from ..sizes import scan_volume
@@ -43,11 +44,11 @@ from .table import digits_only, plain_text
 
 
 class RecordDialog(QDialog):
-    """Правит только измеряемые поля.
+    """Edits only the measured fields.
 
-    Заголовок VeraCrypt, метаданные NTFS, занятое место и запас на копирование
-    показываются рядом, но не редактируются: они выводятся из введённого и в
-    файл не попадают.
+    The VeraCrypt header, the NTFS metadata, the used space and the copy slack
+    are shown alongside but not edited: they are derived from what was entered
+    and do not go into the file.
     """
 
     def __init__(
@@ -63,16 +64,18 @@ class RecordDialog(QDialog):
         self.setWindowTitle("Запись измерений")
         self.setMinimumWidth(560)
         self._record = record or Record(id="", container_mib=1024)
-        #: Откуда взять размер и число файлов. Приложение файлы не копирует и
-        #: узнать их самостоятельно не может: единственный, кто их уже знает, —
-        #: вкладка «Расчёт», где тот же набор данных и выбирали.
+        #: Where to get the size and the file count. The application does not
+        #: copy files and cannot learn them on its own: the only one that
+        #: already knows them is the Calculation tab, where that same data set
+        #: was chosen.
         self._payload_provider = payload_provider
         self._container_provider = container_provider
-        #: Сколько страховки было в обещанном. Тоже с «Расчёта»: там она и
-        #: подбирается, а в записи хранится ради разбора промаха.
+        #: How much safety margin the prediction included. Also from the
+        #: Calculation tab: that is where it is chosen, and the record keeps it
+        #: to analyse the miss.
         self._safety_provider = safety_provider
-        #: Упрощённый режим для точки калибровки: в контейнер ничего не
-        #: кладут, поэтому поля данных и остатка только мешают.
+        #: Simplified mode for a calibration point: nothing is put into the
+        #: container, so the data and left-space fields only get in the way.
         self._calibration = calibration
 
         layout = QVBoxLayout(self)
@@ -91,20 +94,21 @@ class RecordDialog(QDialog):
         self._filesystem = self._record.filesystem
         self._load(self._record)
         self._refresh()
-        # Минимум ширины — по самой широкой строке кнопок, а не круглым числом.
-        # QPushButton соглашается стать вчетверо уже своей надписи, и на
-        # 560 пикселях «Взять с „Расчёта“» показывала «Взять с…»: клипается
-        # молча, а окно при этом выглядит целым.
+        # The minimum width comes from the widest row of buttons, not from a
+        # round number. QPushButton agrees to become four times narrower than
+        # its caption, and at 560 pixels the Take from Calculation button
+        # («Взять с „Расчёта“») showed «Взять с…»: it clips silently, while
+        # the window looks intact.
         self.setMinimumWidth(max(self.minimumWidth(), self._actions_width()))
 
     def _actions_width(self) -> int:
-        """Сколько нужно строке кнопок вместе с полями окна."""
+        """How much the row of buttons needs, with the window margins."""
         margins = self.layout().contentsMargins()
         return (
             self._actions.sizeHint().width() + margins.left() + margins.right() + 24
         )
 
-    # --- построение --------------------------------------------------------
+    # --- building ----------------------------------------------------------
 
     def _build_fields(self) -> QGroupBox:
         group = QGroupBox("Измеренные величины")
@@ -118,8 +122,9 @@ class RecordDialog(QDialog):
         )
         form.addRow("Имя:", self.id_edit)
 
-        # Три действия в ряд, сразу под именем: взять посчитанное, снять
-        # пустой том, снять остаток после копирования.
+        # Three actions in a row, right under the name: take what was
+        # calculated, measure the empty volume, measure the left space after
+        # copying.
         actions = QHBoxLayout()
         self.payload_button = QPushButton("Взять с «Расчёта»")
         self.payload_button.setToolTip(
@@ -223,8 +228,9 @@ class RecordDialog(QDialog):
             "страховки это скрыли."
         )
 
-        # Ограничения длины: без них в поле влезает число, для которого нет
-        # носителя, и ошибка всплывает уже проверкой правдоподобия.
+        # Length limits: without them a field takes a number for which no
+        # storage device exists, and the error surfaces only in the
+        # plausibility check.
         self.container_edit.setMaxLength(MAX_MIB_CHARS)
         self.cluster_combo.lineEdit().setMaxLength(MAX_CLUSTER_CHARS)
         for edit in (self.mounted_edit, self.free_edit, self.file_edit,
@@ -234,10 +240,10 @@ class RecordDialog(QDialog):
         for edit in (self.predicted_edit, self.predicted_safety_edit):
             edit.setMaxLength(MAX_MIB_CHARS)
 
-        # Все числовые поля принимают только цифры и разделители разрядов.
-        # Буква в поле байт — промах по клавише, а не «значение, которое не
-        # разобралось»: раньше parse_bytes молча отдавал None, поле оставалось
-        # с мусором, а вычисленные величины превращались в прочерки.
+        # All numeric fields accept only digits and digit-group separators. A
+        # letter in a bytes field is a slip of the finger, not "a value that
+        # failed to parse": parse_bytes used to return None silently, the
+        # field kept the garbage, and the computed values turned into dashes.
         digits_only(self.cluster_combo)
         for edit in (
             self.container_edit,
@@ -267,7 +273,7 @@ class RecordDialog(QDialog):
         return group
 
     def _hide_payload_rows(self, form: QFormLayout) -> None:
-        """Оставить только то, что нужно замеру пустого тома."""
+        """Keep only what an empty-volume measurement needs."""
         for widget in (
             self.payload_button,
             self.left_button,
@@ -327,7 +333,7 @@ class RecordDialog(QDialog):
         self.issues_label.setTextFormat(Qt.RichText)
         return self.issues_label
 
-    # --- данные ------------------------------------------------------------
+    # --- data --------------------------------------------------------------
 
     def _load(self, record: Record) -> None:
         self.id_edit.setText(record.id)
@@ -377,7 +383,7 @@ class RecordDialog(QDialog):
         )
 
     def _measure_empty(self) -> None:
-        """Ёмкость и свободное место пустого тома — точка для модели NTFS."""
+        """Volume capacity and empty free space: a point for the NTFS model."""
         result = self._ask_volume(
             "Смонтируйте пустой отформатированный контейнер и выберите его "
             "букву. Считываются ёмкость тома и свободное место на нём."
@@ -391,12 +397,12 @@ class RecordDialog(QDialog):
         self._refresh()
 
     def _measure_left(self) -> None:
-        """Остаток после копирования плюс сверка, что скопировано то самое.
+        """Left space after copying, plus a check that the right data is there.
 
-        Замер без сверки бессмыслен: остаток связывается с размером данных и
-        числом файлов, взятыми с «Расчёта». Скопировали не то — запас на
-        копирование выйдет мусором и молча испортит калибровку, а поймать это
-        потом нечем.
+        A measurement without the check is meaningless: the left space is tied
+        to the data size and the file count taken from the Calculation tab.
+        Copy the wrong thing, and the copy slack comes out as garbage and
+        silently spoils the calibration, with nothing to catch it afterwards.
         """
         result = self._ask_volume(
             "Смонтируйте контейнер с уже скопированными данными и выберите "
@@ -424,9 +430,9 @@ class RecordDialog(QDialog):
 
     def _ask_volume(self, prompt: str) -> tuple[str, int, int] | None:
         dialog = MeasureDialog(self, prompt=prompt)
-        # Модально своему окну, а не всей программе: окон записи теперь
-        # открыто может быть несколько, и выбор буквы в одном из них не должен
-        # запирать остальные вместе с «Расчётом».
+        # Modal to its own window, not to the whole program: several record
+        # windows can now be open, and choosing a drive letter in one of them
+        # must not lock the others together with the Calculation tab.
         dialog.setWindowModality(Qt.WindowModal)
         if dialog.exec() != QDialog.Accepted:
             return None
@@ -438,11 +444,11 @@ class RecordDialog(QDialog):
         return drive, values[0], values[1]
 
     def _apply_volume_facts(self) -> None:
-        """Подставить файловую систему и кластер, прочитанные с тома.
+        """Fill in the filesystem and cluster size read from the volume.
 
-        Спрашивать их у пользователя незачем: том существует, его свойства
-        читаются точно. Опечатка в кластере исказила бы запас на копирование
-        и ничем бы не поймалась.
+        There is no reason to ask the user for them: the volume exists, and its
+        properties are read exactly. A typo in the cluster size would distort
+        the copy slack, and nothing would catch it.
         """
         filesystem, cluster = getattr(self, "_volume_facts", ("", None))
         if filesystem:
@@ -451,11 +457,12 @@ class RecordDialog(QDialog):
             self.cluster_combo.setCurrentText(str(cluster))
 
     def _verdict(self, drive: str, scan) -> str:
-        """Сверка по итогам: число файлов и объём по кластерам.
+        """A check of the totals: the file count and the cluster-rounded size.
 
-        Пофайлово не сверяется намеренно: копирование содержимого папки вместо
-        самой папки и переименование по дороге — это норма, а расхождения по
-        путям выдавали бы ложную тревогу на каждом втором замере.
+        Deliberately not compared file by file: copying a folder's contents
+        instead of the folder itself, and renaming along the way, are normal,
+        and path mismatches would raise a false alarm on every other
+        measurement.
         """
         expected_count = parse_bytes(self.count_edit.text())
         expected_alloc = parse_bytes(self.alloc_edit.text())
@@ -504,12 +511,13 @@ class RecordDialog(QDialog):
         return "<br>".join(lines)
 
     def _take_payload(self) -> None:
-        """Перенести данные с вкладки «Расчёт».
+        """Bring the data over from the Calculation tab.
 
-        Переносится и Container init, и размер кластера. Container init —
-        потому что именно его и создают в VeraCrypt по этому расчёту, а
-        перебивать вручную значит завести опечатку. Кластер — потому что
-        считать объём по одному кластеру, а запас по другому бессмысленно.
+        Both Container init and the cluster size come along. Container init,
+        because that is exactly what gets created in VeraCrypt from this
+        calculation, and retyping it by hand means inviting a typo. The
+        cluster size, because computing the size with one cluster and the
+        slack with another makes no sense.
         """
         payload = self._payload_provider() if self._payload_provider else None
         if payload is None:
@@ -521,9 +529,10 @@ class RecordDialog(QDialog):
         container = self._container_provider() if self._container_provider else None
         if container:
             self.container_edit.setText(str(container))
-            # Обещание записывается тем же движением, что и сам размер: иначе
-            # его пришлось бы вбивать руками задним числом, а к тому времени
-            # модель уже другая, и проверять было бы нечего.
+            # The prediction is recorded in the same move as the size itself:
+            # otherwise it would have to be typed in by hand after the fact,
+            # and by then the model is already different, and there would be
+            # nothing to check.
             self.predicted_edit.setText(str(container))
         safety = self._safety_provider() if self._safety_provider else None
         if safety is not None:
@@ -556,10 +565,11 @@ class RecordDialog(QDialog):
         self.save_button.setText("Сохранить с пометкой" if issues else "Сохранить")
 
     def _refresh_forecast(self, record: Record) -> None:
-        """Показать, сошёлся ли прогноз, — словами, а не одним числом.
+        """Show whether the prediction held — in words, not with a bare number.
 
-        Знак промаха решает всё, и «−3» посреди чисел прочитывается не сразу.
-        Поэтому рядом стоит вывод: влезло бы или нет.
+        The sign of the miss decides everything, and "−3" among the numbers is
+        not read at once. So a verdict stands next to it: would it have fit or
+        not.
         """
         minimum = record.minimum_mib
         self.minimum_label.setText(
@@ -584,7 +594,7 @@ class RecordDialog(QDialog):
         )
 
     def _on_save(self) -> None:
-        """Запись с нарушениями сохраняется, но помечается и не калибрует модель."""
+        """A flawed record is saved but flagged, and calibrates no model."""
         record = self.build_record()
         self._record = replace(record, flagged=bool(validate(record)))
         self.accept()

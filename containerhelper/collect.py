@@ -1,19 +1,19 @@
-"""Автоматический сбор замеров: план, один шаг, самопроверка.
+"""Automatic collection of measurements: the plan, one step, the self-check.
 
-Снять калибровку руками — это двадцать два контейнера: создать, отформатировать,
-смонтировать, записать числа, размонтировать, удалить. Несколько часов, и
-каждый шаг можно сделать неправильно молча. Здесь то же самое делает VeraCrypt
-по команде, а программа читает готовый том.
+Taking the calibration by hand means twenty-two containers: create, format,
+mount, write down the numbers, unmount, delete. Several hours, and every step
+can be done wrong silently. Here VeraCrypt does the same on command, and the
+program reads the finished volume.
 
-Собирается два рода замеров. Пустой том даёт метаданные NTFS. Тот же том,
-заполненный сгенерированным набором файлов, даёт запас на копирование — ту
-самую часть модели, которую до сих пор не подтверждало ни одно измерение при
-нескольких разных `n`. Второй род дороже: он пишет на том настоящие гигабайты,
-и место на диске приходится считать заранее.
+Two kinds of measurements are collected. An empty volume gives the NTFS
+metadata. The same volume filled with a generated file set gives the copy
+slack — the very part of the model that until now no measurement at several
+different `n` had confirmed. The second kind is more expensive: it writes real
+gigabytes to the volume, and disk space has to be counted in advance.
 
-Без Qt: последовательность шагов и разбор их результатов — не отображение, и
-проверяться должны без интерфейса. Прогресс и отмена живут в диалоге, который
-крутит эти шаги по одному.
+No Qt: the sequence of steps and the parsing of their results are not display,
+and must be tested without the interface. Progress and cancellation live in
+the dialog that runs these steps one at a time.
 """
 
 from __future__ import annotations
@@ -46,73 +46,75 @@ from .veracrypt import (
     remove_container,
 )
 
-#: На каком размере идёт самопроверка. Гигабайт выбран потому, что полное
-#: форматирование гигабайта стоит секунды, а терабайта — часы.
+#: The size the self-check runs at. A gigabyte is chosen because full format of
+#: a gigabyte costs seconds, and of a terabyte hours.
 SELF_CHECK_MIB = 1024
 
-#: Насколько может разойтись динамический контейнер с быстрым форматированием
-#: и обычный с полным, чтобы считать их равными. На перекрывающихся размерах
-#: расхождение было 8 KiB на 12 GiB и 3 KiB на 80 GiB — мегабайт с запасом
-#: покрывает эту рябь и всё ещё ловит настоящую разницу, ради которой
-#: самопроверка и делается.
+#: How far a dynamic container with quick format and a normal one with full
+#: format may differ and still count as equal. On overlapping sizes the
+#: difference was 8 KiB at 12 GiB and 3 KiB at 80 GiB — a megabyte covers this
+#: ripple with room to spare and still catches a real difference, which is
+#: what the self-check is for.
 SELF_CHECK_TOLERANCE = MIB
 
-#: Насколько контейнер под набор файлов делается больше обещанного расчётом.
-#: Обещание записывается как есть — на нём и держится проверка прогноза, — но
-#: создавать контейнер ровно по нему нельзя: промахнись модель вниз, набор не
-#: влезет, и вместо замера выйдет неудача. Подушка не искажает ничего:
-#: измеряемый запас от размера тома не зависит, а метаданные пустого тома
-#: меряются на том же самом томе.
+#: How much larger than the calculation's prediction the container for a file
+#: set is made. The prediction is recorded as is — the prediction check rests
+#: on it — but the container cannot be created exactly to it: should the model
+#: miss low, the file set does not fit, and instead of a measurement there is a
+#: failure. The cushion distorts nothing: the measured slack does not depend on
+#: the volume size, and the empty-volume metadata is measured on that very same
+#: volume.
 SLACK_CUSHION_MIB = 64
 
-#: Постоянная и долевая части запаса по свободному месту хоста. Меньшего не
-#: хватает: файловая система хоста тоже растёт, пока в неё пишут, а
-#: динамический контейнер на кончившемся диске рвётся посреди записи.
+#: Fixed and proportional parts of the space margin on the host's free space.
+#: Less is not enough: the host filesystem grows too while it is written to,
+#: and a dynamic container on a full disk tears in the middle of a write.
 SPACE_MARGIN_BYTES = 64 * MIB
 SPACE_MARGIN_PERCENT = 5
 
-#: Ниже этого свободного места на хосте запись прекращается. Отдельно от
-#: margin: тот закладывается до начала шага, а этот срабатывает, если место
-#: съел кто-то посторонний уже по ходу.
+#: Below this much free space on the host, writing stops. Separate from the
+#: margin: that one is set aside before the step starts, and this one triggers
+#: if some outsider ate the space along the way.
 SPACE_FLOOR_BYTES = 128 * MIB
 
-#: Во сколько байт записи обходится создание одного файла — грубая
-#: равнозначность, и только для полосы прогресса.
+#: How many bytes of writing the creation of one file is worth — a rough
+#: equivalence, and only for the progress bar.
 #:
-#: Нужна потому, что время шага держится не на одних байтах. Десять тысяч
-#: килобайтных файлов занимают 39 MiB, а создаются заметно дольше, чем эти
-#: 39 MiB пишутся: цена там в записях MFT и в индексе каталога, а не в объёме.
-#: Без поправки полоса проскакивала бы такой набор мгновенно и потом стояла на
-#: нём, пока он идёт.
+#: Needed because the time of a step does not rest on bytes alone. Ten thousand
+#: one-kilobyte files take 39 MiB, but are created noticeably slower than those
+#: 39 MiB are written: the cost there is in MFT records and the directory
+#: index, not in the amount of data. Without the correction the bar would skip
+#: such a file set instantly and then stand still on it while it runs.
 #:
-#: На требуемое место эта величина не влияет **никогда**: там считаются
-#: настоящие байты, и приписывать диску лишнее значило бы зря пропускать шаги.
+#: This value **never** affects the required space: real bytes are counted
+#: there, and charging the disk with extra would mean skipping steps for
+#: nothing.
 FILE_WEIGHT_BYTES = 64 * 1024
 
 
 class OutOfSpace(OSError):
-    """Место на диске кончилось или кончается. Наследник OSError намеренно.
+    """Disk space ran out or is running out. A subclass of OSError on purpose.
 
-    Шаг ловит `OSError` и без того — дисковые отказы приходят именно им, — и
-    заводить для нехватки места отдельную ветку значило бы разойтись с тем,
-    как эта же беда приходит от самой записи.
+    The step catches `OSError` anyway — disk failures arrive as exactly that —
+    and giving a lack of space a separate branch would mean diverging from how
+    the same trouble arrives from the write itself.
     """
 
 
 class Stopped(Exception):
-    """Отмена, замеченная посреди записи набора.
+    """A cancellation noticed in the middle of writing a file set.
 
-    Между шагами отмена срабатывает сама, но запись четырёх гигабайт — это
-    один шаг длиной в минуты, и ждать его конца, чтобы услышать «стоп»,
-    незачем: неоконченный набор всё равно выбрасывается вместе с контейнером.
+    Between steps cancellation works by itself, but writing four gigabytes is
+    one step minutes long, and there is no reason to wait for its end to hear
+    "stop": an unfinished file set is thrown away with the container anyway.
     """
 
 
-# --- ход одного шага -------------------------------------------------------
+# --- the course of one step ------------------------------------------------
 #
-# Фазы названы словами, а не номерами: они уходят прямо в строку под
-# прогрессом, и человеку надо видеть, на чём именно программа стоит третью
-# минуту.
+# Phases are named by words, not numbers: they go straight into the line under
+# the progress bar, and a person needs to see what exactly the program has
+# been standing on for the third minute.
 
 PHASE_CREATE = "создание контейнера"
 PHASE_MOUNT = "монтирование"
@@ -126,11 +128,11 @@ PHASE_CLEANUP = "уборка"
 
 @dataclass(frozen=True)
 class Progress:
-    """Что происходит внутри шага прямо сейчас.
+    """What is happening inside the step right now.
 
-    Байты считаются те, что предстоит записать на том, — по ним и меряется
-    прогресс. Для замера пустого тома их нет вовсе, и шаг вносит в общий счёт
-    свою оценку целиком, когда кончится.
+    The bytes counted are the ones the step writes to the volume — progress
+    is measured by them. For an empty-volume measurement there are none at all,
+    and the step adds its whole estimate to the overall count when it ends.
     """
 
     phase: str
@@ -141,12 +143,12 @@ class Progress:
 
     @property
     def detail(self) -> str:
-        """Подробность к названию фазы. Пусто — сказать нечего.
+        """A detail to the phase name. Empty means there is nothing to say.
 
-        Байты рядом с файлами, а не вместо них: набор «Один файл 4 GiB» — это
-        одна-единственная граница файла, и «0 из 1» стояло бы всю запись
-        неподвижно. На десяти тысячах килобайтных файлов, наоборот, читается
-        число файлов, а байты ползут незаметно.
+        Bytes next to files, not instead of them: the file set «Один файл
+        4 GiB» has one single file boundary, and «0 из 1» would stand still for
+        the whole write. On ten thousand one-kilobyte files, the other way
+        round, the file count is what reads, and the bytes creep unnoticed.
         """
         if self.phase != PHASE_WRITE or not self.files_total:
             return ""
@@ -160,13 +162,14 @@ class Progress:
 
     @property
     def share(self) -> float:
-        """Какая доля шага пройдена — тем же весом, что и весь план.
+        """What share of the step is done — by the same weight as the plan.
 
-        Байты и файлы складываются вместе, потому что порознь врут оба:
-        полоса по байтам стоит на наборе из мелких файлов, полоса по файлам —
-        на одном большом. Вне записи доля нулевая: сколько байт VeraCrypt уже
-        уложил при создании контейнера, снаружи не видно, и додумывать это
-        полосой не стоит — фаза названа словом.
+        Bytes and files are added together, because separately both lie: a
+        bar by bytes stands still on a file set of small files, a bar by files
+        on one big file. Outside the write the share is zero: how many bytes
+        VeraCrypt has already laid down while creating the container is not
+        visible from outside, and it is not worth guessing with the bar — the
+        phase is named in words.
         """
         done = self.bytes_done + FILE_WEIGHT_BYTES * self.files_done
         total = self.bytes_total + FILE_WEIGHT_BYTES * self.files_total
@@ -175,17 +178,18 @@ class Progress:
 
 @dataclass(frozen=True)
 class Step:
-    """Один контейнер: создать, смонтировать, замерить, убрать за собой."""
+    """One container: create, mount, measure, clean up after itself."""
 
     container_mib: int
     dynamic: bool = True
     quick: bool = True
     self_check: bool = False
-    #: Набор файлов, который надо создать на томе. None — замер пустого тома,
-    #: то есть точка для модели метаданных NTFS.
+    #: The file set to create on the volume. None means an empty-volume
+    #: measurement, that is, a point for the NTFS metadata model.
     fileset: FileSet | None = None
-    #: Что пообещал расчёт на этом наборе и сколько в обещании было страховки.
-    #: Ноль — обещания не было (замер пустого тома проверять не с чем).
+    #: What the calculation predicted for this file set and how much safety
+    #: margin the prediction held. Zero means there was no prediction (an
+    #: empty-volume measurement has nothing to be checked against).
     predicted_mib: int = 0
     predicted_safety_mib: int = 0
 
@@ -210,11 +214,12 @@ class Step:
 
 @dataclass(frozen=True)
 class Measurement:
-    """Что дал смонтированный том.
+    """What the mounted volume gave.
 
-    Поля набора заполняются только у замера запаса. У замера пустого тома их
-    нет, и запись из него выходит точкой калибровки — по тому же признаку, по
-    которому её узнаёт Record: ни данных, ни остатка.
+    The file set fields are filled only for a slack measurement. An
+    empty-volume measurement has none, and the record made from it comes out
+    as a calibration point — by the same sign Record recognises it by: no
+    data, no left space.
     """
 
     container_mib: int
@@ -242,7 +247,10 @@ class Measurement:
         return (self.empty_free_bytes - self.left_bytes) - self.file_alloc_bytes
 
     def as_record(self, note: str = "") -> Record:
-        """Замер как запись. Вычислимое не пишется, как и везде."""
+        """The measurement as a record.
+
+        What is computable is not written, same as everywhere else.
+        """
         title = (
             f"Запас {self.fileset_title}"
             if self.fileset
@@ -271,10 +279,10 @@ class StepResult:
     step: Step
     measurement: Measurement | None = None
     error: str = ""
-    #: Дальше идти нельзя: сорвалась самопроверка или её вердикт не сошёлся.
+    #: No going further: the self-check failed or its verdict did not agree.
     fatal: bool = False
-    #: Шаг не выполнялся: на диске не хватило места. Не неудача — его можно
-    #: доснять позже, когда место освободится.
+    #: The step was not run: there was not enough disk space. Not a failure —
+    #: it can be taken later, when space frees up.
     skipped: bool = False
     required_bytes: int = 0
     free_bytes: int = 0
@@ -284,7 +292,7 @@ class StepResult:
         return self.measurement is not None and not self.error
 
 
-# --- план ------------------------------------------------------------------
+# --- plan ------------------------------------------------------------------
 
 
 def plan(
@@ -292,16 +300,18 @@ def plan(
     covered: Sequence[int] = (),
     self_check: bool = True,
 ) -> list[Step]:
-    """Порядок замеров пустых томов: самопроверка первым делом, затем размеры.
+    """Order of empty-volume measurements: the self-check first, then sizes.
 
-    Самопроверка — это тот же гигабайт дважды: динамическим с быстрым
-    форматированием и обычным с полным. Совпало — остальное можно гнать
-    динамическими, и терабайт не потребует терабайта свободного места.
-    Разошлось — считать по динамическим на этой машине нельзя, и узнать это
-    надо на секундах, а не после трёх часов работы.
+    The self-check is the same gigabyte twice: as a dynamic container with
+    quick format and as a normal one with full format. If they match, the rest
+    can be run as dynamic containers, and a terabyte will not need a terabyte
+    of free space. If they differ, dynamic containers cannot be trusted on this
+    machine, and that has to be learned in seconds, not after three hours of
+    work.
 
-    `covered` — размеры контейнеров, на которых свой замер уже есть; они
-    пропускаются, чтобы «добить недостающее» не пересняло всё заново.
+    `covered` are the container sizes that already have an own measurement;
+    they are skipped so that "fill in what is missing" does not re-measure
+    everything from scratch.
     """
     steps: list[Step] = []
     if self_check:
@@ -313,7 +323,7 @@ def plan(
         if size in done:
             continue
         if self_check and size == SELF_CHECK_MIB:
-            # Гигабайт уже снят самопроверкой, причём дважды.
+            # The gigabyte is already taken by the self-check, and twice.
             continue
         steps.append(Step(size))
     return steps
@@ -327,19 +337,20 @@ def slack_step(
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
     forbidden: Sequence[int] = (),
 ) -> Step:
-    """Шаг под один набор: что расчёт обещает и какой контейнер создавать.
+    """A step for one file set: what the calculation predicts, what to create.
 
-    Обещание считается ровно так же, как на вкладке «Расчёт», включая подбор
-    страховки: иначе проверка прогноза проверяла бы не ту величину, которую
-    программа показывает пользователю. Совет по страховке зависит от размера
-    тома, а том — от страховки, поэтому сначала решаем с умолчанием, потом
-    уточняем; второй проход не нужен, страховка двигает том на единицы MiB.
+    The prediction is computed exactly as on the Calculation tab, including
+    the choice of safety margin: otherwise the prediction check would check a
+    different value from the one the program shows the user. The safety
+    advice depends on the volume size, and the volume on the safety margin, so
+    we first solve with the default, then refine; a second pass is not needed,
+    the safety margin moves the volume by single MiB.
 
-    Контейнер создаётся крупнее обещанного на подушку — см.
-    SLACK_CUSHION_MIB. И ещё на мегабайт, если размер совпал с одним из
-    рекомендованных: замер запаса не должен садиться на строку таблицы
-    покрытия, иначе кнопка «К заводскому» в той строке отключала бы его
-    заодно с точкой NTFS.
+    The container is created larger than the prediction by a cushion — see
+    SLACK_CUSHION_MIB. And by one more megabyte if the size coincided with one
+    of the recommended sizes: a slack measurement must not land on a row of
+    the coverage table, otherwise the Use factory button in that row would
+    disable it along with the NTFS point.
     """
     ntfs = ntfs or NtfsModel()
     slack = slack or CopySlackModel()
@@ -379,15 +390,16 @@ def slack_plan(
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
     forbidden: Sequence[int] = (),
 ) -> list[Step]:
-    """Шаги замера запаса, от дешёвых по объёму к дорогим.
+    """Slack measurement steps, from cheap in size to expensive.
 
-    Порядок по объёму, а не по списку: прожорливые наборы упираются в
-    свободное место чаще всех, и если поставить их первыми, одна нехватка
-    отменила бы всё, что прекрасно поместилось бы после.
+    Ordered by size, not by the list: hungry file sets hit the free-space
+    limit most often, and if they were put first, one shortage would cancel
+    everything that would have fitted perfectly well after.
 
-    `covered` — ключи наборов, на которых свой замер уже есть. Ключами, а не
-    числами файлов: два набора с `n = 1` отличаются объёмом и снимаются оба,
-    иначе сверка «запас от размера файлов не зависит» становится невозможной.
+    `covered` are the keys of file sets that already have an own measurement.
+    By keys, not file counts: two file sets with `n = 1` differ in size and
+    both are measured, otherwise the reconciliation "slack does not depend on
+    file size" becomes impossible.
     """
     done = set(covered)
     chosen = [item for item in filesets if item.key not in done]
@@ -403,16 +415,16 @@ def disk_bytes(
     ntfs: NtfsModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
-    """Сколько байт шаг на самом деле уложит на диск.
+    """How many bytes the step will actually lay down on the disk.
 
-    Динамический контейнер ложится на диск только записанными кластерами, а
-    записаны на пустом томе одни метаданные — поэтому терабайтный замер стоит
-    не терабайта, а примерно 136 MiB. Предсказывает их та самая модель,
-    которую сбор и калибрует: внутри покрытого замерами диапазона она точна
-    до единиц мегабайт.
+    A dynamic container lands on the disk only with its written clusters, and
+    on an empty volume only metadata is written — so a terabyte measurement
+    costs not a terabyte but about 136 MiB. They are predicted by the very
+    model that the collection calibrates: within the range covered by
+    measurements it is accurate to single megabytes.
 
-    Обычный контейнер с полным форматированием материализуется целиком —
-    таков во всём сборе ровно один шаг, второй контейнер самопроверки.
+    A normal container with full format materialises in full — in the whole
+    collection exactly one step is like that, the second self-check container.
     """
     ntfs = ntfs or NtfsModel()
     if not (step.dynamic and step.quick):
@@ -426,11 +438,12 @@ def required_bytes(
     ntfs: NtfsModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
-    """Сколько свободного места шаг требует, чтобы за него можно было браться.
+    """How much free space the step needs before it can be taken on.
 
-    Уложенное на диск плюс запас: оценка метаданных не точна до байта, а
-    файловая система хоста тоже прирастает, пока в неё пишут. Поправка на
-    создание файлов сюда не входит — она про время, а не про место.
+    What lands on the disk plus a margin: the metadata estimate is not exact
+    to the byte, and the host filesystem grows too while it is written to. The
+    correction for file creation is not included — it is about time, not
+    space.
     """
     need = disk_bytes(step, ntfs, cluster_bytes)
     return need + max(SPACE_MARGIN_BYTES, need * SPACE_MARGIN_PERCENT // 100)
@@ -441,11 +454,12 @@ def weight_bytes(
     ntfs: NtfsModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
-    """Во что шаг обходится по времени, выраженное в байтах записи.
+    """What the step costs in time, expressed in bytes of writing.
 
-    То же, что ляжет на диск, плюс поправка на создание каждого файла: время
-    держится не на одних байтах, и без неё набор из десяти тысяч мелких
-    файлов весил бы 39 MiB, а шёл бы дольше, чем полгигабайта крупных.
+    The same as what lands on the disk, plus a correction for creating each
+    file: time does not rest on bytes alone, and without it a file set of ten
+    thousand small files would weigh 39 MiB yet take longer than half a
+    gigabyte of large ones.
     """
     files = step.fileset.file_count if step.fileset is not None else 0
     return disk_bytes(step, ntfs, cluster_bytes) + FILE_WEIGHT_BYTES * files
@@ -456,18 +470,21 @@ def total_bytes(
     ntfs: NtfsModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
-    """Вес всего плана — по нему и меряется общий прогресс.
+    """The weight of the whole plan — overall progress is measured by it.
 
-    Не числом шагов: терабайтный пустой том снимается за секунды, а набор в
-    четыре гигабайта пишется минутами, и полоса, ползущая равными долями,
-    врала бы в разы. Запас на место сюда не входит: он про осторожность, а не
-    про работу.
+    Not by the number of steps: a terabyte empty volume is measured in seconds,
+    and a four-gigabyte file set is written for minutes, and a bar creeping in
+    equal shares would lie several times over. The space margin is not
+    included: it is about caution, not work.
     """
     return sum(weight_bytes(step, ntfs, cluster_bytes) for step in steps)
 
 
 def self_check_verdict(fast: Measurement, slow: Measurement) -> str:
-    """Пусто — эквивалентность подтверждена. Иначе текст, объясняющий отказ."""
+    """Empty means equivalence is confirmed.
+
+    Otherwise the text explaining the refusal.
+    """
     difference = abs(fast.ntfs_bytes - slow.ntfs_bytes)
     if difference <= SELF_CHECK_TOLERANCE:
         return ""
@@ -481,7 +498,7 @@ def self_check_verdict(fast: Measurement, slow: Measurement) -> str:
     )
 
 
-# --- один шаг --------------------------------------------------------------
+# --- one step --------------------------------------------------------------
 
 
 def measure(
@@ -491,10 +508,11 @@ def measure(
     progress: Callable[[Progress], None] | None = None,
     check: Callable[[int], None] | None = None,
 ) -> Measurement:
-    """Создать контейнер, снять с него числа и убрать за собой.
+    """Create a container, take the numbers from it and clean up after itself.
 
-    Уборка в finally и без исключений: смонтированный том и файл-контейнер
-    обязаны сниматься даже при падении, иначе терабайтные файлы копятся молча.
+    Cleanup in finally and without exceptions: the mounted volume and the
+    container file must be removed even on a crash, otherwise terabyte files
+    pile up silently.
     """
     path = Path(workdir) / container_name(step.container_mib, step.key)
     letter = veracrypt.free_letter()
@@ -537,21 +555,22 @@ def _measure_slack(
     say: Callable[..., None],
     check: Callable[[int], None] | None,
 ) -> Measurement:
-    """Заполнить том набором и снять остаток.
+    """Fill the volume with the file set and measure the left space.
 
-    Остаток снимается на свежесмонтированном томе, а не сразу после записи.
-    Модель предсказывает именно Left space — то, что VeraCrypt покажет
-    человеку, когда тот смонтирует контейнер со своими данными, — и мерить
-    надо ровно это состояние, со всеми дописанными метаданными.
+    Left space is measured on a freshly mounted volume, not right after the
+    write. The model predicts exactly Left space — what VeraCrypt will show a
+    person when they mount the container with their data — and exactly that
+    state has to be measured, with all the metadata written out.
     """
     fileset = step.fileset
     cluster = empty.cluster_bytes or DEFAULT_CLUSTER_BYTES
     payload = fileset.payload(cluster)
 
-    # Кластер тома читается, а не предполагается, и на нестандартном размер
-    # набора может оказаться совсем не тем, под который считался контейнер:
-    # десять тысяч килобайтных файлов при кластере 65536 занимают не 39 MiB,
-    # а 625. Лучше сказать об этом, чем оборвать запись на середине.
+    # The volume's cluster is read, not assumed, and on a non-standard one the
+    # file set size may turn out quite different from the one the container
+    # was computed for: ten thousand one-kilobyte files with a 65536 cluster
+    # take not 39 MiB but 625. Better to say so than to cut the write off
+    # halfway.
     if payload.alloc_bytes >= empty.empty_free_bytes:
         raise VeraCryptError(
             f"Набор «{fileset.title}» занимает {fmt_both(payload.alloc_bytes)} "
@@ -561,10 +580,10 @@ def _measure_slack(
 
     root = Path(veracrypt.volumes.root(letter)) / PAYLOAD_DIR
 
-    # Логический объём, а не кластерный: generate считает записанные байты, и
-    # знаменатель обязан быть в тех же единицах. На пятистах килобайтных
-    # файлах кластерный объём вдвадцатеро больше логического, и доля шага
-    # упёрлась бы в пять процентов.
+    # Logical size, not cluster-rounded size: generate counts written bytes,
+    # and the denominator must be in the same units. On five hundred
+    # one-kilobyte files the cluster-rounded size is twenty times the logical
+    # one, and the step's share would stall at five percent.
     written_total = fileset.logical_bytes
 
     def on_progress(files_done: int, bytes_done: int) -> None:
@@ -579,11 +598,11 @@ def _measure_slack(
     say(PHASE_WRITE, files_total=payload.file_count, bytes_total=written_total)
     generate(root, fileset, on_progress=on_progress, check=check)
 
-    # Сверка обходом: сгенерированное могло лечь не так, как задумано —
-    # мелкий файл, уместившийся прямо в запись MFT, кластера не получает, и
-    # ожидаемый объём по кластерам тогда завышен, а измеренный запас уходит в
-    # минус. Ловить это надо здесь, а не разбираться потом с отрицательным
-    # числом в таблице.
+    # A reconciliation by walking the tree: what was generated may have landed
+    # not as intended — a small file that fits right into its MFT record gets
+    # no cluster, and the expected cluster-rounded size is then overstated, and
+    # the measured slack goes negative. This has to be caught here, not sorted
+    # out later with a negative number in the table.
     say(PHASE_VERIFY)
     scan = scan_paths([root], cluster)
     if scan.file_count != payload.file_count:
@@ -612,11 +631,11 @@ def _measure_slack(
     )
 
 
-# --- весь сбор -------------------------------------------------------------
+# --- the whole collection --------------------------------------------------
 
 
 def free_space(workdir: str | Path) -> int:
-    """Свободное место в рабочей папке. Недоступна — ноль, то есть «не влезет»."""
+    """Free space in the working folder. Unavailable is zero: "won't fit"."""
     try:
         return shutil.disk_usage(Path(workdir)).free
     except OSError:
@@ -625,27 +644,29 @@ def free_space(workdir: str | Path) -> int:
 
 @dataclass
 class Collector:
-    """Крутит шаги по одному и следит за самопроверкой.
+    """Runs the steps one at a time and watches the self-check.
 
-    По одному, а не всё разом: диалогу надо показывать прогресс и слышать
-    отмену, а замер каждого размера сохраняется сразу — сбор идёт часами, и
-    падение посередине не должно стоить всего, что уже снято.
+    One at a time, not all at once: the dialog has to show progress and hear
+    cancellation, and the measurement of each size is saved right away — the
+    collection runs for hours, and a crash in the middle must not cost
+    everything already measured.
     """
 
     veracrypt: VeraCrypt
     workdir: Path
     steps: list[Step] = field(default_factory=list)
-    #: Модель метаданных: ею оценивается место, которое займёт шаг.
+    #: The metadata model: it estimates the space a step will take.
     ntfs: NtfsModel = field(default_factory=NtfsModel)
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES
-    #: Свободное место хоста. Подменяется в тестах — настоящий диск на них
-    #: то полон, то пуст, и проверять по нему нечего.
+    #: The host's free space. Replaced in tests — the real disk is full one
+    #: time and empty the next, and there is nothing to check against it.
     free_bytes: Callable[[], int] | None = None
     progress: Callable[[Progress], None] | None = None
-    #: Прервать текущий шаг. Возвращает True — надо остановиться. Спрашивается
-    #: по ходу записи набора: четыре гигабайта пишутся минутами.
+    #: Interrupt the current step. Returning True means stop. Asked while the
+    #: file set is being written: four gigabytes take minutes to write.
     should_stop: Callable[[], bool] | None = None
-    #: Что дала самопроверка. Копится до пары, потом выносится вердикт.
+    #: What the self-check gave. Accumulates up to a pair, then the verdict is
+    #: made.
     _checks: list[Measurement] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -654,7 +675,7 @@ class Collector:
             self.free_bytes = lambda: free_space(self.workdir)
 
     def prepare(self) -> list[Path]:
-        """Убрать контейнеры, оставшиеся от прерванного сбора."""
+        """Remove containers left over from an interrupted collection."""
         removed = []
         for path in orphans(self.workdir):
             if remove_container(path):
@@ -668,11 +689,11 @@ class Collector:
         return weight_bytes(step, self.ntfs, self.cluster_bytes)
 
     def weight(self) -> int:
-        """Вес всего плана в байтах — знаменатель для полосы прогресса."""
+        """Weight of the whole plan in bytes — the progress bar denominator."""
         return total_bytes(self.steps, self.ntfs, self.cluster_bytes)
 
     def _guard(self, _bytes_done: int) -> None:
-        """Что проверяется по ходу записи: отмена и остаток места на диске."""
+        """Checked during the write: cancellation and disk space left."""
         if self.should_stop is not None and self.should_stop():
             raise Stopped()
         if self.free_bytes() < SPACE_FLOOR_BYTES:
@@ -701,14 +722,15 @@ class Collector:
                 self.veracrypt, self.workdir, step, self.progress, self._guard
             )
         except Stopped:
-            # Отмена — не неудача шага: замера просто нет, а контейнер уже
-            # убран в finally.
+            # Cancellation is not a step failure: there is simply no
+            # measurement, and the container is already cleaned up in finally.
             return StepResult(step, error="остановлено по требованию")
         except (VeraCryptError, OSError) as exc:
-            # OSError тоже сюда: том может пропасть из-под ног между
-            # монтированием и чтением, и это неудача шага, а не всего сбора.
-            # Сорвавшаяся самопроверка останавливает всё: без неё неизвестно,
-            # можно ли верить динамическим контейнерам на этой машине.
+            # OSError goes here too: the volume may vanish from under our feet
+            # between mounting and reading, and that is a failure of the step,
+            # not of the whole collection. A failed self-check stops
+            # everything: without it there is no knowing whether dynamic
+            # containers can be trusted on this machine.
             return StepResult(step, error=str(exc), fatal=step.self_check)
 
         if not step.self_check:

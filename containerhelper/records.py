@@ -1,9 +1,9 @@
-"""Записи измерений: схема, проверки, JSON-хранилище.
+"""Measurement records: schema, checks, JSON store.
 
-Правило схемы: в файл пишутся только измеренные величины. Всё вычислимое
-(заголовок VeraCrypt, метаданные NTFS, занятое место, запас на копирование)
-считается при чтении и никогда не сохраняется. В исходных ручных записях
-противоречия появились именно из-за дублирования вычислимых полей.
+Schema rule: only measured values are written to the file. Everything
+computable (VeraCrypt header, NTFS metadata, used space, copy slack) is
+computed on read and never saved. In the original manual records the
+contradictions appeared precisely because of duplicated computable fields.
 """
 
 from __future__ import annotations
@@ -32,24 +32,26 @@ from .model import (
 
 SCHEMA_VERSION = 5
 
-#: Схема 1 не знала file_alloc_bytes, схема 2 — filesystem, схема 3 — ключа
-#: calibration, схема 4 держала этот ключ в одном файле с записями. Все
-#: читаются по-прежнему: отсутствие поля означает ровно прежнее поведение, а
-#: замеры пустых томов при чтении переезжают сначала из records в calibration,
-#: а оттуда — в свой файл. Пишется всегда новая версия.
+#: Schema 1 did not know file_alloc_bytes, schema 2 did not know filesystem,
+#: schema 3 did not know the calibration key, schema 4 kept that key in one
+#: file with the records. All of them are still read: a missing field means
+#: exactly the old behaviour, and empty-volume measurements move on read first
+#: from records to calibration, and from there to their own file. The new
+#: version is always what gets written.
 SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5)
 
-#: Границы правдоподобия для метаданных NTFS. Нижняя ловит потерю разрядов
-#: (в Cache 2 записано 36 573 вместо 36 573 184). Верхняя растёт вместе с
-#: томом: на 100 GiB одни только $LogFile и $MFT дают под сотню мегабайт,
-#: поэтому фиксированный потолок здесь давал бы ложные срабатывания.
+#: Plausibility bounds for NTFS metadata. The lower one catches lost digits
+#: (Cache 2 has 36 573 written instead of 36 573 184). The upper one grows
+#: with the volume: at 100 GiB $LogFile and $MFT alone give close to a hundred
+#: megabytes, so a fixed ceiling here would give false alarms.
 NTFS_MIN_BYTES = MIB
 NTFS_MAX_FLOOR = 128 * MIB
 NTFS_MAX_SHARE = 0.02
 
 
-#: Область, которую обесценивает ошибка. Запись с битым left_bytes всё ещё
-#: даёт годную точку для модели NTFS, и терять её из-за этого не нужно.
+#: The scope an error invalidates. A record with a broken left_bytes still
+#: gives a usable point for the NTFS model, and there is no need to lose it
+#: because of that.
 SCOPE_NTFS = "ntfs"
 SCOPE_SLACK = "slack"
 SCOPE_BOTH = "both"
@@ -75,35 +77,39 @@ class Record:
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES
     file_bytes: int | None = None
     file_count: int | None = None
-    #: Σ ceil(size_i / cluster) × cluster, снятое обходом папки. Для одного
-    #: файла выводится из file_bytes, для папки — нет: сумма логических
-    #: размеров не восстанавливает поклеточное округление каждого файла.
+    #: Σ ceil(size_i / cluster) × cluster, taken by walking the folder. For
+    #: one file it is derived from file_bytes, for a folder it is not: the sum
+    #: of logical sizes does not restore the per-cluster rounding of each file.
     file_alloc_bytes: int | None = None
     left_bytes: int | None = None
-    #: Файловая система тома, прочитанная при замере. Пусто — не читалась
-    #: (все записи до появления проверки, и они по умолчанию считаются NTFS).
+    #: Volume filesystem, read at measurement time. Empty means it was not
+    #: read (all records from before the check appeared; by default they
+    #: count as NTFS).
     filesystem: str = ""
     note: str = ""
     flagged: bool = False
-    #: Отключённая точка калибровки: числа остаются в файле, но в расчёт идёт
-    #: заводское значение. Так «сброс до заводских» ничего не теряет.
+    #: Disabled calibration point: the numbers stay in the file, but the
+    #: factory value goes into the calculation. This way a "reset to factory"
+    #: loses nothing.
     disabled: bool = False
-    #: Что пообещал расчёт, когда по нему создавали контейнер, и сколько в
-    #: этом обещании было страховки. Хранятся, потому что задним числом не
-    #: вычислимы: обе модели меняются от каждого нового замера, и пересчёт
-    #: ответил бы «что я скажу сегодня», а не «что я сказал тогда».
+    #: What the calculation promised when the container was created from it,
+    #: and how much safety margin that promise held. Stored, because they
+    #: cannot be computed after the fact: both models change with every new
+    #: measurement, and a recalculation would answer "what would I say today",
+    #: not "what did I say then".
     predicted_mib: int | None = None
     predicted_safety_mib: int | None = None
-    #: Ключ набора файлов, если данные сгенерированы автоматическим сбором.
-    #: Пусто — настоящее копирование. Отличать нужно: набор описывает машину,
-    #: а не данные пользователя, и на другой машине его надо пересобрать.
+    #: File set key, if the data was generated by automatic collection. Empty
+    #: means a real copy. The distinction matters: a file set describes the
+    #: machine, not the user's data, and on another machine it has to be
+    #: rebuilt.
     fileset: str = ""
 
     def __post_init__(self) -> None:
         if not self.created:
             self.created = datetime.now().isoformat(timespec="seconds")
 
-    # --- вычислимые величины: никогда не хранятся --------------------------
+    # --- computable values: never stored ------------------------------------
 
     @property
     def container_bytes(self) -> int:
@@ -129,20 +135,20 @@ class Record:
 
     @property
     def is_calibration_point(self) -> bool:
-        """Замер пустого тома: ни данных, ни остатка после копирования.
+        """Empty-volume measurement: neither data nor left space after copying.
 
-        Отдельного поля не заводится — признак выводится. Точка калибровки
-        тем и определяется, что в контейнер ничего не клали.
+        No separate field is kept — the flag is derived. A calibration point
+        is defined precisely by nothing having been put into the container.
         """
         return self.file_bytes is None and self.left_bytes is None
 
     @property
     def payload_alloc(self) -> int | None:
-        """Сколько места занимают сами данные с учётом округления по кластерам.
+        """Space taken by the data itself, including rounding to clusters.
 
-        Измеренное значение имеет приоритет над выведенным: для папки из
-        многих файлов round_up(Σ size_i) меньше, чем Σ round_up(size_i), и
-        разница целиком уехала бы в запас на копирование.
+        The measured value takes priority over the derived one: for a folder
+        of many files round_up(Σ size_i) is less than Σ round_up(size_i), and
+        the difference would all end up in copy slack.
         """
         if self.file_alloc_bytes is not None:
             return self.file_alloc_bytes
@@ -158,21 +164,22 @@ class Record:
             return None
         return consumed - alloc
 
-    # --- проверка прогноза постфактум --------------------------------------
+    # --- checking the prediction after the fact ----------------------------
 
     @property
     def minimum_mib(self) -> int | None:
-        """Наименьший контейнер, в который эти данные всё-таки влезли бы.
+        """The smallest container this data would still have fitted into.
 
-        Занятое на томе — это `mounted_bytes - left_bytes`, и в него уже
-        входит всё: метаданные NTFS, данные по кластерам и запас на
-        копирование. Прибавить заголовок VeraCrypt и округлить вверх до MiB —
-        и получится Container init, которого хватило бы впритык.
+        The used space on the volume is `mounted_bytes - left_bytes`, and it
+        already includes everything: NTFS metadata, the cluster-rounded data
+        and copy slack. Add the VeraCrypt header and round up to MiB — and you
+        get the Container init that would have been just enough.
 
-        Оценка чуть завышена: контейнер поменьше дал бы том поменьше, а на
-        нём и метаданных меньше. Ошибка идёт в сторону завышения минимума, то
-        есть промах выходит меньше настоящего — метрика ошибается в сторону
-        тревоги, а не благодушия, и это правильная сторона.
+        The estimate is slightly high: a smaller container would give a
+        smaller volume, and with it less metadata. The error goes towards
+        overstating the minimum, that is, the miss comes out smaller than the
+        real one — the metric errs on the side of alarm, not complacency, and
+        that is the right side.
         """
         if self.mounted_bytes is None or self.left_bytes is None:
             return None
@@ -180,11 +187,12 @@ class Record:
 
     @property
     def miss_mib(self) -> int | None:
-        """Обещано минус минимально достаточно.
+        """Promised minus the minimum that would suffice.
 
-        Плюс — перезаклад, ноль — попали ровно, минус — **данные не влезли
-        бы**. Ради последнего случая величина и считается: занижение —
-        единственная опасная сторона расчёта.
+        Plus is overestimate, zero is an exact hit, minus means **the data
+        would not have fitted**. The value is computed for the sake of that
+        last case: underestimate is the only dangerous side of the
+        calculation.
         """
         minimum = self.minimum_mib
         if self.predicted_mib is None or minimum is None:
@@ -193,12 +201,12 @@ class Record:
 
     @property
     def model_miss_mib(self) -> int | None:
-        """Тот же промах за вычетом намеренного запаса.
+        """The same miss minus the intentional safety margin.
 
-        Без этого числа промах неоднозначен: +5 MiB одинаково выглядят и
-        когда модель точна при страховке 5 MiB, и когда модель занизила на 3,
-        а 8 MiB страховки это скрыли. Второе — предвестник аварии, который
-        выглядит здоровым.
+        Without this number the miss is ambiguous: +5 MiB looks the same both
+        when the model is exact with a 5 MiB safety margin and when the model
+        underestimated by 3 and 8 MiB of safety margin hid it. The second is a
+        harbinger of failure that looks healthy.
         """
         miss = self.miss_mib
         if miss is None:
@@ -207,10 +215,10 @@ class Record:
 
     @property
     def forecast_checked(self) -> bool:
-        """Есть ли что сверять: обещание записано и остаток замерен."""
+        """Anything to compare: prediction recorded and left space measured."""
         return self.miss_mib is not None
 
-    # --- сериализация ------------------------------------------------------
+    # --- serialisation ------------------------------------------------------
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -272,7 +280,7 @@ def _opt_int(value: Any) -> int | None:
 
 
 def validate(record: Record) -> list[Issue]:
-    """Пять проверок, каждая ловит реальный класс ошибки ручного ввода."""
+    """Five checks, each catching a real class of manual input error."""
     issues: list[Issue] = []
 
     if record.container_mib <= 0:
@@ -396,10 +404,10 @@ def validate(record: Record) -> list[Issue]:
 
 
 def is_usable(record: Record, scope: str = SCOPE_BOTH) -> bool:
-    """Годится ли запись для калибровки указанной модели.
+    """Whether the record is fit for calibrating the given model.
 
-    Проверяется не «есть ли вообще ошибки», а задевают ли они именно ту
-    величину, которая берётся из записи.
+    What is checked is not "are there any errors at all" but whether they
+    touch exactly the value that is taken from the record.
     """
     if record.flagged:
         return False
@@ -409,7 +417,7 @@ def is_usable(record: Record, scope: str = SCOPE_BOTH) -> bool:
 
 
 def ntfs_points(records: Iterable[Record]) -> list[tuple[int, int]]:
-    """Точки (размер тома → метаданные NTFS) для калибровки NtfsModel."""
+    """Points (volume size → NTFS metadata) for calibrating NtfsModel."""
     points = []
     for record in records:
         overhead = record.ntfs_bytes
@@ -419,7 +427,7 @@ def ntfs_points(records: Iterable[Record]) -> list[tuple[int, int]]:
 
 
 def slack_samples(records: Iterable[Record]) -> list[tuple[int, int]]:
-    """Пары (число файлов → измеренный запас) для калибровки CopySlackModel."""
+    """Pairs (file count → measured slack) for calibrating CopySlackModel."""
     samples = []
     for record in records:
         measured = record.copy_slack_measured
@@ -432,7 +440,7 @@ def slack_samples(records: Iterable[Record]) -> list[tuple[int, int]]:
 def build_models(
     records: Sequence[Record],
 ) -> tuple[NtfsModel, CopySlackModel]:
-    """Собрать обе модели по накопленным записям."""
+    """Build both models from the accumulated records."""
     return (
         NtfsModel(ntfs_points(records)),
         CopySlackModel.calibrate(slack_samples(records)),
@@ -443,15 +451,16 @@ def build_safety(
     records: Sequence[Record],
     factory_volumes: set[int] | None = None,
 ) -> SafetyModel:
-    """Собрать модель страховки по накопленным записям.
+    """Build the safety margin model from the accumulated records.
 
-    Отклонения берутся из проверки исключением: только она показывает, как
-    модель ведёт себя там, где точки не было. Приводит их к ширине нужного
-    отрезка уже SafetyModel — сырое отклонение снято на прорехе примерно
-    вдвое шире настоящей.
+    The deviations are taken from the leave-one-out check: only it shows how
+    the model behaves where there was no point. Scaling them to the width of
+    the segment in question is left to SafetyModel — the raw deviation is
+    taken on a gap about twice as wide as the real one.
 
-    За краем измеренного диапазона локальных свидетельств нет вовсе, и туда
-    идёт наибольшая недооценка по всем записям — намеренно осторожно.
+    Beyond the edge of the measured range there is no local evidence at all,
+    and the largest underestimate over all records goes there — deliberately
+    cautious.
     """
     checks = ntfs_cross_check(records)
     deviations = [
@@ -474,7 +483,7 @@ def build_safety(
 
 @dataclass(frozen=True)
 class Check:
-    """Насколько модель попала бы в запись, не видя её."""
+    """How well the model would have hit the record without seeing it."""
 
     record: Record
     measured: int
@@ -483,15 +492,15 @@ class Check:
 
     @property
     def deviation(self) -> int:
-        """Положительное значение — модель занизила, то есть промахнулась вниз."""
+        """A positive value means the model underestimated, i.e. missed low."""
         return self.measured - self.predicted
 
 
 def ntfs_cross_check(records: Sequence[Record]) -> list[Check]:
-    """Проверить модель NTFS, исключая из калибровки саму проверяемую запись.
+    """Check the NTFS model, leaving the checked record out of calibration.
 
-    Без исключения проверка бессмысленна: кусочно-линейная модель проходит
-    ровно через свои точки, и отклонение всегда вышло бы нулевым.
+    Without leaving it out the check is meaningless: a piecewise-linear model
+    passes exactly through its points, and the deviation would always be zero.
     """
     checks = []
     for index, record in enumerate(records):
@@ -512,7 +521,7 @@ def ntfs_cross_check(records: Sequence[Record]) -> list[Check]:
 
 
 def slack_cross_check(records: Sequence[Record]) -> list[Check]:
-    """То же для запаса на копирование."""
+    """The same for copy slack."""
     checks = []
     for index, record in enumerate(records):
         measured = record.copy_slack_measured
@@ -532,33 +541,34 @@ def slack_cross_check(records: Sequence[Record]) -> list[Check]:
 
 
 def worst_shortfall(checks: Sequence[Check]) -> int:
-    """Наибольшая недооценка. Ноль означает, что модель нигде не занизила."""
+    """Largest underestimate. Zero means the model underestimated nowhere."""
     return max((check.deviation for check in checks), default=0)
 
 
 def slack_key(record: Record) -> str:
-    """Чем один замер запаса отличается от другого — и что кого вытесняет.
+    """What tells copy-slack measurements apart — and what supersedes what.
 
-    Ключ — набор, а не число файлов. Числом файлов было нельзя: два набора с
-    `n = 1` заведены нарочно разными по объёму (64 MiB и 4 GiB), чтобы
-    сравнить их друг с другом и проверить, что запас от размера файлов не
-    зависит. Ключ по `n` делал их взаимоисключающими — на первом настоящем
-    прогоне второй молча съел первый вместе с его точкой NTFS, то есть
-    правило вытеснения уничтожало ровно ту сверку, ради которой оба набора и
-    существуют.
+    The key is the file set, not the file count. The file count would not do:
+    two sets with `n = 1` are deliberately made different in size (64 MiB
+    and 4 GiB), to compare them with each other and check that copy slack
+    does not depend on file size. A key by `n` made them mutually exclusive —
+    on the first real run the second silently ate the first together with
+    its NTFS point, that is, the supersede rule destroyed exactly the
+    reconciliation that both sets exist for.
 
-    У снятого руками замера набора нет, и он по-прежнему опознаётся числом
-    файлов: два ручных замера на одном `n` — это два замера одного и того же.
+    A measurement taken by hand has no file set, and it is still identified
+    by the file count: two manual measurements at the same `n` are two
+    measurements of the same thing.
     """
     return record.fileset or f"n={record.file_count}"
 
 
 def factory_slack_record(sample: FactorySample) -> Record:
-    """Заводской замер запаса как запись. Числа те же, что и в файле.
+    """A factory copy-slack measurement as a record. Same numbers as the file.
 
-    Такая запись годится сразу двум моделям: пустой том у неё замерен, значит
-    она ещё и точка NTFS. Так и задумано — замер снимался на настоящем томе,
-    и терять его метаданные было бы расточительством.
+    Such a record serves both models at once: its empty volume is measured,
+    so it is also an NTFS point. That is by design — the measurement was
+    taken on a real volume, and throwing away its metadata would be wasteful.
     """
     title = sample.title or sample.fileset
     return Record(
@@ -578,17 +588,18 @@ def factory_slack_record(sample: FactorySample) -> Record:
 
 @dataclass(frozen=True)
 class Forecast:
-    """Сводка по проверке прогноза постфактум.
+    """Summary of checking the prediction after the fact.
 
-    Считается по записям, у которых есть и обещание расчёта, и замеренный
-    остаток. Всё остальное проверять не на чем.
+    Computed over the records that have both the calculation's prediction
+    and a measured left space. Everything else has nothing to check against.
     """
 
     checked: int
     worst_miss: int
     worst_model_miss: int
-    #: Записи, где обещанного контейнера не хватило бы. Пусто — расчёт ни
-    #: разу не занизил, и это главное, что нужно знать.
+    #: Records where the promised container would not have been enough.
+    #: Empty means the calculation never underestimated, and that is the main
+    #: thing to know.
     short: tuple[str, ...]
 
     @property
@@ -597,7 +608,7 @@ class Forecast:
 
 
 def forecast(records: Iterable[Record]) -> Forecast:
-    """Как расчёт справился на тех записях, где его есть с чем сверить."""
+    """How the calculation did on the records it can be compared against."""
     checked = [record for record in records if record.forecast_checked]
     if not checked:
         return Forecast(0, 0, 0, ())
@@ -610,21 +621,22 @@ def forecast(records: Iterable[Record]) -> Forecast:
 
 
 class StoreError(Exception):
-    """Хранилище недоступно или повреждено."""
+    """The store is unavailable or corrupted."""
 
 
 def calibration_file_for(records_file: str | os.PathLike[str]) -> Path:
-    """Файл замеров рядом с файлом записей, с постоянным именем.
+    """The measurements file next to the records file, with a fixed name.
 
-    Имя постоянное, а не производное от имени записей: замеры описывают
-    машину, а не набор записей, и два файла записей в одной папке должны
-    делить одну калибровку, а не разводить две копии одних и тех же чисел.
+    The name is fixed, not derived from the records file name: measurements
+    describe the machine, not a set of records, and two records files in one
+    folder must share one calibration rather than breed two copies of the
+    same numbers.
     """
     return Path(records_file).with_name(CALIBRATION_NAME)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    """Прочитать файл и проверить версию схемы. Отсутствие файла — не ошибка."""
+    """Read the file, check the schema version. A missing file is no error."""
     if not path.exists():
         return {}
     try:
@@ -647,7 +659,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    """Атомарная запись с одной резервной копией .bak."""
+    """Atomic write with a single .bak backup."""
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -662,22 +674,23 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 @dataclass
 class Store:
-    """Два JSON-файла: записи о копировании и замеры пустых томов.
+    """Two JSON files: copy records and empty-volume measurements.
 
-    Раздельно, потому что это разные величины с разным сроком жизни. Записи
-    о копировании описывают данные и переезжают вместе с ними; замеры
-    описывают машину — сборку Windows и версию VeraCrypt — и на другой
-    машине неверны. В одном файле их приходилось возить вместе, и чужая
-    калибровка приезжала под видом своей.
+    Separate, because these are different values with different lifetimes.
+    Copy records describe the data and move together with it; measurements
+    describe the machine — the Windows build and the VeraCrypt version — and
+    are wrong on another machine. In one file they had to travel together,
+    and someone else's calibration arrived posing as your own.
 
-    Обоими файлами владеет одно хранилище: расчёт стоит на них вместе, и
-    читать их порознь было бы негде.
+    One store owns both files: the calculation stands on them together, and
+    there would be nowhere to read them separately.
     """
 
     path: Path
     records: list[Record] = field(default_factory=list)
     calibration: list[Record] = field(default_factory=list)
-    #: Куда легли замеры. Пусто — соседний файл с постоянным именем.
+    #: Where the measurements went. Empty means the neighbouring file with the
+    #: fixed name.
     calibration_path: Path | None = None
 
     def __post_init__(self) -> None:
@@ -686,8 +699,9 @@ class Store:
             self.calibration_path = calibration_file_for(self.path)
         else:
             self.calibration_path = Path(self.calibration_path)
-        #: Замеры приехали из старого однофайлового хранилища и ещё не
-        #: записаны на своё место. Пока это так, старый файл держит их копию.
+        #: The measurements came from the old single-file store and have not
+        #: yet been written to their own place. While that is so, the old file
+        #: holds a copy of them.
         self.migrated = False
 
     @property
@@ -711,9 +725,9 @@ class Store:
         version = int(raw.get("schema", SCHEMA_VERSION))
         records = [Record.from_json(item) for item in raw.get("records", [])]
 
-        # Замеры из старого однофайлового хранилища. До четвёртой схемы они
-        # лежали вперемешку с записями, в четвёртой — своим ключом того же
-        # файла. Числа не меняются, меняется только место.
+        # Measurements from the old single-file store. Before schema four they
+        # were mixed in with the records, in schema four they had their own
+        # key in the same file. The numbers do not change, only the place does.
         legacy = [Record.from_json(item) for item in raw.get("calibration", [])]
         if version < 4:
             legacy.extend(record for record in records if record.is_calibration_point)
@@ -723,8 +737,9 @@ class Store:
             Record.from_json(item)
             for item in _read_json(points_path).get("calibration", [])
         ]
-        # Свой файл замеров старше приехавшего: если пользователь уже снял
-        # точку на этом томе, старая копия из файла записей её не вытесняет.
+        # The own measurements file outranks the arrived one: if the user has
+        # already taken a point on this volume, the old copy from the records
+        # file does not supersede it.
         covered = {record.mounted_bytes for record in points}
         points.extend(
             record for record in legacy if record.mounted_bytes not in covered
@@ -747,9 +762,10 @@ class Store:
                 "records": [record.to_json() for record in self.records],
             },
         )
-        # Пустой файл замеров не заводится: на новой машине своих точек нет
-        # вовсе, и класть рядом пустышку незачем. Опустевший — переписывается,
-        # иначе удалённые замеры вернулись бы при следующем чтении.
+        # An empty measurements file is not created: on a new machine there are
+        # no own points at all, and there is no reason to put a dummy next to
+        # the records. One that has become empty is rewritten, otherwise the
+        # deleted measurements would come back on the next read.
         if self.calibration or self.calibration_path.exists():
             _write_json(
                 self.calibration_path,
@@ -761,11 +777,12 @@ class Store:
         self.migrated = False
 
     def calibration_records(self) -> list[Record]:
-        """Точки, участвующие в модели: свои включённые плюс заводские.
+        """Points that take part in the model: own enabled ones plus factory.
 
-        Свой замер вытесняет заводской на том же размере тома. Не «большее из
-        двух», как в NtfsModel._dedupe: заводское значение снято на чужой
-        машине, и меньшее собственное вернее любого чужого.
+        An own measurement supersedes the factory one at the same volume size.
+        Not "the larger of the two", as in NtfsModel._dedupe: the factory value
+        was taken on another machine, and a smaller own value is truer than
+        any foreign one.
         """
         own = [record for record in self.calibration if not record.disabled]
         covered = {record.mounted_bytes for record in own if record.mounted_bytes}
@@ -788,9 +805,10 @@ class Store:
                 )
             )
 
-        # Заводские замеры запаса вытесняются своими по числу файлов, а не по
-        # размеру тома: запас зависит от n, и своя точка на том же n вернее
-        # чужой ровно по той же причине, что и с метаданными.
+        # Factory copy-slack measurements are superseded by own ones by file
+        # count, not by volume size: copy slack depends on n, and an own point
+        # at the same n is truer than a foreign one for exactly the same reason
+        # as with the metadata.
         counts = {
             record.file_count
             for record in [*self.records, *own]
@@ -803,34 +821,35 @@ class Store:
         return filled
 
     def all_for_model(self) -> list[Record]:
-        """Всё, на чём строится модель: записи о копировании и точки."""
+        """Everything the model is built on: copy records and points."""
         return [*self.records, *self.calibration_records()]
 
     def calibration_points(self) -> list[Record]:
-        """Свои замеры пустых томов — то, что показывает таблица покрытия."""
+        """Own empty-volume measurements — what the coverage table shows."""
         return [record for record in self.calibration if record.is_calibration_point]
 
     def slack_measurements(self) -> list[Record]:
-        """Свои замеры запаса на копирование.
+        """Own copy-slack measurements.
 
-        Живут в том же файле, что и точки калибровки: обе величины описывают
-        машину, а не данные, и на другой машине одинаково неверны. Отдельного
-        поля для различения не заведено — признак выводится, как и всё
-        остальное вычислимое: у замера запаса есть и данные, и остаток,
-        поэтому точкой калибровки он не считается.
+        They live in the same file as the calibration points: both values
+        describe the machine, not the data, and are equally wrong on another
+        machine. No separate field tells them apart — the flag is derived,
+        like everything else computable: a copy-slack measurement has both
+        data and left space, so it does not count as a calibration point.
         """
         return [
             record for record in self.calibration if not record.is_calibration_point
         ]
 
     def put_calibration(self, record: Record) -> None:
-        """Положить замер, вытеснив прежний того же рода.
+        """Put a measurement, superseding the previous one of the same kind.
 
-        Вытеснение раздельное: точка калибровки заменяет точку на том же
-        томе, замер запаса — замер того же набора. Общий ключ по
-        `mounted_bytes` выбивал бы точку NTFS замером запаса, снятым на том
-        же размере тома, и наоборот — молча, потому что обе записи выглядят
-        одинаково законно.
+        Superseding is separate: a calibration point replaces the point on
+        the same volume, a copy-slack measurement replaces the measurement of
+        the same file set. A shared key by `mounted_bytes` would knock out an
+        NTFS point with a copy-slack measurement taken at the same volume
+        size, and vice versa — silently, because both records look equally
+        legitimate.
         """
         if record.is_calibration_point:
             keep = [
@@ -849,12 +868,13 @@ class Store:
         self.calibration = [*keep, record]
 
     def factory_volumes(self) -> set[int]:
-        """Размеры томов, покрытые только заводскими данными.
+        """Volume sizes covered only by factory data.
 
-        Замеры запаса тоже дают точку NTFS — пустой том меряется до записи
-        файлов, — поэтому заводские среди них считаются здесь наравне с
-        точками: отрезок, оба конца которого чужие, обязан получить надбавку
-        независимо от того, каким сбором чужие числа сняты.
+        Copy-slack measurements also give an NTFS point — the empty volume is
+        measured before the files are written — so the factory ones among
+        them count here on a par with the points: a segment whose both ends
+        are foreign must get the factory margin regardless of which
+        collection took the foreign numbers.
         """
         own = {
             record.mounted_bytes
@@ -878,15 +898,17 @@ class Store:
         self.records[index] = record
 
     def index_of(self, record: Record) -> int | None:
-        """Где лежит эта самая запись. По тождеству, а не по равенству.
+        """Where this very record lies. By identity, not by equality.
 
-        Окна правки немодальны, и пока одно из них открыто, список успевает
-        измениться: соседнюю запись удалили, новую добавили — номер, взятый
-        при открытии, показывает уже на чужую строку. Равенство здесь тоже не
-        годится: две записи с одинаковыми полями — обычное дело, `Record`
-        сравнивается по значениям, и правка ушла бы в первую попавшуюся.
+        Edit windows are modeless, and while one of them is open, the list has
+        time to change: a neighbouring record was deleted, a new one added —
+        the index taken at opening already points to someone else's row.
+        Equality does not work here either: two records with identical fields
+        are common, `Record` compares by value, and the edit would go into
+        whichever came first.
 
-        None — записи в хранилище больше нет: её удалили из другого окна.
+        None means the record is no longer in the store: it was deleted from
+        another window.
         """
         for index, item in enumerate(self.records):
             if item is record:
@@ -897,11 +919,11 @@ class Store:
         del self.records[index]
 
     def measure_into(self, record: Record, total: int, free: int) -> Record:
-        """Разложить один замер тома по полям записи.
+        """Spread one volume measurement over the record's fields.
 
-        Пустой том даёт ёмкость и свободное место; тот же замер после
-        копирования даёт остаток. Какое из полей заполняется, определяется
-        тем, заполнено ли уже empty_free_bytes.
+        An empty volume gives the capacity and the free space; the same
+        measurement after copying gives the left space. Which field gets
+        filled is decided by whether empty_free_bytes is already filled.
         """
         if record.empty_free_bytes is None:
             return replace(record, mounted_bytes=total, empty_free_bytes=free)

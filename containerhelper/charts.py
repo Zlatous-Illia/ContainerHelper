@@ -1,8 +1,8 @@
-"""Сборка графиков из замеров и моделей. Что рисовать — здесь, чем — в `ui/`.
+"""Charts from measurements and models. What to draw is here, how in `ui/`.
 
-Без Qt по той же причине, что и `plot.py`: содержимое графика — это данные, а
-не оформление. Проверять надо, какие точки на нём оказались и что написано в
-подсказке, а для этого окно не нужно.
+No Qt for the same reason as `plot.py`: the content of a chart is data, not
+styling. What needs testing is which points ended up on it and what the
+tooltip says, and that needs no window.
 """
 
 from __future__ import annotations
@@ -45,49 +45,51 @@ from .records import (
     slack_samples,
 )
 
-#: Сколько точек брать на кривую модели. Модель кусочно-линейна по объёму, а
-#: ось логарифмическая — на ней прямой отрезок становится дугой, и двумя
-#: концами его не нарисовать: линия пройдёт мимо собственных замеров.
+#: How many points to take for the model curve. The model is piecewise-linear
+#: in volume, and the axis is logarithmic — on it a straight segment becomes
+#: an arc, and it cannot be drawn by its two ends: the line would miss its own
+#: measurements.
 CURVE_SAMPLES = 160
 
 
 def _own(store) -> list[Record]:
-    """Записи, снятые здесь: и о копировании, и калибровочные."""
+    """Records taken here: both copy records and calibration ones."""
     return [*store.records, *store.calibration]
 
 
 def _is_own(record: Record, own: Sequence[Record]) -> bool:
-    """Своя запись или заводская.
+    """Whether the record is own or factory.
 
-    Сравнение по тождеству, а не по имени: заводская запись синтезируется на
-    лету из ресурсов пакета, и в `records`/`calibration` её нет вовсе, а имя
-    человек волен написать какое угодно, в том числе «Заводская».
+    Compared by identity, not by name: a factory record is synthesised on the
+    fly from the package resources and is not in `records`/`calibration` at
+    all, and a person is free to give any name, including «Заводская».
     """
     return any(record is item for item in own)
 
 
 def _geometric(lo: float, hi: float, count: int = CURVE_SAMPLES) -> list[float]:
-    """Точки, равномерные по логарифму: столько же в каждой октаве."""
+    """Points evenly spaced on a log scale: the same number in every octave."""
     if lo <= 0 or hi <= lo:
         return [lo, hi]
     ratio = (hi / lo) ** (1.0 / max(count - 1, 1))
     return [lo * ratio**index for index in range(count)]
 
 
-# --- метаданные NTFS -------------------------------------------------------
+# --- NTFS metadata ---------------------------------------------------------
 
 
-#: Сколько непокрытых размеров называть поимённо. Дальше список перестаёт
-#: читаться и начинает вытеснять саму подпись.
+#: How many uncovered sizes to name one by one. Beyond that the list stops
+#: reading and starts crowding out the caption itself.
 UNCOVERED_SHOWN = 5
 
 
 def uncovered(store, sizes: Sequence[int]) -> list[int]:
-    """Рекомендованные размеры, на которых нет ни своего замера, ни заводского.
+    """Recommended sizes that have neither an own nor a factory measurement.
 
-    Именно там модель ведёт прямую через пустое место, и туда же стоит снять
-    следующий замер. Своё, отключённое кнопкой «К заводскому», покрытием не
-    считается только если и заводского на этом размере нет.
+    That is exactly where the model draws a straight line through empty space,
+    and that is where the next measurement is worth taking. An own measurement
+    disabled with the Use factory button leaves the size uncovered only if
+    there is no factory one at that size either.
     """
     own = {
         record.mounted_bytes
@@ -104,14 +106,14 @@ def uncovered(store, sizes: Sequence[int]) -> list[int]:
 
 
 def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
-    """Измеренные метаданные и ломаная модели поверх них.
+    """Measured metadata and the model's polyline over it.
 
-    `sizes` — список рекомендуемых размеров; по нему подпись говорит, какие из
-    них не покрыты ничем. Отдельной панелью это уже стояло — «лента покрытия»,
-    три ряда точек, — и оказалось лишним: своё против заводского на кривой уже
-    видно по цвету, а всё, что лента добавляла сверх этого, укладывается в
-    одну строку. Таблица на «Калибровке» говорит то же самое подробнее и с
-    кнопками.
+    `sizes` is the list of recommended sizes; by it the caption says which of
+    them are covered by nothing. This used to be a separate panel — the
+    "coverage strip", three rows of dots — and turned out to be redundant: own
+    against factory is already visible on the curve by colour, and everything
+    the strip added beyond that fits in one line. The table on the Calibration
+    tab says the same in more detail and with buttons.
     """
     own = _own(store)
     records = store.all_for_model()
@@ -167,12 +169,12 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
 
 
 def ntfs_residuals(store) -> Chart:
-    """Проверка исключением: насколько модель промахнулась бы без этой точки.
+    """Leave-one-out check: how far the model would miss without this point.
 
-    Остатки от самой модели рисовать бессмысленно — кусочно-линейная кривая
-    проходит ровно через свои замеры, и отклонение везде вышло бы нулевым.
-    Поэтому каждая точка проверяется моделью, построенной без неё; ровно так
-    же считается и совет по страховке.
+    Drawing residuals from the model itself is pointless — a piecewise-linear
+    curve passes exactly through its own measurements, and the deviation would
+    come out zero everywhere. So each point is checked by a model built
+    without it; the safety advice is computed exactly the same way.
     """
     checks = [
         check
@@ -180,11 +182,13 @@ def ntfs_residuals(store) -> Chart:
         if check.record.mounted_bytes
     ]
     volumes = [check.record.mounted_bytes for check in checks]
-    # Крайние точки — особый случай: без них модели не между чем вести прямую,
-    # и она вынуждена экстраполировать базовым наклоном. Промах там в сотни раз
-    # больше и мерит другое, поэтому серия отдельная и по умолчанию спрятана:
-    # иначе один выброс в −433 MiB прижимает к нулю всё остальное, а всё
-    # остальное тут и есть предмет разговора. Щелчок по легенде её вернёт.
+    # The outermost points are a special case: without them the model has
+    # nothing to draw a straight line between, and it is forced to extrapolate
+    # with the baseline slope. The miss there is hundreds of times larger and
+    # measures something else, so the series is separate and hidden by
+    # default: otherwise one outlier of −433 MiB presses everything else to
+    # zero, and everything else is what this is about. A click on the legend
+    # brings it back.
     edges = {min(volumes), max(volumes)} if volumes else set()
 
     under: list[Point] = []
@@ -212,9 +216,9 @@ def ntfs_residuals(store) -> Chart:
         Axis("Размер тома", AXIS_BYTES, log=True),
         Axis("Измерено минус модель", AXIS_BYTES),
         (
-            # Стеблями, а не голыми точками: ноль здесь — сама модель, и
-            # стебель от неё до точки показывает, куда и насколько промах, не
-            # заставляя глаз мерить расстояние до линии.
+            # As stems, not bare dots: zero here is the model itself, and the
+            # stem from it to the dot shows which way and how far the miss
+            # goes, without making the eye measure the distance to the line.
             Series("модель занизила", tuple(under), KIND_STEMS, tone=1),
             Series("модель завысила", tuple(over), KIND_STEMS, tone=0),
             Series("край диапазона", tuple(edge), KIND_STEMS, tone=3, visible=False),
@@ -230,15 +234,17 @@ def ntfs_residuals(store) -> Chart:
 
 
 def ntfs_share(store) -> Chart:
-    """Какую долю тома съедают метаданные.
+    """What share of the volume the metadata eats.
 
-    Кривая в байтах отвечает на другой вопрос — «сколько их», — и на фоне тома
-    в гигабайтах разница между 0,2 % и 0,4 % там толщиной в линию. А доля и
-    есть то, чем метаданные меряют на глаз: «сколько тома уйдёт не на данные».
+    The curve in bytes answers a different question — "how much of it" — and
+    against a volume in gigabytes the difference between 0,2 % and 0,4 % is
+    the thickness of a line there. And the share is what metadata is judged by
+    at a glance: "how much of the volume goes to something other than data".
 
-    С наклонами отрезков это тоже разные величины: наклон говорит, как быстро
-    метаданные растут на участке, а доля — сколько их всего на этом размере.
-    Ровный участок наклона и ровный участок доли — не одно и то же.
+    Segment slopes are different values too: the slope says how fast the
+    metadata grows over a stretch, and the share how much of it there is in
+    total at this size. A flat stretch of slope and a flat stretch of share
+    are not the same thing.
     """
     own = _own(store)
     records = store.all_for_model()
@@ -275,10 +281,10 @@ def ntfs_share(store) -> Chart:
     return Chart(
         "Доля тома под метаданными",
         Axis("Размер тома", AXIS_BYTES, log=True),
-        # Логарифмическая и по вертикали: доля расходится на три порядка — от
-        # 0,013 % на терабайтном томе до 16 % на шестидесяти четырёх
-        # мегабайтах, — и на линейной оси всё, кроме самых мелких томов,
-        # ложится в одну линию у нуля.
+        # Logarithmic vertically too: the share spans three orders of
+        # magnitude — from 0,013 % on a terabyte volume to 16 % at sixty-four
+        # megabytes — and on a linear axis everything except the smallest
+        # volumes lies in one line near zero.
         Axis("Доля тома, %", AXIS_PLAIN, log=True),
         (
             Series("модель", tuple(curve), KIND_LINE, tone=2),
@@ -293,10 +299,11 @@ def ntfs_share(store) -> Chart:
 
 
 def ntfs_slopes(store) -> Chart:
-    """Наклон каждого отрезка ломаной — форма кривой, а не её ошибка.
+    """Slope of each polyline segment — the curve's shape, not its error.
 
-    На самой кривой этого не разглядеть: на фоне тома в гигабайтах разница
-    между 0.128 % и 0.324 % — толщина линии. А это и есть ступени $LogFile.
+    On the curve itself this cannot be made out: against a volume in gigabytes
+    the difference between 0.128 % and 0.324 % is the thickness of a line. And
+    that is exactly the $LogFile steps.
     """
     model = NtfsModel(ntfs_points(store.all_for_model()))
     points = model.points
@@ -310,8 +317,8 @@ def ntfs_slopes(store) -> Chart:
         ).replace(".", ",")
         steps.append(Point(float(x0), slope, tip))
     if steps:
-        # Замкнуть последнюю ступень, иначе она обрывается на предпоследнем
-        # замере и выглядит короче, чем есть.
+        # Close the last step, otherwise it breaks off at the second-to-last
+        # measurement and looks shorter than it is.
         steps.append(Point(float(points[-1][0]), steps[-1].y, steps[-1].tip))
 
     return Chart(
@@ -327,11 +334,11 @@ def ntfs_slopes(store) -> Chart:
     )
 
 
-# --- запас на копирование --------------------------------------------------
+# --- copy slack ------------------------------------------------------------
 
 
 def slack_curve(store) -> Chart:
-    """Измеренный запас против числа файлов и прямая модели."""
+    """Measured slack against the file count, and the model's line."""
     own = _own(store)
     records = store.all_for_model()
     model = CopySlackModel.calibrate(slack_samples(records))
@@ -378,7 +385,7 @@ def slack_curve(store) -> Chart:
 
 
 def slack_residuals(store) -> Chart:
-    """Проверка исключением для запаса — та же логика, что и у метаданных."""
+    """Leave-one-out check for slack — the same logic as for the metadata."""
     under: list[Point] = []
     over: list[Point] = []
     for check in slack_cross_check(store.all_for_model()):
@@ -407,16 +414,16 @@ def slack_residuals(store) -> Chart:
     )
 
 
-# --- прогноз против факта --------------------------------------------------
+# --- prediction against fact -----------------------------------------------
 
 
 def forecast_misses(store) -> Chart:
-    """Что обещал расчёт против того, чего хватило бы впритык.
+    """What the calculation promised against what would have just sufficed.
 
-    Две величины рядом не для полноты: промах в +5 MiB одинаково выглядит и
-    когда модель точна при страховке в 5 MiB, и когда модель занизила на три,
-    а восемь мегабайт страховки это скрыли. Второе — предвестник аварии,
-    который выглядит здоровым.
+    The two values side by side are not for completeness: a miss of +5 MiB
+    looks the same both when the model is exact with a 5 MiB safety margin and
+    when the model underestimated by three and eight megabytes of safety margin
+    hid it. The second is a harbinger of failure that looks healthy.
     """
     checked = [record for record in store.records if record.forecast_checked]
     misses: list[Point] = []
@@ -462,10 +469,10 @@ def forecast_misses(store) -> Chart:
         Axis("Обещано минус необходимо", AXIS_MIB),
         (
             Series("перезаклад", tuple(misses), KIND_BARS, tone=0),
-            # Точками, а не столбиками: столбик поверх столбика читается как
-            # «часть целого», а это отдельная величина того же промаха, снятая
-            # с другого места. Ниже нуля точка стоит одна, и подпись под
-            # графиком проговаривает, что она означает.
+            # As dots, not bars: a bar over a bar reads as "part of a whole",
+            # and this is a separate value of the same miss, taken from a
+            # different place. Below zero the dot stands alone, and the
+            # caption under the chart spells out what it means.
             Series("без страховки", tuple(bare), KIND_DOTS, tone=1),
         ),
         note=note,
@@ -474,15 +481,16 @@ def forecast_misses(store) -> Chart:
     )
 
 
-# --- текущий расчёт --------------------------------------------------------
+# --- current calculation ---------------------------------------------------
 
 
 def container_breakdown(solution: Solution) -> Chart:
-    """Полоса: из чего сложен посчитанный контейнер.
+    """The bar: what the computed container is made of.
 
-    Тонкие слагаемые тут не видны, и это и есть сообщение: заголовок VeraCrypt
-    на терабайтном контейнере — волосок. Числа у каждого слагаемого стоят в
-    легенде, потому что навести на волосок курсором нельзя.
+    Thin components are not visible here, and that is the message: the
+    VeraCrypt header on a terabyte container is a hairline. The numbers for
+    each component are in the legend, because a hairline cannot be pointed at
+    with the cursor.
     """
     rounding = max(solution.predicted_left_bytes - solution.safety_bytes, 0)
     parts = (
@@ -514,11 +522,11 @@ def cluster_tail(
     choices: Sequence[int],
     current: int,
 ) -> Chart:
-    """Во что обойдётся выбор размера кластера именно этим данным.
+    """What the choice of cluster size will cost this particular data.
 
-    Единственный график, который считается по настоящим размерам выбранных
-    файлов, а не по модели. И самый крупный эффект во всей программе: на
-    мелких файлах между 512 и 65536 разница выходит в разы.
+    The only chart computed from the real sizes of the selected files, not
+    from the model. And the largest effect in the whole program: on small
+    files the difference between 512 and 65536 comes out several times over.
     """
     logical = sum(sizes)
     points: list[Point] = []
@@ -561,14 +569,18 @@ def cluster_tail(
 
 
 def empty_chart(title: str, note: str) -> Chart:
-    """График без данных, но с объяснением, чего именно не хватает.
+    """A chart with no data, but explaining what exactly is missing.
 
-    Пустое место с надписью «замеров нет» честнее пустого места без надписи:
-    иначе непонятно, программа сломалась или мерить ещё нечего.
+    An empty space saying "no measurements" is more honest than an empty space
+    saying nothing: otherwise it is unclear whether the program broke or there
+    is nothing to measure yet.
     """
     return Chart(title, Axis(""), Axis(""), (), note=note)
 
 
 def has_factory_slack() -> bool:
-    """Есть ли заводские замеры запаса. Пусто — рисовать вторую серию нечем."""
+    """Whether there are factory slack measurements.
+
+    If not, there is nothing to draw the second series with.
+    """
     return bool(factory_data().samples)

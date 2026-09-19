@@ -1,4 +1,4 @@
-"""Вкладка «Модель»: состояние калибровки и её проверка."""
+"""The Model tab: calibration status and its check."""
 
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ from .table import (
     with_grip,
 )
 
-#: Заголовок, признак «столбец в байтах» и подсказка. К байтовым дописывается
-#: выбранная единица, и сортируются они по числу, а не по тексту.
+#: Header, the "column in bytes" flag and tooltip. Byte columns get the chosen
+#: unit appended, and they sort by number, not by text.
 CHECK_COLUMNS = (
     (
         "Запись",
@@ -81,7 +81,7 @@ CHECK_COLUMNS = (
 
 class ModelTab(QWidget):
     safetyChanged = Signal(int)
-    #: Просьба показать окно с графиками — по ключу окна.
+    #: A request to show the chart window — by the window's key.
     chartRequested = Signal(str)
 
     def __init__(
@@ -94,12 +94,12 @@ class ModelTab(QWidget):
         self._models = models
         self._records = records
         self._unit: Unit = DEFAULT_UNIT
-        #: Когда запас подбирается на вкладке «Расчёт», это поле только
-        #: показывает результат — править его отсюда бессмысленно.
+        #: When the safety margin is fitted on the Calculation tab, this field
+        #: only shows the result — editing it from here makes no sense.
         self._auto = False
-        #: Последние посчитанные проверки. Держатся, чтобы подсказку о запасе
-        #: можно было обновить, не пересобирая обе таблицы на каждое изменение
-        #: значения.
+        #: The last computed checks. Kept so the safety margin hint can be
+        #: updated without rebuilding both tables on every change of the
+        #: value.
         self._checks: tuple[list, list] = ([], [])
         self._safety_mib = 0
 
@@ -107,12 +107,13 @@ class ModelTab(QWidget):
         layout.addWidget(self._build_state())
         layout.addWidget(self._build_safety())
 
-        # Каждая секция кончается своей таблицей, поэтому ручка разделителя
-        # приходится ровно на её нижний контур.
-        # Разделителя тут больше нет. Он делит фиксированную высоту между
-        # соседями, а менять надо высоту самой таблицы — тогда вкладка
-        # становится выше окна и прокрутка удлиняется. У каждой таблицы своя
-        # ручка под нижним контуром.
+        # Each section ends with its own table, so the splitter handle falls
+        # exactly on the table's bottom outline.
+        # There is no splitter here any more. It divides a fixed height
+        # between neighbours, while what needs to change is the height of the
+        # table itself — then the tab grows taller than the window and the
+        # scroll gets longer. Each table has its own grip under its bottom
+        # outline.
         layout.addWidget(self._build_checks("Проверка модели NTFS", "ntfs"))
         layout.addWidget(self._build_checks("Проверка запаса на копирование", "slack"))
         layout.addLayout(self._build_chart_row())
@@ -121,10 +122,11 @@ class ModelTab(QWidget):
         self.refresh()
 
     def _build_chart_row(self) -> QHBoxLayout:
-        """Кнопки графиков под обеими таблицами проверки.
+        """Chart buttons under both check tables.
 
-        Рядом с числами, которые они объясняют: таблица говорит, на сколько
-        модель промахнулась, а график — где именно и на что это похоже.
+        Next to the numbers they explain: the table says by how much the
+        model missed, and the chart says where exactly and what it looks
+        like.
         """
         row = QHBoxLayout()
         for title, key, tip in (
@@ -153,7 +155,7 @@ class ModelTab(QWidget):
         row.addStretch(1)
         return row
 
-    # --- построение --------------------------------------------------------
+    # --- building ----------------------------------------------------------
 
     def _build_state(self) -> QGroupBox:
         group = QGroupBox("Состояние калибровки")
@@ -183,11 +185,12 @@ class ModelTab(QWidget):
         return group
 
     def _build_safety(self) -> QGroupBox:
-        """Только показ. Крутить запас отсюда нельзя намеренно.
+        """Display only; the safety margin is deliberately read-only here.
 
-        Он зависит от размера тома и числа файлов, а их знает лишь вкладка
-        «Расчёт». Второе поле здесь дублировало первое и при автоподборе
-        откатывалось само — выглядело сломанным, потому что таким и было.
+        It depends on the volume size and the file count, and only the
+        Calculation tab knows those. A second field here duplicated the first
+        and, with auto-selection, rolled back on its own — it looked broken
+        because it was.
         """
         group = QGroupBox("Страховочный запас")
         group.setToolTip(
@@ -215,12 +218,13 @@ class ModelTab(QWidget):
         return group
 
     def _build_checks(self, title: str, kind: str) -> QWidget:
-        """Секция проверки: подписи сверху, таблица последней.
+        """A check section: labels on top, the table last.
 
-        Таблица идёт последней намеренно. Ручка разделителя садится на нижний
-        край секции, и если после таблицы поставить ещё подпись, тянуть
-        придётся за серую границу возле текста, а не за чёрный контур
-        таблицы. Итог поэтому переехал наверх, под заголовок.
+        The table comes last on purpose. The splitter handle sits on the
+        section's bottom edge, and if another label were placed after the
+        table, one would have to drag by the grey border near the text rather
+        than by the table's black outline. That is why the summary moved up,
+        under the heading.
         """
         caption = QLabel(f"<b>{title}</b>")
         explanation = QLabel(
@@ -282,7 +286,7 @@ class ModelTab(QWidget):
         for table in (self.ntfs_table, self.slack_table):
             apply_table_height(table, expand)
 
-    # --- обновление --------------------------------------------------------
+    # --- refresh -----------------------------------------------------------
 
     def set_auto_safety(self, enabled: bool) -> None:
         self._auto = enabled
@@ -387,7 +391,7 @@ class ModelTab(QWidget):
             )
 
     def _fitted(self, table: QTableWidget) -> bool:
-        """Ширину подгоняем один раз, дальше она принадлежит пользователю."""
+        """Width is fitted once; after that it belongs to the user."""
         kind = "ntfs" if table is self.ntfs_table else "slack"
         already = getattr(self, f"{kind}_fitted")
         setattr(self, f"{kind}_fitted", True)
@@ -403,12 +407,13 @@ class ModelTab(QWidget):
             self.safety_hint.setText("Проверить не на чем: записей нет.")
             return
 
-        # Наибольшая недооценка по всем записям — не требование, а диагностика.
-        # Проверка исключением меряет модель без одной точки, то есть вдвое
-        # более редкую, чем настоящая; её промах не спадает от добавления
-        # замеров и требовать по нему страховку на все размеры сразу значит
-        # платить везде за то место, где сетка реже всего. Сколько нужно
-        # конкретному расчёту, считает автоподбор на вкладке «Расчёт».
+        # The largest underestimate over all records is a diagnostic, not a
+        # requirement. The leave-one-out check measures the model without one
+        # point, that is, one twice as sparse as the real one; its miss does
+        # not shrink as measurements are added, and demanding a safety margin
+        # from it for all sizes at once means paying everywhere for the place
+        # where the grid is sparsest. How much a particular calculation needs
+        # is worked out by auto-selection on the Calculation tab.
         diagnostic = (
             f"Худшая недооценка при проверке исключением: {fmt_both(worst)}. "
             f"Это оценка модели без одной точки, а не требование к запасу."
