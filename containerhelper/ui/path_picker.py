@@ -190,12 +190,13 @@ class PathPicker(QFileDialog):
             self.resize(self._state.width, self._state.height)
 
     def _restore_state(self) -> None:
-        """Restore the view and size of the last showing.
+        """Restore the view of the last showing; the size comes on show.
 
         Order matters: restoreState sets the list view mode and the column
-        widths, and restoreGeometry sets the window size. The former can change
-        the size as well, so the geometry is applied after it, otherwise the
-        window drifts back to what it was when the view was saved.
+        widths, and it can change the window size as well. So the size is
+        applied after it — by `resize()` in `showEvent`, from two numbers (see
+        `PickerState`) — otherwise the window drifts back to what it was when
+        the view was saved.
         """
         if not self._state.layout.isEmpty():
             self.restoreState(self._state.layout)

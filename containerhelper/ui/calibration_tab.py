@@ -53,14 +53,16 @@ from .table import (
 #: byte per 32 KiB of volume overestimated the metadata at a terabyte thirteen
 #: times over.
 #:
-#: 768, 1536, 3072 and 6144 were added later and are not covered by a factory
-#: measurement. They halve the four segments with a twofold step — the only
-#: ones where the grid was sparser than the curve changes. A measurement
-#: showed that this is not enough: on a 1610 MiB volume, right in the middle
-#: of the 1024…2048 segment, the metadata landed 202 672 B above the chord,
-#: and it was the safety floor, not the calculation, that pulled the safety
-#: margin through that time. Above 8 GiB the segments are already denser, and
-#: past 64 GiB the curve is almost flat.
+#: 768, 1536, 3072 and 6144 were added later; the measurements taken at them
+#: have since been copied into the factory data, so every row now has a
+#: factory measurement. They halve the four segments with a twofold step —
+#: the only ones where the grid was sparser than the curve changes. They were
+#: added after a measurement at 1610 MiB landed 202 672 B above the 1024…2048
+#: chord, with the safety floor, not the calculation, covering it. Halving is
+#: not enough either: the new 1536 point lay 233 472 B above that same chord,
+#: and 1610 still lies 2 944 B above the 1536…2048 one with the bound at zero,
+#: so MIN_SAFETY_BYTES stays. Above 8 GiB the segments are already denser,
+#: and past 64 GiB the curve is almost flat.
 RECOMMENDED_MIB = (
     512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192,
     12288, 16384, 20480, 24576, 32768,
@@ -156,8 +158,10 @@ SLACK_COLUMNS = (
     ),
 )
 
-#: Three row states. The colour only hints; the state is always written out
-#: in words: colour alone is a poor thing to rely on.
+#: Three row colours for four states: a disabled own measurement takes the
+#: factory colour, because the factory value is what the model uses there.
+#: The colour only hints; the state is always written out in words: colour
+#: alone is a poor thing to rely on.
 COLOUR_OWN = QColor("#1b7f3b")
 COLOUR_FACTORY = QColor("#8a6d1f")
 COLOUR_MISSING = QColor("#9a9a9a")

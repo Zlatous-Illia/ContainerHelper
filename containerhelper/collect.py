@@ -1,15 +1,17 @@
 """Automatic collection of measurements: the plan, one step, the self-check.
 
-Taking the calibration by hand means twenty-two containers: create, format,
+Taking the calibration by hand means twenty-six containers: create, format,
 mount, write down the numbers, unmount, delete. Several hours, and every step
 can be done wrong silently. Here VeraCrypt does the same on command, and the
 program reads the finished volume.
 
 Two kinds of measurements are collected. An empty volume gives the NTFS
 metadata. The same volume filled with a generated file set gives the copy
-slack — the very part of the model that until now no measurement at several
-different `n` had confirmed. The second kind is more expensive: it writes real
-gigabytes to the volume, and disk space has to be counted in advance.
+slack at several different `n` — the only way to separate the per-file slack
+from the constant part. Before this collection no measurement had confirmed
+it; the full run, thirty steps, measured it at 1363 B per file. The second
+kind is more expensive: it writes real gigabytes to the volume, and disk space
+has to be counted in advance.
 
 No Qt: the sequence of steps and the parsing of their results are not display,
 and must be tested without the interface. Progress and cancellation live in
@@ -581,9 +583,10 @@ def _measure_slack(
     root = Path(veracrypt.volumes.root(letter)) / PAYLOAD_DIR
 
     # Logical size, not cluster-rounded size: generate counts written bytes,
-    # and the denominator must be in the same units. On five hundred
-    # one-kilobyte files the cluster-rounded size is twenty times the logical
-    # one, and the step's share would stall at five percent.
+    # and the denominator must be in the same units. On one-kilobyte files in
+    # 4 KiB clusters the cluster-rounded size is four times the logical one:
+    # the bytes would stall at a quarter of their total, and the step's share,
+    # the allowance for files included, at about 96 percent.
     written_total = fileset.logical_bytes
 
     def on_progress(files_done: int, bytes_done: int) -> None:

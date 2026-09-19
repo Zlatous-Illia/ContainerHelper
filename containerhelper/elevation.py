@@ -2,8 +2,9 @@
 
 They are needed because of one switch: the documentation of
 `/filesystem NTFS` says that "a UAC prompt will be displayed unless the process
-is run with full administrative privileges". On twenty-two containers that is
-twenty-two UAC prompts in a row, and the collection stops being automatic.
+is run with full administrative privileges". On a full collection —
+twenty-six sizes, the self-check and the file sets — that is over thirty UAC
+prompts in a row, and the collection stops being automatic.
 
 Rights cannot be dropped again — a process that has them keeps them to the
 end, so the restart is offered, not done on its own, and the window after it

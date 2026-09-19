@@ -56,14 +56,16 @@ rejected; it is edited **in the same change** that changes the behavior, and
 no separate proposal document is needed.
 
 `init prompt.txt` is the original assignment, of which about a third remains.
-The "Out of scope" section in `SPEC.md` lists what was cut on purpose (charts,
-file copying, export/import, extended statistics, reverse calculation of the
-percentage). Don't bring these back on seeing them in `init prompt.txt`.
+The "Out of scope" section in `SPEC.md` lists what was cut on purpose (copying
+of user files, export/import, extended statistics, reverse calculation of the
+percentage). Charts stood there too; the ban was lifted, but only for
+calibration quantities and the breakdown of the current calculation (see SPEC "Charts"). Don't bring the rest back on seeing it in
+`init prompt.txt`.
 
 ## Architecture
 
-In layers, bottom up. The bottom three know nothing about Qt and are tested
-without it.
+In layers, bottom up. Every module below except `ui/` knows nothing about Qt
+and can be tested without it.
 
 **`model.py`** — arithmetic. `NtfsModel` (NTFS metadata as a function of the
 volume size), `CopySlackModel` (the space that the arrival of files takes
@@ -347,10 +349,10 @@ measurements are in the "Charts" section of SPEC.
 - **A logarithmic count axis can do fractional ticks too.** They went through
   `fmt_bytes(int(...))`, and "0,01" turned into "0": values below one never
   occurred there until the share of the volume taken by metadata.
-- **The strip and the bar need their own minimum height** (the coverage strip
-  and the breakdown bar). An explicit `setMinimumSize` beats
-  `minimumSizeHint`, and the common 220-pixel minimum does not let them shrink to their
-  own height; zero stretch in the splitter is the other half of the same rule.
+- **The breakdown bar needs its own minimum height.** An explicit
+  `setMinimumSize` beats `minimumSizeHint`, and the common 220-pixel minimum
+  does not let it shrink to its own height; zero stretch in the splitter is the
+  other half of the same rule.
 - **A detached chart remembers two heights at once**: its share in the shared
   window (by chart number — the splitter's list gets shorter when one leaves)
   and the geometry of its own window. The shared window's height after the
@@ -442,11 +444,11 @@ What breaks silently if touched:
   8 KiB, 80 GiB by 3 KiB): the host sees the sparseness, and the filesystem
   inside the volume knows nothing about it.
 - **Administrator rights** are needed because of `/filesystem NTFS`: without
-  them UAC would ask for each of the twenty-two containers. The restart goes
-  through `ShellExecuteW` with `runas` and a mandatory
-  `--data <current folder>` — otherwise portability ends. After the restart
-  the window closes: two copies in one data folder would write over each
-  other.
+  them UAC would ask for every container of the run — twenty-six sizes, the
+  self-check and the file sets. The restart goes through `ShellExecuteW` with
+  `runas` and a mandatory `--data <current folder>` — otherwise portability
+  ends. After the restart the window closes: two copies in one data folder
+  would write over each other.
 - **The steps run in a separate thread.** Cancelling takes effect between
   steps and inside the writing of a file set — the half-written file set is
   thrown away with the container anyway. But breaking off a running VeraCrypt

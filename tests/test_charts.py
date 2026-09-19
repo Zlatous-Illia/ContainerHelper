@@ -321,9 +321,11 @@ class UncoveredTests(unittest.TestCase):
     Calibration tab says the same in more detail and with buttons.
     """
 
-    #: A size found in neither factory nor own measurements: the factory ones
-    #: cover exactly the rows of the recommended-sizes table, so only a size
-    #: outside it can be "uncovered".
+    #: A size found in neither factory nor own measurements. The factory
+    #: empty-volume points cover exactly the rows of the recommended-sizes
+    #: table, so only a size outside it can be "uncovered". The seven factory
+    #: copy-slack measurements add NTFS points off the table too, but 3000 MiB
+    #: is not one of them.
     ODD_MIB = 3000
 
     def test_a_size_without_any_measurement_is_named(self):

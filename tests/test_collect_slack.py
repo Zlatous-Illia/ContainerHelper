@@ -185,7 +185,7 @@ class ProgressShareTests(unittest.TestCase):
         self.assertAlmostEqual(half.share, 0.5)
 
     def test_a_set_of_small_files_still_reaches_the_end(self):
-        """Small files' logical size is 1/20 of their cluster-rounded size."""
+        """Small files' logical size is 1/4 of their cluster-rounded size."""
         done = Progress(
             PHASE_WRITE,
             files_done=500,

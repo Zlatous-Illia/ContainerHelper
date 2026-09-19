@@ -63,10 +63,10 @@ ACTIVE_TAB_KEY = "active_tab"
 REMEMBER_TAB_KEY = "remember_tab"
 SHOW_HIDDEN_KEY = "show_hidden_files"
 #: Settings of the file and folder picker. In a group of their own: there are
-#: four of them, and scattering them over General would mean forgetting half
-#: of them at the next edit. The hidden-files key stayed as it was — it was
-#: written before the group existed, and moving it would silently clear the
-#: check box for those who have it ticked.
+#: five of them, and scattering them over General would mean forgetting half
+#: of them at the next edit. The sixth, the hidden-files key, stayed as it
+#: was — it was written before the group existed, and moving it would
+#: silently clear the check box for those who have it ticked.
 PICKER_REMEMBER_KEY = "picker/remember_dir"
 PICKER_DIR_KEY = "picker/directory"
 PICKER_WIDTH_KEY = "picker/width"
@@ -145,7 +145,9 @@ class MainWindow(QMainWindow):
         )
         # The check covers everything the model rests on: copy records, own
         # measurements and factory points. Otherwise the report would be silent
-        # about exactly those twenty-two points that hold up the NTFS curve.
+        # about exactly the factory points that hold up the NTFS curve:
+        # twenty-six empty volumes and seven more from the copy-slack
+        # measurements.
         self.model_tab = ModelTab(
             self.models, lambda: self.records_tab.store.all_for_model()
         )

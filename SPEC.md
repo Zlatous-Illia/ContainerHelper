@@ -5,9 +5,12 @@
 One application solves two tasks:
 
 1. From the size of the source file, calculate what container size (MiB) to set in VeraCrypt.
-2. Accumulate measurements of real containers, to refine the calculation on the size
-   ranges where it has not been checked yet (right now only 8–12 GiB is calibrated;
-   points are needed at 1–4 GiB and at 30–100 GiB).
+2. Accumulate measurements of real containers, to refine the calculation where
+   it has not been checked yet. When the work began only 8–12 GiB was
+   calibrated. Now the program ships 26 factory empty-volume measurements from
+   512 MiB to 1 TiB and 7 copy-slack measurements, but all of them come from
+   one machine; measurements on another Windows build or VeraCrypt version are
+   still missing.
 
 Everything else is out of scope.
 
@@ -31,7 +34,7 @@ Listed explicitly so that it does not come back during further work:
 - the scenario of enlarging a container with VeraCrypt Expander.
 
 "Charts of any kind" stood here for a long time as well. The ban was lifted
-deliberately and not entirely: only calibration quantities are drawn, and
+deliberately and not entirely: only calibration quantities and the breakdown of the current calculation are drawn, and
 exactly where a number by itself explains nothing. The `$LogFile` steps are
 that case: the SPEC argues about them in half a page of prose ("the 1610 MiB
 point landed 202 672 B above the chord"), while on the residual chart it is
@@ -54,7 +57,7 @@ The quantities a container is made of:
 
 **By default** (fewer than two records): `NTFS = 19 MiB + 0.17 % × V`, where `V`
 is the size of the mounted volume. The largest underestimate on the three
-available measurements is 0.55 MiB.
+original records (Cache 1, 2 and 4) is 554 330 B (0.53 MiB), on Cache 1.
 
 **Calibrated** (records ≥ 2): piecewise-linear interpolation over the measured
 points `(V → NTFS)`, sorted by `V`. This form needs no statistics and correctly
@@ -83,14 +86,17 @@ of two independent parts.
 
 - the *interpolation bound* at this very point. Between measurements the model
   draws a straight line, and the dependence is not a straight line. Where it is
-  convex, the chord runs above and cannot underestimate. Where it is concave —
-  above 16 GiB, because the metadata components hit their ceilings one after
-  another — the chord passes below the curve, and that gap is the risk. From
-  above, the curve is bounded by two straight lines: one from the left end of
-  the segment with the slope of the previous segment, one from the right end
-  with the slope of the next; the nearer of them minus the chord gives the
+  concave — above 16 GiB, because the metadata components hit their ceilings
+  one after another — the chord passes below the curve, and that gap is the
+  risk. Where it is convex, the chord runs above. The bound only guesses the
+  shape between two points from the neighbouring segments: it assumes that
+  from above the curve stays under two straight lines, one from the left end
+  of the segment with the slope of the previous segment, one from the right
+  end with the slope of the next; the nearer of them minus the chord gives the
   bound. Past the last segment the slope is taken as zero — cautious and close
-  to the truth, only `$Bitmap` grows there.
+  to the truth, only `$Bitmap` grows there. A zero from the bound is therefore
+  not a promise that the chord cannot underestimate: below 8 GiB the curve
+  turned out to be a staircase, and the guess failed there twice.
 
   **This used to say "up to 8 GiB the curve is convex", and that turned out to
   be wrong.** At the anchor points 0.5, 1, 2 and 4 GiB the slopes do grow
@@ -102,12 +108,20 @@ of two independent parts.
   above" — and the underestimate was covered not by the calculation but by the
   safety floor `MIN_SAFETY_BYTES`.
 
-  Conclusion: the curve is neither convex nor concave as a whole, it is wavy,
-  and points an octave apart tell nothing about its shape between them. A zero
-  answer from the bound is a claim about the shape that the grid does not
-  support. Hence two measures: do not touch the safety floor under any
-  circumstances (it is what saved the day), and make the grid denser where
-  the curve still rises steeply — see `RECOMMENDED_MIB`;
+  Conclusion at the time: the curve is neither convex nor concave as a whole,
+  it is wavy, and points an octave apart tell nothing about its shape between
+  them. A zero answer from the bound is a claim about the shape that the grid
+  does not support. Hence two measures: do not touch the safety floor under
+  any circumstances (it is what saved the day), and make the grid denser where
+  the curve still rises steeply — see `RECOMMENDED_MIB`.
+
+  The denser grid confirmed the finding, and worse: the new point at
+  1536 MiB, in the same 1024…2048 segment, lay **233 472 B above the former
+  chord**. Both stay within the 1 MiB safety floor. The curve below 8 GiB is
+  not wavy but a staircase: `$LogFile` changes its size in steps at discrete
+  thresholds, and a step can hide between any two points, however dense the
+  grid. So the safety floor stays mandatory even where the grid is dense — see
+  "Implementation order", item 11;
 - the *miss on the two records between which the requested size lies*, scaled to
   the width of this segment. The miss is taken from the leave-one-out check —
   only it shows how the model behaves where there was no point. But it measures
@@ -125,11 +139,13 @@ falls in. A window by size ratio pulled in second-nearest neighbours: next to
 90 GiB it picked up a record at 48 GiB with a knee, and its miss drifted into a
 region where, by the measurements, only the bitmap grows.
 
-**Copy slack** — the miss on measurements with a similar file count. There are
-no measurements yet, so a fallback is at work, and it too depends on the input:
-for a single file the lower bound is taken (the constant part is measured and
-small), for a folder the full default value, because the per-file slack is
-confirmed by nothing.
+**Copy slack** — the miss on measurements with a similar file count, within a
+factor of eight (`SLACK_NEIGHBOUR_RATIO`). The factory copy-slack measurements
+span 1 to 10 000 files, so this covers up to 80 000. Beyond that, or with no
+copy-slack measurements at all, a fallback is at work, and it too depends on
+the input: for a single file the safety floor is taken (the constant part is
+measured and small), for a folder the full default value, because nothing
+nearby confirms the per-file slack.
 
 Outside the measured range there is no local evidence at all, and the largest
 underestimate across all records goes there — deliberately cautious.
@@ -477,12 +493,17 @@ will give a meaningless miss in one column, and that is all.
 
 ## Checks when a record is saved
 
-Seven checks, each catches a real class of error:
+Each check catches a real class of error:
 
-1. `container_mib * 1048576 > mounted_bytes` — otherwise the header is negative.
+1. `container_mib > 0`, and `container_mib * 1048576 > mounted_bytes` —
+   otherwise the header is negative. A header other than 266 240 B is flagged
+   too, for the metadata model only (scope `ntfs`).
 2. `empty_free_bytes < mounted_bytes`.
-3. `mounted_bytes - empty_free_bytes` within 5–100 MiB — a rough filter for
-   typos that drop or add digits.
+3. `mounted_bytes - empty_free_bytes` from 1 MiB up to the larger of 128 MiB
+   and 2 % of `mounted_bytes` — a rough filter for typos that drop or add
+   digits. The ceiling grows with the volume: on a terabyte the metadata is
+   136 MiB (factory point), past any fixed 128 MiB, and a fixed ceiling would
+   raise false alarms.
 4. If `file_bytes` and `left_bytes` are filled in:
    `empty_free_bytes - left_bytes >= ceil(file_bytes / cluster_bytes) * cluster_bytes`.
    The space taken cannot be less than the file itself. This check would have
@@ -715,7 +736,10 @@ record, look at the model, fill in the missing measurements.
   volume"), «Замерить остаток» ("Measure left space").
 - Take from Calculation carries over `container_mib`, the cluster size,
   `file_bytes`, `file_count`, `file_alloc_bytes`, and also `predicted_mib` and
-  `predicted_safety_mib`. Container init is carried over because it is exactly
+  `predicted_safety_mib`. The data fields come from there because the
+  application does not copy files and cannot know them by itself; the only one
+  that has already counted them is the Calculation tab, where the same data set
+  was selected. Container init is carried over because it is exactly
   what gets created in VeraCrypt from this calculation, and retyping it by hand
   means inviting a typo. The prediction is recorded in the same move: typing it
   in after the fact is too late — by then the model is already different.
@@ -770,12 +794,8 @@ record, look at the model, fill in the missing measurements.
 - Column widths are dragged with the mouse and survive a table update. They
   are fitted to the contents once, at the first fill: doing this on every
   update would mean wiping out what was set by hand.
-- The height of the tables is dragged with the tab's splitter.
-- The Take from Calculation button in the record dialog carries over
-  `file_bytes`, `file_count`, `file_alloc_bytes` and the cluster size. The
-  application does not copy files and cannot know them by itself; the only one
-  that has already counted them is the Calculation tab, where the same data
-  set was selected.
+- The table's height is dragged by the height grip under its bottom edge, see
+  "Window".
 - Add / edit / delete. A note field.
 - The Measure volume button — see the section "Measurements".
 - **Edit windows are modeless, and there can be several of them.** A record is
@@ -813,11 +833,12 @@ record, look at the model, fill in the missing measurements.
   copy slack. The prediction for each record is computed by a model calibrated
   **without that very record**: a piecewise-linear model passes exactly
   through its points, and without the exclusion the deviation would always be
-  zero. Under the table — the largest underestimate.
+  zero. Above the table, under the heading — the largest underestimate.
 - The check runs over everything the model stands on: copy records, own
-  measurements and factory points. They are what holds the NTFS curve, and a
-  report silent about twenty-two of them would report on a different model
-  from the one the calculation uses.
+  measurements and factory data. The factory data is what holds the NTFS
+  curve — twenty-six empty volumes and seven more points from the copy-slack
+  measurements — and a report silent about them would report on a different
+  model from the one the calculation uses.
 - The safety margin is shown but not edited. It depends on the volume size and
   the file count, and only the Calculation tab knows them. A second field here
   duplicated the first and rolled itself back on auto-selection — it looked
@@ -834,15 +855,17 @@ record, look at the model, fill in the missing measurements.
   weakest spot of the model — the baseline slope of 0.17 % against the real
   growth of one byte per 32 KiB of volume overstated the metadata at a terabyte
   12.5 times, 1704 MiB against 136.
-- Four rows — 768, 1536, 3072 and 6144 MiB — are **not** covered by a factory
-  measurement: on a new machine they show as «нет замера» ("not measured")
-  until an own one is taken. They were added later and split in half the
-  segments with a twofold step: the only places where the grid was sparser
-  than the curve changes. Above 8 GiB the segments are already denser, and
+- Four rows — 768, 1536, 3072 and 6144 MiB — were added later and split in
+  half the segments with a twofold step: the only places where the grid was
+  sparser than the curve changes. Their own measurements have since been
+  copied into the factory data (see "Factory calibration points"), so every
+  row now has a factory measurement. Above 8 GiB the segments are already denser, and
   after 64 GiB the curve is almost flat, so there is nothing to densify.
-- Three row states, each written as a word and tinted with a color:
-  «свой замер» ("own measurement"), «заводской» ("factory"), «нет замера».
-  Color alone is a poor hope.
+- Four row states, each written in words and tinted with a color:
+  «свой замер» ("own measurement"), «заводской» ("factory"), «свой, отключён»
+  ("own, disabled"), «нет замера». Color alone is a poor hope. A disabled own
+  measurement takes the factory color: the factory value is what the model
+  uses there.
 - The "measured" mark is set by the fact of a measurement at that size, not by
   falling inside the measured range. The previous rule marked as covered 12, 24
   and 80 GiB, which nobody had measured: any size falls between 8 and 100 GiB.
@@ -904,7 +927,7 @@ data and different file counts.
 
 ### Automatic collection
 
-The same twenty-two containers by hand take several hours, and every step can
+The same twenty-six containers by hand take several hours, and every step can
 be done wrong silently. The Collect automatically… button on the Calibration
 tab hands all the work to VeraCrypt: the program creates a container, mounts
 it, reads the volume, unmounts it and deletes the file — one size per step.
@@ -1002,12 +1025,12 @@ is taken from the observed ripple: on overlapping sizes the difference was
 
 **Administrator rights.** The documentation for `/filesystem NTFS`: "a UAC
 prompt will be displayed unless the process is run with full administrative
-privileges" — on twenty-two containers that is twenty-two prompts in a row.
-The dialog shows the current rights and offers a restart through
-`ShellExecuteW` with the `runas` verb, passing itself `--data <current folder>`
-so as not to lose portability. After the restart the window closes: two copies
-in one data folder would write over each other. Rights cannot be dropped back,
-so the restart is offered, not done on its own.
+privileges" — on twenty-six sizes, the self-check and the file sets that is
+over thirty prompts in a row. The dialog shows the current rights and offers a
+restart through `ShellExecuteW` with the `runas` verb, passing itself
+`--data <current folder>` so as not to lose portability. After the restart the
+window closes: two copies in one data folder would write over each other.
+Rights cannot be dropped back, so the restart is offered, not done on its own.
 
 **Cleaning up after itself.** The mounted volume and the container file are
 removed in `finally` — even on a crash and on cancel. Besides, the temporary
@@ -1232,13 +1255,13 @@ of the weight — it is about caution, not about work.
 
 The share within a step is computed with the same weight: bytes written and
 files created are added together. Taken separately, both lie — a bar by bytes
-stands still on a file set of small files (their logical size is twenty times
-smaller than the cluster-rounded one), a bar by files stands still on a single
-large file. Outside writing the share is zero: how many bytes VeraCrypt has
-already laid down while creating the container is not visible from outside,
-and making it up with the bar is not worth it. Instead the phase is named in
-words, and during writing both the number of finished files and the volume
-written are visible:
+stands still on a file set of small files (their logical size is four times
+smaller than the cluster-rounded one: 1 KiB files in 4 KiB clusters), a bar by
+files stands still on a single large file. Outside writing the share is zero:
+how many bytes VeraCrypt has already laid down while creating the container is
+not visible from outside, and making it up with the bar is not worth it.
+Instead the phase is named in words, and during writing both the number of
+finished files and the volume written are visible:
 
 ```
 [3/12] запись файлов, файлов 312 из 551, 1.203 GiB из 4.000 GiB ·
@@ -1325,10 +1348,11 @@ be picked as a number — the theme and the font size change both the header and
 the row. Without this, when shrunk to the minimum, the header ran over the
 first row.
 
-The height between tables is divided by a splitter. Its handle sits on the
-table's bottom edge, so a table always goes last in its section: if a label is
-placed after it, one has to drag by the grey border next to the text. That is
-why on the Model tab the check result moved to the top, under the heading.
+The height between tables used to be divided by a splitter. Its handle sat on
+the table's bottom edge, so a table had to go last in its section: with a label
+placed after it, one had to drag by the grey border next to the text. That is
+why on the Model tab the check result moved to the top, under the heading, and
+it stays there.
 
 There are no more splitters. A splitter divides the height that already exists
 between its neighbours and cannot grow beyond it, while the height of a tab
@@ -1471,7 +1495,8 @@ launch — `per_file` is computed as a slope rather than taken from the default.
 Along with them come seven NTFS points on "non-round" volumes (89, 116, 143,
 150, 582, 1610 and 4185 MiB): the empty volume of each measurement was taken
 before the files were written. Thanks to this, a new copy's metadata grid has
-not 22 points but 29, and its lower bound drops from 512 to 89 MiB.
+33 points instead of 26 (at the time of the run, 29 instead of 22: the four
+carried-over points came later), and its lower bound drops from 512 to 89 MiB.
 
 Before the first run the file shipped empty, and that was right: made-up
 numbers are more dangerous here than their absence, because the model would
@@ -1499,9 +1524,10 @@ container would not hold the data. That is why the parameter stays.
 **The metadata model does not survive a change of filesystem.** `$MFT`,
 `$LogFile`, `$Bitmap` are NTFS structures. exFAT's overhead is organised
 differently and is much smaller, FAT32's differently in a third way; all
-calibration records were taken on NTFS. When "None" is chosen there is no
-volume at all, and the model is not needed: the container equals the data plus
-the header.
+calibration records were taken on NTFS. VeraCrypt itself also offers "None"
+(«нет») as the filesystem — a choice in VeraCrypt's format options, not in
+this program. With it there is no volume at all, and the model is not needed:
+the container equals the data plus the header.
 
 That is why the filesystem is read from the volume at measurement time and
 shown in the dialog. Not NTFS — a warning and the eighth check: the record is
@@ -1598,7 +1624,9 @@ full screen, while a tab would have to share its height with a table.
 ### What draws the charts and why not a library
 
 Our own widget on `QPainter`. It was chosen not on principle but by
-measurement: four real portable one-file builds were made and compared.
+measurement: four real portable one-file builds were made and compared — the
+baseline without charts and one with each of the three libraries. The row for
+our own charts came later, see below.
 
 | Build | exe size | Import |
 |---|---|---|
@@ -1609,10 +1637,11 @@ measurement: four real portable one-file builds were made and compared.
 | + matplotlib | 79.2 MiB (+74 %) | +548 ms |
 
 The second row is no longer an estimate but a build rebuilt after the work was
-done: seven charts with zoom, tooltips, a legend and export to PNG, SVG and PDF
-cost a hundred kilobytes. Vector export came almost for free: `QtSvg` got into
-the build on its own (`Qt6Svg.dll`, 0.6 MiB on disk, much less when
-compressed), and `QPdfWriter` lives in `QtGui`, which was there before.
+done: seven charts at the time (there are nine now) with zoom, tooltips, a
+legend and export to PNG, SVG and PDF cost a hundred kilobytes. Vector export
+came almost for free: `QtSvg` got into the build on its own (`Qt6Svg.dll`,
+0.6 MiB on disk, much less when compressed), and `QPdfWriter` lives in
+`QtGui`, which was there before.
 
 Onefile unpacks its archive into a temporary folder on **every** start, so the
 extra megabytes are paid for more than once. They would buy interactivity that
@@ -1655,10 +1684,11 @@ PySide6 and both are under LGPL. QtCharts has only raster out of the box.
 
 ### Share of the volume taken by metadata
 
-The third panel of the NTFS window. The same curve, but in the units in which
-metadata is judged by eye: not "how much of it there is" but "how much of the
-volume it will eat". Bytes do not show this: against a volume of gigabytes the
-difference between 0.2 % and 0.4 % is the thickness of a line.
+The second chart of the NTFS window, right under the curve in the default
+order. The same curve, but in the units in which metadata is judged by eye:
+not "how much of it there is" but "how much of the volume it will eat". Bytes
+do not show this: against a volume of gigabytes the difference between 0.2 %
+and 0.4 % is the thickness of a line.
 
 It and the segment slopes are different quantities and must not be confused:
 the slope says **how fast** the metadata grows over a stretch, the share says
@@ -1688,7 +1718,8 @@ is why:
   tab presents it better: it has the exact size, the metadata value, and the
   Measure button in the same row. The strip did not let you do anything;
 - **the table is more honest in one place**: it shows a disabled own
-  measurement as "own, disabled", while the strip treated it as factory;
+  measurement as «свой, отключён» ("own, disabled"), while the strip treated it
+  as factory;
 - **on full coverage it said nothing**: all twenty-six sizes are covered by own
   measurements, two thirds of the strip are empty. A chart that says nothing on
   current data is a bad neighbour in a window where vertical space is
@@ -1803,9 +1834,11 @@ menu stayed where nothing can be mistaken for it: the left double click and
 the middle button.
 
 **Detaching and reordering moved out of the menu onto the chart itself** — as
-three buttons in the top right corner, in the title band: "↑", "↓" and
-«В окно» ("To window"). The menu has to be found first, and this is the first
-thing done with a chart when there are four in the window. The buttons do not
+buttons in the top right corner, in the title band: "↑", "↓" and «В окно»
+("To window") in the column layout, plus "←" and "→" in the grid (see "Chart
+order"). A detached chart keeps only «Вернуть» ("Return"). The menu has to be
+found first, and this is the first thing done with a chart when there are four
+in the window. The buttons do not
 get into the image: `image()` draws the chart with its own `_render`, and the
 widget's children do not enter it at all.
 
@@ -1849,9 +1882,10 @@ same `_render`, and the `live` flag separates one from the other.
 ### Detaching
 
 A chart moves into its own window by a menu item and comes back to its former
-place — by the same item, by the «Вернуть в окно» ("Return to window") button,
-or by closing the window. What moves is **the widget itself**, not the data:
-the zoom and the hidden series move with it, and nothing has to be restored.
+place — by the same item, which then reads «Вернуть в общее окно» ("Return to
+the shared window"), by the «Вернуть» ("Return") button, or by closing the
+window. What moves is **the widget itself**, not the data: the zoom and the
+hidden series move with it, and nothing has to be restored.
 
 It stays at its place in the window's chart list: updates, the display unit and
 the shared axis walk the list, not whoever lives where. Returning inserts it by
@@ -2066,7 +2100,8 @@ and whether a chart has enough width in the grid on a real screen.
 - Administrator rights: `IsUserAnAdmin`; the re-request is `ShellExecuteW` with
   the verb `runas`.
 - Running VeraCrypt: `subprocess.run` with `CREATE_NO_WINDOW`, so that a console
-  window does not flash for each of the twenty-two containers.
+  window does not flash for each container of a collection: twenty-six sizes,
+  the self-check and the file sets.
 - Folder size: `os.scandir`, recursively.
 - Free space of the working folder: `shutil.disk_usage`. Asked both before each
   step and while a file set is being written.
@@ -2093,7 +2128,7 @@ and whether a chart has enough width in the grid on a real screen.
 - VeraCrypt not found — say where we looked and ask for the folder; collection
   does not start until the folder is given.
 - A collection step failed — write the reason to the log and move on: one failed
-  size is no reason to drop the other twenty. The exception is the self-check:
+  size is no reason to drop the rest. The exception is the self-check:
   without it there is no knowing whether dynamic containers can be trusted, and
   collection stops.
 - A step lacks disk space — skip it, naming the required and the available

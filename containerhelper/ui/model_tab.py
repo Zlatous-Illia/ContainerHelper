@@ -107,12 +107,10 @@ class ModelTab(QWidget):
         layout.addWidget(self._build_state())
         layout.addWidget(self._build_safety())
 
-        # Each section ends with its own table, so the splitter handle falls
-        # exactly on the table's bottom outline.
-        # There is no splitter here any more. It divides a fixed height
-        # between neighbours, while what needs to change is the height of the
-        # table itself — then the tab grows taller than the window and the
-        # scroll gets longer. Each table has its own grip under its bottom
+        # No splitter between the sections: it divides a fixed height between
+        # neighbours, while what needs to change is the height of the table
+        # itself — then the tab grows taller than the window and the scroll
+        # gets longer. Each table has its own height grip under its bottom
         # outline.
         layout.addWidget(self._build_checks("Проверка модели NTFS", "ntfs"))
         layout.addWidget(self._build_checks("Проверка запаса на копирование", "slack"))
@@ -220,11 +218,8 @@ class ModelTab(QWidget):
     def _build_checks(self, title: str, kind: str) -> QWidget:
         """A check section: labels on top, the table last.
 
-        The table comes last on purpose. The splitter handle sits on the
-        section's bottom edge, and if another label were placed after the
-        table, one would have to drag by the grey border near the text rather
-        than by the table's black outline. That is why the summary moved up,
-        under the heading.
+        Nothing forces this order any more: the height grip comes with the
+        table (`with_grip`) and sits under it wherever the table stands.
         """
         caption = QLabel(f"<b>{title}</b>")
         explanation = QLabel(

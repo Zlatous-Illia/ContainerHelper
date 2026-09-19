@@ -46,8 +46,8 @@ HINT = (
 )
 
 #: Window size on first show. The width is the same for all windows; the
-#: height is computed from what is inside: panels of different heights are no
-#: rarity — the coverage strip is half as tall as a real chart.
+#: height is computed from what is inside: a chart gets PANEL_HEIGHT, while
+#: the breakdown bar takes only its own height.
 WINDOW_WIDTH = 760
 PANEL_HEIGHT = 260
 #: Buttons at the top, the point line and the hint at the bottom.
@@ -87,9 +87,9 @@ class EvenHandle(QSplitterHandle):
 class EvenSplitter(QSplitter):
     """A splitter whose handles can restore equal shares.
 
-    It is not the one that knows what "equal" means: the breakdown bar and the
-    coverage strip plot nothing vertically, and they need no equal share.
-    Whoever knows puts their own calculation into `equalizer`.
+    It is not the one that knows what "equal" means: the breakdown bar plots
+    nothing vertically, and it needs no equal share. Whoever knows puts their
+    own calculation into `equalizer`.
     """
 
     def __init__(self, orientation, parent=None) -> None:
@@ -610,10 +610,10 @@ class ChartWindow(QWidget):
         return [fixed.get(place, share) for place in range(len(places))]
 
     def _refresh_stretch(self) -> None:
-        """Spare window height goes to the charts, not to the bar and strip.
+        """Spare window height goes to the charts, not to the breakdown bar.
 
-        Their own minimum is not enough: it stops them from being **shrunk**,
-        but the splitter is free to stretch them to a third of the window
+        Its own minimum is not enough: it stops the bar from being **shrunk**,
+        but the splitter is free to stretch it to a third of the window
         without asking. So the height is set explicitly — but only while it
         is wrong: after that, adjusting the heights belongs to the person.
         """

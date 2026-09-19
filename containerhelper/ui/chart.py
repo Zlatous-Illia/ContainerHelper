@@ -93,8 +93,8 @@ MOVE_DOWN = "↓"
 
 #: Below this the plot area stops being an area: tick labels run into each
 #: other, and the curve turns into a short stroke. This minimum does not suit
-#: the strip and the bar — they have nothing to plot vertically, and it keeps
-#: them from shrinking to their own height.
+#: the breakdown bar — it has nothing to plot vertically, and the minimum
+#: would keep it from shrinking to its own height.
 MIN_WIDTH = 320
 MIN_HEIGHT = 220
 
@@ -379,11 +379,12 @@ class ChartView(QWidget):
         self.update()
 
     def _apply_minimum(self) -> None:
-        """Strip and bar: own height; the rest: the common plot-area minimum.
+        """Breakdown bar: own height; the rest: the common plot-area minimum.
 
-        An explicit widget minimum is stronger than `minimumSizeHint`, and
-        with the common 220 pixels the strip could not shrink to the 156 it
-        needs: the splitter gave it exactly as much as a real chart.
+        An explicit widget minimum is stronger than `minimumSizeHint`: with
+        the common 220 pixels a compact chart cannot shrink to its own height,
+        and the splitter gives it exactly as much as a real chart. That showed
+        on the coverage strip, since removed, which needed only 156.
         """
         chart = self._chart
         compact = chart is not None and chart.layout == LAYOUT_STACK
@@ -785,12 +786,10 @@ class ChartView(QWidget):
         painter.setBrush(Qt.NoBrush)
 
     def sizeHint(self):  # noqa: N802 — Qt's name
-        """Bar and strip need no height: they have no quantity on the vertical.
+        """The breakdown bar needs no height: it has no quantity vertically.
 
-        Without this the splitter gives them half the window, and under the
-        bar hangs an empty area two thirds of the screen tall. The coverage
-        strip plots state vertically — three rows — and there is no reason to
-        share the height with it equally.
+        Without this the splitter gives it half the window, and under the
+        bar hangs an empty area two thirds of the screen tall.
         """
         chart = self._chart
         if chart is None:
@@ -1003,7 +1002,7 @@ class ChartView(QWidget):
         )
 
     def _note_height(self, chart: Chart | None) -> float:
-        """How many lines the note takes at this window width.
+        """How tall the note is, in pixels, wrapped to this widget's width.
 
         Measured, not assumed to be one line: the notes here are long, and
         the one explaining the hidden series was cut off mid-word in a narrow

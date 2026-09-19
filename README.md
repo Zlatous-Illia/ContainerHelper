@@ -15,8 +15,9 @@ are given in «» next to their English names.
 ## Why this is needed
 
 VeraCrypt asks for the container size, but the usable space inside is always
-smaller. The difference is eaten by three things, and VeraCrypt names none of
-them in advance:
+smaller. The difference is eaten by three things — the VeraCrypt header, the
+NTFS metadata and copy slack — and VeraCrypt names none of them in advance. The
+calculation also has to count the cluster tail and add a safety margin:
 
 | Component | Behaviour | Example for 700 MiB of data |
 |---|---|---|
@@ -136,7 +137,7 @@ the safety margin.
 
 The Collect automatically… button («Снять автоматически…») creates containers
 of the missing sizes through the VeraCrypt CLI, measures them and deletes them.
-By hand that is some twenty containers and a whole evening; automatically it
+By hand that is twenty-six containers and a whole evening; automatically it
 takes about three minutes for the whole series.
 
 What you need to know:

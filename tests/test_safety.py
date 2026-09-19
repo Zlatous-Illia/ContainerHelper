@@ -2,7 +2,9 @@
 
 The data are twelve empty-container points from 1 to 100 GiB. On them the
 metadata curve is convex up to 16 GiB and concave above, and exactly this
-split must show through in the advice.
+split must show through in the advice. The shape is this grid's, not the real
+curve's: denser measurements show a staircase below 8 GiB, where a point can
+land above the chord.
 """
 
 import unittest
@@ -68,7 +70,11 @@ class InterpolationBoundTests(unittest.TestCase):
                 )
 
     def test_convex_stretch_cannot_be_underestimated(self):
-        """Below 8 GiB the slope grows, and the chord runs above the curve."""
+        """Below 8 GiB the slope grows on this grid: the chord runs above.
+
+        Only on the grid. The real curve there is a staircase, and a point
+        between two measurements can land above the chord.
+        """
         for gib in (1.5, 3, 6):
             with self.subTest(gib=gib):
                 self.assertEqual(self.model.interpolation_bound(int(gib * GIB)), 0)

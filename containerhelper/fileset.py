@@ -3,14 +3,17 @@
 Copy slack is what the mere appearance of files on the volume costs beyond
 their cluster-rounded size: an MFT record per file, the growth of the folder
 index, the service structures of the first write. The model counts it as
-`base + per_file × n`, and the per-file slack is still confirmed by nothing:
-the two parts can only be separated by measurements with different file
-counts, and the store held exactly one such measurement.
+`base + per_file × n`, and the two parts can only be separated by measurements
+with different file counts. The store once held exactly one such measurement,
+and the per-file slack was confirmed by nothing.
 
 Hence the file sets: several deliberately different `n`, taken in a row by one
-machine. The files are generated **right on the mounted volume**, not copied
-from somewhere on disk. There is nothing to copy — nobody has a set of this
-shape lying around — and the host would have to keep a second copy next to the
+machine. The full run of them measured the per-file slack at 1363 B per file
+on 500…10 000 files, and its seven measurements ship as factory data.
+
+The files are generated **right on the mounted volume**, not copied from
+somewhere on disk. There is nothing to copy — nobody has a set of this shape
+lying around — and the host would have to keep a second copy next to the
 container and spend twice as much space. For the measured value it is one and
 the same: copy slack measures the appearance of files on the volume, not where
 the bytes came from.

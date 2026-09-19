@@ -13,7 +13,10 @@ Usage.html` in the distribution). Hence the oddities:
   so creation cannot be sped up with a reduced iteration count;
 - `/nosizecheck` is mandatory, otherwise a terabyte dynamic container refuses
   to be created where there is no terabyte of free space;
-- `/dismount` is deprecated, `/unmount` is needed;
+- `/unmount` exists only since 1.26.20; before it there is only `/dismount`,
+  which newer versions still accept though it is declared deprecated. So the
+  switch goes by version: `/unmount` from 1.26.20, `/dismount` below it or
+  when the version cannot be read;
 - `/hash sha512` noticeably speeds up mounting: without it VeraCrypt tries
   every PRF in turn;
 - `/silent` is described as "If there is any error, the operation will fail

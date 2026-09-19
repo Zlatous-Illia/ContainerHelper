@@ -42,8 +42,8 @@ SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5)
 
 #: Plausibility bounds for NTFS metadata. The lower one catches lost digits
 #: (Cache 2 has 36 573 written instead of 36 573 184). The upper one grows
-#: with the volume: at 100 GiB $LogFile and $MFT alone give close to a hundred
-#: megabytes, so a fixed ceiling here would give false alarms.
+#: with the volume: on a terabyte the metadata is 136 MiB (factory point),
+#: past the fixed 128 MiB, so a fixed ceiling here would give false alarms.
 NTFS_MIN_BYTES = MIB
 NTFS_MAX_FLOOR = 128 * MIB
 NTFS_MAX_SHARE = 0.02
@@ -280,7 +280,7 @@ def _opt_int(value: Any) -> int | None:
 
 
 def validate(record: Record) -> list[Issue]:
-    """Five checks, each catching a real class of manual input error."""
+    """Checks, each catching a real class of manual input error."""
     issues: list[Issue] = []
 
     if record.container_mib <= 0:

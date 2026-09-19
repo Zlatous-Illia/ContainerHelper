@@ -17,7 +17,8 @@ MIB = 1024 * 1024
 VC_HEADER_BYTES = 266_240
 
 #: Default NTFS metadata model: 19 MiB + 0.17 % of the volume size.
-#: The largest underestimate on the three available measurements is 0.55 MiB.
+#: The largest underestimate on the three original records (Cache 1, 2 and 4)
+#: is 554 330 B (0.53 MiB), on Cache 1.
 DEFAULT_NTFS_BASE = 19 * MIB
 DEFAULT_NTFS_RATE = 0.0017
 
@@ -64,7 +65,8 @@ class NtfsModel:
 
     Fewer than two points — the default affine model. Two or more —
     piecewise-linear interpolation over the measured points, and outside the
-    range linear extrapolation from the two outermost ones.
+    range the baseline slope anchored to the nearest measured point (see
+    `_extend`).
 
     The piecewise-linear form was chosen because the dependence is not
     proportional: $LogFile barely grows with the volume and hits a ceiling of
@@ -147,18 +149,25 @@ class NtfsModel:
         """How much the model can underestimate at exactly this point.
 
         Between two measurements the model draws a straight line, and the
-        real dependence is not a straight line. Where it is convex, the chord
-        runs above and cannot underestimate. Where it is concave — and above
-        16 GiB it is exactly that, because the parts of the metadata hit their
-        ceilings one after another — the chord passes under the curve, and
-        that gap is the risk.
+        real dependence is not a straight line. Where it is concave — and
+        above 16 GiB it is exactly that, because the parts of the metadata hit
+        their ceilings one after another — the chord passes under the curve,
+        and that gap is the risk. Where it is convex, the chord runs above.
 
-        From above, the curve is bounded by two straight lines: one from the
-        left end with the slope of the previous segment and one from the right
-        end with the slope of the next. The nearer of them minus the chord
-        gives the bound. Beyond the last segment the slope is taken as zero:
-        this is the most cautious assumption, and it is also close to the
-        truth — on large volumes only $Bitmap grows.
+        The bound assumes the curve stays under two straight lines: one from
+        the left end with the slope of the previous segment and one from the
+        right end with the slope of the next. The nearer of them minus the
+        chord gives the bound. Beyond the last segment the slope is taken as
+        zero: this is the most cautious assumption, and it is also close to
+        the truth — on large volumes only $Bitmap grows.
+
+        The shape between two points is only guessed from the neighbouring
+        segments, so a zero here does not mean the model cannot
+        underestimate. Below 8 GiB the curve is a staircase: $LogFile changes
+        size in steps at discrete thresholds, and a step can hide between any
+        two points. A measurement at 1610 MiB lay 202 672 B above the chord
+        where this bound said zero, and only MIN_SAFETY_BYTES covered it; a
+        later one at 1536 MiB lay 233 472 B above. That floor has to stay.
 
         Outside the measured range zero is returned: there it is not
         interpolation but extrapolation at work, and its error is estimated
@@ -241,10 +250,9 @@ class CopySlackModel:
         """Fit the coefficients to pairs (file count, measured slack).
 
         The slope is found by least squares, but only if the records cover
-        at least two different n and the slope came out non-negative;
-        otherwise the default value stays. The intercept is then raised to
-        the upper envelope, so that the model underestimates none of the
-        records.
+        at least two different n and the slope came out positive; otherwise
+        the default value stays. The intercept is then raised to the upper
+        envelope, so that the model underestimates none of the records.
         """
         usable = [(n, value) for n, value in samples if n >= 1 and value >= 0]
         if not usable:
@@ -406,8 +414,9 @@ FACTORY_MARGIN_BYTES = 4 * MIB
 #: slightly noisy in itself, and advising zero would be a lie about precision.
 MIN_SAFETY_BYTES = MIB
 
-#: By how many times the file count may differ. The window is wider here: the
-#: per-file slack changes slowly, and there will be few measurements.
+#: By how many times a copy-slack measurement's file count may differ from the
+#: calculation's and still count as a similar file count. A wide window: the
+#: per-file slack changes slowly, and measurements are few and far apart in n.
 SLACK_NEIGHBOUR_RATIO = 8.0
 
 
@@ -490,7 +499,7 @@ class SafetyModel:
     def _nearby(
         samples: Sequence[tuple[int, int, str]], target: int, ratio: float
     ) -> list[tuple[int, int, str]]:
-        """Records whose size is within a factor of ratio of the target."""
+        """Records whose file count is within a factor of ratio of target."""
         if target <= 0:
             return []
         low, high = target / ratio, target * ratio
@@ -620,13 +629,17 @@ class SafetyModel:
         return high - low
 
     def _fallback_slack(self, file_count: int) -> tuple[int, str, tuple[str, ...]]:
-        """What to budget when there are no copy-slack measurements at all.
+        """What to budget without a copy-slack measurement near the file count.
 
         The risk here depends on the file count, not on their total size. The
         constant part is measured and small — hundreds of kilobytes — so the
-        safety floor is enough for one file. The per-file slack is confirmed
-        by nothing, and it is the part that can drift far on a large number
-        of files: there the full default value is taken.
+        safety floor is enough for one file. The per-file slack is measured
+        too — 1363 B per file on 500…10 000 files, see DEFAULT_SLACK_PER_FILE
+        — but it is the part multiplied by the file count: an underestimate
+        of a few hundred bytes per file (longer names in the directory index)
+        grows into megabytes on many files, and with no measurement at hand
+        there is nothing to size it by. There the full default value is
+        taken.
         """
         if file_count <= 1:
             return (

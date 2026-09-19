@@ -60,7 +60,7 @@ class TickTests(unittest.TestCase):
         self.assertGreaterEqual(len(texts(axis, *padded(17 * MIB, 143 * MIB))), 5)
 
     def test_a_whole_step_gets_no_trailing_zeros(self):
-        """A "4.00 MiB" on an axis is noise that makes the labels overlap."""
+        """A "4,00 MiB" on an axis is noise that makes the labels overlap."""
         axis = Axis("Метаданные", AXIS_BYTES)
         for text in texts(axis, 0, 20 * MIB):
             with self.subTest(text):

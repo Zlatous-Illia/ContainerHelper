@@ -272,15 +272,15 @@ class CollectDialog(QDialog):
         #: right to move backwards.
         self._share = 0.0
 
-        #: Replaceable handlers: a modal window in the middle of the logic
-        #: cannot be closed from a test, and an elevated restart cannot be
-        #: undone.
         #: The window's clock. It runs on its own, not from progress: see
         #: CLOCK_INTERVAL.
         self._clock = QTimer(self)
         self._clock.setInterval(CLOCK_INTERVAL)
         self._clock.timeout.connect(self._show_progress)
 
+        #: Replaceable handlers: a modal window in the middle of the logic
+        #: cannot be closed from a test, and an elevated restart cannot be
+        #: undone.
         self.report_error = self._show_error
         self.confirm = self._ask_confirmation
         self.ask_directory = self._ask_directory

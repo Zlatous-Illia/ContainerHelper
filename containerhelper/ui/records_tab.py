@@ -189,8 +189,8 @@ class RecordsTab(QWidget):
         layout.addLayout(self._build_path_row())
         layout.addLayout(self._build_buttons())
 
-        # The table's height belongs to the user: it is dragged by a splitter
-        # whose handle sits on the table's own bottom edge.
+        # The table's height belongs to the user: it is dragged by the height
+        # grip under the table's own bottom edge.
         layout.addWidget(with_grip(self._build_table()))
         layout.addWidget(self._build_summary())
         layout.addStretch(1)
@@ -337,9 +337,10 @@ class RecordsTab(QWidget):
         It goes into the measurements file. A measurement for the same volume
         size replaces the previous one instead of lying next to it: the model
         has no use for two points on one volume. A copy-slack measurement
-        supersedes the one with the same file count — by a key of its own,
-        because a shared key would knock out an NTFS point with a copy-slack
-        measurement taken at the same volume size, and vice versa.
+        supersedes the one of the same file set (`records.slack_key`) — by a
+        key of its own, because a shared key would knock out an NTFS point
+        with a copy-slack measurement taken at the same volume size, and vice
+        versa.
 
         Saved right away, one measurement at a time: automatic collection runs
         for hours, and a crash halfway must not cost everything already
@@ -569,9 +570,9 @@ class RecordsTab(QWidget):
 
     def refresh(self) -> None:
         self.path_label.setText(str(self.store.path))
-        # Calibration points no longer get here at all: they live under their
-        # own key in the file and on their own tab. The filter is no longer
-        # needed.
+        # Calibration points no longer get here at all: they live in a file
+        # of their own, Calibration.json, and on their own tab. The filter is
+        # no longer needed.
         shown = list(enumerate(self.store.records))
 
         # Filling with sorting on would reshuffle the rows as it goes, and
@@ -642,8 +643,7 @@ class RecordsTab(QWidget):
         if not self._columns_fitted and shown:
             fit_columns(self.table)
             self._columns_fitted = True
-        # The summary always covers the whole store: the filter hides rows,
-        # not data.
+        # The summary counts every copy record — the same set the table shows.
         self._refresh_summary(self.store.records)
 
     def _refresh_summary(self, records: list[Record]) -> None:
