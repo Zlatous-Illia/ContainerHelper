@@ -100,7 +100,7 @@ of two independent parts.
 
   **This used to say "up to 8 GiB the curve is convex", and that turned out to
   be wrong.** At the anchor points 0.5, 1, 2 and 4 GiB the slopes do grow
-  (0.126 %, 0.172 %, 0.226 %), so the convexity is visible. But the measurement
+  (0.128 %, 0.172 %, 0.226 %), so the convexity is visible. But the measurement
   on a 1610 MiB volume, in the middle of the 1024…2048 segment, landed
   **202 672 B above the chord**: with it, the slopes on the same stretch read
   0.205 % and 0.128 %, that is, locally concave. The interpolation bound at that

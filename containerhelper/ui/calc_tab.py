@@ -804,7 +804,7 @@ class CalcTab(QWidget):
         """The breakdown shown right now — for the bar chart."""
         return self._solution
 
-    def current_file_sizes(self) -> list[str]:
+    def current_file_sizes(self) -> list[int]:
         """Sizes of the selected files. Empty — the size was typed by hand.
 
         The cluster tail chart is the only one computed from the real files,

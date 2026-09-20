@@ -137,7 +137,8 @@ input fields: validators (`digits_only`, `plain_text`), width fitting and
 wrapped labels (`wrapped`).
 
 Record edit windows are modeless: `RecordsTab` keeps a registry of the open
-ones (`_editors` by `id(record)`, `_creators` for new records) and puts an
+ones (`_editors` by `id(record)`, `_points` by container size for new
+calibration points, `_creators` for the rest of the new records) and puts an
 edit back by finding the record **by identity** (`Store.index_of`). The file
 and folder picker lives for one showing, and everything it must outlive lies
 in `PickerState` (`ui/path_picker.py`) and is saved by the main window.

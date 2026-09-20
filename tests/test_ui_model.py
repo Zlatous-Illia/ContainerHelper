@@ -126,10 +126,6 @@ class SafetyLinkTests(unittest.TestCase):
         self.window.calc_tab.safety_spin.setValue(17)
         self.assertIn("17", self.window.model_tab.safety_value.text())
 
-    def _unused(self):
-        self.window.calc_tab.safety_spin.setValue(17)
-        self.assertIn("17", self.window.model_tab.safety_value.text())
-
     def checked_names(self):
         table = self.window.model_tab.ntfs_table
         return {table.item(row, 0).text() for row in range(table.rowCount())}

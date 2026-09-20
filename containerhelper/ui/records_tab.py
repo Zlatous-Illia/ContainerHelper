@@ -181,6 +181,13 @@ class RecordsTab(QWidget):
         #: a race won by whoever presses Save last, and there is no way to
         #: notice the lost edit.
         self._editors: dict[int, RecordDialog] = {}
+        #: Windows of new calibration points: container size → window. A
+        #: separate registry, not a second kind of key in `_editors`: there is
+        #: no record to take `id` of yet, and the size is what such a window
+        #: measures. One dictionary holding both kinds would answer
+        #: `get(id(record))` with a window opened for a container of that many
+        #: mebibytes.
+        self._points: dict[int, RecordDialog] = {}
         #: Windows for new records. Any number of them can be open: until a
         #: record is saved, they have nothing to get in each other's way with.
         self._creators: list[RecordDialog] = []
@@ -235,7 +242,7 @@ class RecordsTab(QWidget):
         taken while looking at the mounted volume and at the Calculation tab,
         and a modal window covers both.
         """
-        opened = self._editors.get(container_mib)
+        opened = self._points.get(container_mib)
         if opened is not None:
             return self._raise(opened)
         seed = Record(
@@ -245,14 +252,14 @@ class RecordsTab(QWidget):
         # Keyed by the container size, not id(seed): the point of the window is
         # which size it measures, and a second window for the same size would
         # take a second measurement on top of the first.
-        self._editors[container_mib] = dialog
+        self._points[container_mib] = dialog
         dialog.finished.connect(
             lambda code, key=container_mib, box=dialog: self._point_closed(key, box, code)
         )
         return self._show(dialog)
 
     def _point_closed(self, key: int, dialog: RecordDialog, code: int) -> None:
-        self._editors.pop(key, None)
+        self._points.pop(key, None)
         if code == QDialog.Accepted:
             self.store_calibration_point(dialog.result_record())
         dialog.deleteLater()
@@ -326,9 +333,14 @@ class RecordsTab(QWidget):
         nowhere to save it in the new one, and showing it next to someone
         else's table would be lying about what is being edited.
         """
-        for dialog in [*self._editors.values(), *self._creators]:
+        for dialog in [
+            *self._editors.values(),
+            *self._points.values(),
+            *self._creators,
+        ]:
             dialog.close()
         self._editors.clear()
+        self._points.clear()
         self._creators.clear()
 
     def store_calibration_point(self, record: Record) -> None:

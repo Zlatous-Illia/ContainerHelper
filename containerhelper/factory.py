@@ -28,12 +28,6 @@ FACTORY_FILE = "factory_points.json"
 #: separately.
 FACTORY_SLACK_FILE = "factory_slack.json"
 
-#: Factory margin added to the safety margin while both ends of the segment
-#: are factory points. Another Windows build could have chosen a different
-#: $LogFile size, and underestimate is the only dangerous side here. An own
-#: measurement nearby removes the factory margin.
-FACTORY_MARGIN_BYTES = 4 * MIB
-
 
 @dataclass(frozen=True)
 class FactoryPoint:

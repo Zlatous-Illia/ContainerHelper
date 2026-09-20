@@ -18,8 +18,12 @@ QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from dataclasses import replace  # noqa: E402
 
-from containerhelper.factory import FACTORY_MARGIN_BYTES, factory_data  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.factory import factory_data  # noqa: E402
+from containerhelper.model import (  # noqa: E402
+    FACTORY_MARGIN_BYTES,
+    MIB,
+    VC_HEADER_BYTES,
+)
 from containerhelper.paths import CALIBRATION_NAME  # noqa: E402
 from containerhelper.records import (  # noqa: E402
     SCHEMA_VERSION,

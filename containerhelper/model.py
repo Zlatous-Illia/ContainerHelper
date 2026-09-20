@@ -405,9 +405,12 @@ def solve_container_mib(
     )
 
 
-#: Factory margin while a segment rests only on factory measurements. It
-#: equals the default value: someone else's data deserves exactly as much
-#: trust as a model with no calibration at all.
+#: Factory margin added to the safety margin while both ends of the segment
+#: are factory points. It equals the default value: someone else's data
+#: deserves exactly as much trust as a model with no calibration at all.
+#: Another Windows build could have chosen a different `$LogFile` size, and
+#: underestimate is the only dangerous side here. An own measurement nearby
+#: removes the factory margin.
 FACTORY_MARGIN_BYTES = 4 * MIB
 
 #: The safety margin never goes below this. A free-space measurement is
@@ -649,8 +652,8 @@ class SafetyModel:
             )
         return (
             self.default_bytes,
-            f"по-файловая часть запаса не подтверждена замерами, а файлов "
-            f"{file_count} — значение по умолчанию",
+            f"нет замера с похожим числом файлов, а их {file_count} — "
+            "значение по умолчанию",
             (),
         )
 

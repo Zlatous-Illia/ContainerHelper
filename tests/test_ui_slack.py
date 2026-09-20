@@ -509,7 +509,7 @@ class RunTests(DialogFixture):
         self.assertEqual(list(self.folder.glob("*.hc")), [])
 
 
-class NoteFitTests(ScopeTests):
+class NoteFitTests(DialogFixture):
     """A set's price must not collapse under scrolling.
 
     QLabel's minimum height does not depend on its width, and the layout
