@@ -269,6 +269,14 @@ measurements are in the "Charts" section of SPEC.
   recomputing after the fact would answer "what would I say today". The safety
   margin is stored separately, otherwise an underestimate covered by it is
   indistinguishable from an exact hit.
+- **The golden solver table is reprinted only on purpose.**
+  `tests/test_solver_golden.py` freezes the answer of `solve_container_mib`
+  over a grid of payload size and file count, taken before the volume-profile
+  change, and the quickest way to make it green again is to reprint it
+  (`python -m tests.test_solver_golden --print`) — after which it guards
+  nothing. What that change may legitimately move, and by how much, is written
+  in the file itself; anything else is a regression, and the reason for a
+  reprint goes into the commit message.
 - **A file in a set is no shorter than a kilobyte.** NTFS keeps a file shorter
   than ~700 B right in its MFT record and allocates no cluster for it, and
   `Σ ceil(size / cluster)` overstates the space taken — the measured copy
