@@ -344,6 +344,12 @@ class ModelessDialogTests(unittest.TestCase):
         self.assertFalse(first.isModal())
         second = self.tab.add_calibration_point(8192)
         self.assertIsNot(second, first)
+        # The point windows live in their own registry: with a shared one they
+        # landed in `_editors` keyed by container size, beside keys that are
+        # `id(record)`. Both halves are checked — that they left `_editors`,
+        # and that they arrived where they belong.
+        self.assertEqual(self.tab._editors, {})
+        self.assertEqual(len(self.tab._points), 2)
         first.reject()
         second.reject()
 

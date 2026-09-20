@@ -184,9 +184,8 @@ class RecordsTab(QWidget):
         #: Windows of new calibration points: container size → window. A
         #: separate registry, not a second kind of key in `_editors`: there is
         #: no record to take `id` of yet, and the size is what such a window
-        #: measures. One dictionary holding both kinds would answer
-        #: `get(id(record))` with a window opened for a container of that many
-        #: mebibytes.
+        #: measures. Two kinds of key in one `dict[int, RecordDialog]` are
+        #: unreadable, and the annotation cannot express which kind a key is.
         self._points: dict[int, RecordDialog] = {}
         #: Windows for new records. Any number of them can be open: until a
         #: record is saved, they have nothing to get in each other's way with.

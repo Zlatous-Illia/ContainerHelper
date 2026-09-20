@@ -28,9 +28,10 @@ DEFAULT_NTFS_RATE = 0.0017
 #: The per-file slack is measured: on the series of 500, 5 000 and 10 000
 #: files the rate came out at 1363 B per file and held within two bytes. It
 #: also breaks down physically — 1024 B per MFT record plus ~339 B per entry
-#: in the directory index. Here it is taken with headroom, because the second
-#: half depends on the file name length: the measurements were taken on
-#: 34-character names, and in real data they can be twice as long.
+#: in the directory index. DEFAULT_SLACK_PER_FILE is that rate with headroom,
+#: 1536 B, because the second half depends on the file name length: the
+#: measurements were taken on 34-character names, and in real data they can be
+#: twice as long.
 #:
 #: The constant part stayed as it was, although the synthetic measurement at
 #: n = 1 gave only 4096 B — one cluster. The discrepancy with the manual

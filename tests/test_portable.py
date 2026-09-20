@@ -330,9 +330,11 @@ class SortCycleTests(unittest.TestCase):
         self.click(2)
         self.assertEqual(self.names(), ["alpha", "Mid", "Zeta"])
         self.assertEqual(self.header.sortIndicatorSection(), 2)
+        self.assertEqual(self.header.sortIndicatorOrder(), Qt.AscendingOrder)
         self.click(2)
         self.assertEqual(self.names(), ["Zeta", "Mid", "alpha"])
         self.assertEqual(self.header.sortIndicatorSection(), 2)
+        self.assertEqual(self.header.sortIndicatorOrder(), Qt.DescendingOrder)
 
     def test_third_click_returns_the_original_order(self):
         for _ in range(3):
