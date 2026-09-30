@@ -67,18 +67,18 @@ calibration quantities and the breakdown of the current calculation (see SPEC "C
 In layers, bottom up. Every module below except `ui/` knows nothing about Qt
 and can be tested without it.
 
-**`model.py`** — arithmetic. `NtfsModel` (NTFS metadata as a function of the
-volume size), `CopySlackModel` (the space that the arrival of files takes
+**`model.py`** — arithmetic. `MetadataModel` (NTFS metadata as a function of
+the volume size), `CopySlackModel` (the space that the arrival of files takes
 beyond their cluster-rounded size), `SafetyModel` (the safety margin),
 `solve_container_mib` (an iterative solution — the volume size depends on the
 container size and vice versa).
 
 **`records.py`** — the store (`Store`, atomic write, a single `.bak`), JSON
 schema version 5, plausibility checks (`validate` → `Issue` with the scope
-`ntfs`/`slack`) and turning records into calibration points (`ntfs_points`,
-`slack_samples`, `ntfs_cross_check`). There are two files: `Records.json`
-holds the copy records, the neighboring `Calibration.json` holds the
-empty-volume measurements. Measurements describe the machine (the Windows
+`metadata`/`slack`) and turning records into calibration points
+(`metadata_points`, `slack_samples`, `metadata_cross_check`). There are two
+files: `Records.json` holds the copy records, the neighboring
+`Calibration.json` holds the empty-volume measurements. Measurements describe the machine (the Windows
 build and the VeraCrypt version), records describe the data; `Store` owns both
 and, on opening an old single-file store, moves the measurements into place
 by itself.
@@ -159,7 +159,7 @@ measurements are in the "Charts" section of SPEC.
 - **Only integers in the calculation path.** Float is allowed only as a model
   coefficient and is immediately rounded up through `ceil_div`. A float that
   leaks into a byte counter is a defect, not a style nitpick.
-- **Computed values are not stored.** `ntfs_bytes`, `vc_header`,
+- **Computed values are not stored.** `metadata_bytes`, `vc_header`,
   `copy_slack_measured` are properties, not JSON fields. It was precisely the
   duplication of computed fields that corrupted the original hand-written
   records (in them NTFS is written as `36 573` instead of `36 573 184`).
@@ -225,8 +225,9 @@ measurements are in the "Charts" section of SPEC.
   returned `None`, the field kept the garbage, and Container init turned into
   a dash.
 - **Own supersedes factory**, not "the larger of the two" as in
-  `NtfsModel._dedupe`: factory data was taken on another machine. A disabled
-  own measurement (`disabled`) is not deleted — the numbers stay in the file.
+  `MetadataModel._dedupe`: factory data was taken on another machine. A
+  disabled own measurement (`disabled`) is not deleted — the numbers stay in
+  the file.
   Which factory measurement gets superseded is decided by the quantity
   the measurement describes: for a point, the volume size; for a copy-slack measurement,
   the file count. Not to be confused with `put_calibration`: there an own measurement
@@ -287,7 +288,7 @@ measurements are in the "Charts" section of SPEC.
   piecewise-linear model passes exactly through its measurements: ordinary
   residuals would come out zero everywhere, and the chart would be a straight
   line at zero. Each point is predicted by a model built without it
-  (`ntfs_cross_check`). The sign matters: up means underestimate. The edge
+  (`metadata_cross_check`). The sign matters: up means underestimate. The edge
   measurements are put into a separate series and hidden: without them the
   model extrapolates, and −433 MiB at the edge squashes everything else to
   zero. The legend brings them back, and the caption says so.

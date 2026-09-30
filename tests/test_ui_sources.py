@@ -30,7 +30,7 @@ _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
-from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
+from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
 from containerhelper.sizes import scan_paths, unique_roots  # noqa: E402
 from containerhelper.ui.calc_tab import SOURCE_COLUMNS, CalcTab  # noqa: E402
 from containerhelper.ui.path_picker import (  # noqa: E402
@@ -42,7 +42,7 @@ from containerhelper.ui.path_picker import (  # noqa: E402
 
 
 def default_models():
-    return NtfsModel(), CopySlackModel()
+    return MetadataModel(), CopySlackModel()
 
 
 class TreeFixture(unittest.TestCase):

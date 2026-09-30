@@ -30,7 +30,7 @@ from ..formatting import (
     size_label,
     unit_suffix,
 )
-from ..model import NtfsModel, Payload
+from ..model import MetadataModel, Payload
 from ..records import Record, Store, StoreError, forecast, validate
 from .record_dialog import RecordDialog
 from .chart_window import CHART_FORECAST
@@ -175,7 +175,7 @@ class RecordsTab(QWidget):
         #: deviation stays meaningful. The calibrated model passes exactly
         #: through its own points, and the deviation in the table would always
         #: be zero.
-        self._baseline = NtfsModel()
+        self._baseline = MetadataModel()
         #: Open edit windows: id(record) → window. The windows are modeless,
         #: and there must be at most one per record: two windows on one row are
         #: a race won by whoever presses Save last, and there is no way to
@@ -593,8 +593,8 @@ class RecordsTab(QWidget):
 
         for row, (store_index, record) in enumerate(shown):
             deviation = None
-            if record.ntfs_bytes is not None and record.mounted_bytes:
-                deviation = record.ntfs_bytes - self._baseline.overhead(
+            if record.metadata_bytes is not None and record.mounted_bytes:
+                deviation = record.metadata_bytes - self._baseline.overhead(
                     record.mounted_bytes
                 )
             issues = validate(record)
@@ -604,7 +604,7 @@ class RecordsTab(QWidget):
                 record.id,
                 record.container_mib,
                 record.mounted_bytes,
-                record.ntfs_bytes,
+                record.metadata_bytes,
                 deviation,
                 record.file_count,
                 record.left_bytes,
@@ -667,9 +667,9 @@ class RecordsTab(QWidget):
                 return f", все при {low} {word}."
             return f", файлов от {low} до {high}."
 
-        from ..records import ntfs_points, slack_samples
+        from ..records import metadata_points, slack_samples
 
-        points = ntfs_points(records)
+        points = metadata_points(records)
         samples = slack_samples(records)
         parts = [
             f"Записей: {len(records)}.",

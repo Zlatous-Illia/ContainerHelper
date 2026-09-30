@@ -302,7 +302,7 @@ and never written to the file:
 ```
 container_bytes     = container_mib * 1048576
 vc_header           = container_bytes - mounted_bytes
-ntfs_bytes          = mounted_bytes - empty_free_bytes
+metadata_bytes          = mounted_bytes - empty_free_bytes
 consumed_bytes      = empty_free_bytes - left_bytes
 payload_alloc       = file_alloc_bytes, otherwise ceil(file_bytes / cluster_bytes) * cluster_bytes
 copy_slack_measured = consumed_bytes - payload_alloc
@@ -497,7 +497,7 @@ Each check catches a real class of error:
 
 1. `container_mib > 0`, and `container_mib * 1048576 > mounted_bytes` —
    otherwise the header is negative. A header other than 266 240 B is flagged
-   too, for the metadata model only (scope `ntfs`).
+   too, for the metadata model only (scope `metadata`).
 2. `empty_free_bytes < mounted_bytes`.
 3. `mounted_bytes - empty_free_bytes` from 1 MiB up to the larger of 128 MiB
    and 2 % of `mounted_bytes` — a rough filter for typos that drop or add
@@ -514,8 +514,8 @@ Each check catches a real class of error:
    Rounding up cannot reduce the size.
 7. If `file_alloc_bytes` is filled in: it is a multiple of `cluster_bytes`.
 8. If `filesystem` is filled in and it is not NTFS — the record does not go into
-   the calibration of the metadata model (scope `ntfs`), but stays valid for
-   copy slack (`slack`).
+   the calibration of the metadata model (scope `metadata`), but stays valid
+   for copy slack (`slack`).
 
 A violation is a warning with the option to save anyway, but such a record is
 flagged and excluded from calibration.
@@ -1457,7 +1457,7 @@ one-file build the resource is unpacked into a temporary directory, and an
 ordinary path does not lead there. Read-only.
 
 **Own always supersedes factory** at the same volume size. Not "the larger of
-the two", as in `NtfsModel._dedupe`: the factory value was taken on another
+the two", as in `MetadataModel._dedupe`: the factory value was taken on another
 machine, and a smaller own value is more accurate than any foreign one.
 
 **A factory margin of 4 MiB on top of the safety margin**, while both ends of
@@ -1973,7 +1973,7 @@ Three caveats:
 - **Residuals are computed by the leave-one-out check, not by subtracting the
   model.** A piecewise-linear model passes exactly through its measurements, and
   ordinary residuals would be zero at every point — a straight line at zero.
-  Each point is predicted by a model built without it (`ntfs_cross_check`),
+  Each point is predicted by a model built without it (`metadata_cross_check`),
   exactly as the safety-margin advice is computed. The sign matters: up is an
   underestimate, the only dangerous side.
 - **A logarithmic axis in bytes uses base two, one for counts uses base ten.**

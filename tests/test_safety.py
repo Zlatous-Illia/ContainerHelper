@@ -13,7 +13,7 @@ from containerhelper.model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     MIN_SAFETY_BYTES,
-    NtfsModel,
+    MetadataModel,
     SafetyModel,
 )
 from containerhelper.records import Record, build_safety
@@ -58,8 +58,8 @@ class InterpolationBoundTests(unittest.TestCase):
     """How far the model can underestimate between two measurements."""
 
     def setUp(self):
-        self.model = NtfsModel(
-            [(r.mounted_bytes, r.ntfs_bytes) for r in grid_records()]
+        self.model = MetadataModel(
+            [(r.mounted_bytes, r.metadata_bytes) for r in grid_records()]
         )
 
     def test_measured_points_have_nothing_to_interpolate(self):
@@ -100,7 +100,7 @@ class InterpolationBoundTests(unittest.TestCase):
         self.assertEqual(self.model.interpolation_bound(int(200 * GIB)), 0)
 
     def test_uncalibrated_model_has_no_bound(self):
-        self.assertEqual(NtfsModel().interpolation_bound(10 * GIB), 0)
+        self.assertEqual(MetadataModel().interpolation_bound(10 * GIB), 0)
 
 
 class AdviceTests(unittest.TestCase):
@@ -118,18 +118,18 @@ class AdviceTests(unittest.TestCase):
     def test_measured_size_needs_only_the_floor(self):
         """At a measurement the model is exact: no error to charge it with."""
         advice = self.advise(40960)
-        self.assertEqual(advice.ntfs_bytes, 0)
+        self.assertEqual(advice.metadata_bytes, 0)
         self.assertEqual(advice.total_bytes, MIN_SAFETY_BYTES)
 
     def test_gap_between_measurements_costs_more_than_a_measured_point(self):
         self.assertGreater(
-            self.advise(18432).ntfs_bytes, self.advise(16384).ntfs_bytes
+            self.advise(18432).metadata_bytes, self.advise(16384).metadata_bytes
         )
 
     def test_far_neighbours_do_not_leak_in(self):
         """The knee at 48 GiB must not make a 5 GiB container dearer."""
-        near_the_knee = self.safety.advise(int(56 * GIB), 1).ntfs_bytes
-        small = self.safety.advise(int(5 * GIB), 1).ntfs_bytes
+        near_the_knee = self.safety.advise(int(56 * GIB), 1).metadata_bytes
+        small = self.safety.advise(int(5 * GIB), 1).metadata_bytes
         self.assertLess(small, MIB // 2)
         self.assertGreater(near_the_knee, small)
 
@@ -140,7 +140,7 @@ class AdviceTests(unittest.TestCase):
         window of "similar size" is the ends of its own segment, not everything
         within a factor of two.
         """
-        self.assertLess(self.safety.advise(int(90 * GIB), 1).ntfs_bytes, MIB)
+        self.assertLess(self.safety.advise(int(90 * GIB), 1).metadata_bytes, MIB)
 
     def test_advice_names_the_records_it_leaned_on(self):
         advice = self.advise(18432)
@@ -187,7 +187,7 @@ class ScalingTests(unittest.TestCase):
             deviation for _, deviation, _ in self.safety.ntfs_deviations
         )
         worst_advice = max(
-            self.safety.advise(int(gib * GIB / 2), 1).ntfs_bytes
+            self.safety.advise(int(gib * GIB / 2), 1).metadata_bytes
             for gib in range(4, 200)
         )
         self.assertGreater(raw, 4 * MIB)
@@ -200,19 +200,19 @@ class ScalingTests(unittest.TestCase):
     def test_overshoot_is_not_a_risk(self):
         """A negative deviation is overestimate and adds no safety margin."""
         model = SafetyModel(
-            ntfs=NtfsModel([(r.mounted_bytes, r.ntfs_bytes) for r in grid_records()]),
+            ntfs=MetadataModel([(r.mounted_bytes, r.metadata_bytes) for r in grid_records()]),
             ntfs_deviations=[
                 (r.mounted_bytes, -50 * MIB, r.id) for r in grid_records()
             ],
         )
-        self.assertEqual(model.advise(int(18 * GIB), 1).ntfs_bytes, 
+        self.assertEqual(model.advise(int(18 * GIB), 1).metadata_bytes, 
                          model.ntfs.interpolation_bound(int(18 * GIB)))
 
 
 class FallbackTests(unittest.TestCase):
     def test_without_records_it_falls_back_to_the_default(self):
         advice = SafetyModel().advise(10 * GIB, 1)
-        self.assertEqual(advice.ntfs_bytes, DEFAULT_SAFETY_BYTES)
+        self.assertEqual(advice.metadata_bytes, DEFAULT_SAFETY_BYTES)
         self.assertIn("не откалибрована", advice.ntfs_reason)
 
     def test_one_file_trusts_the_measured_constant_part(self):

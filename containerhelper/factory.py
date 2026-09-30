@@ -37,7 +37,7 @@ class FactoryPoint:
     empty_free_bytes: int
 
     @property
-    def ntfs_bytes(self) -> int:
+    def metadata_bytes(self) -> int:
         return self.mounted_bytes - self.empty_free_bytes
 
 

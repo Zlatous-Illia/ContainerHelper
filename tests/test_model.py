@@ -9,7 +9,7 @@ from containerhelper.model import (
     MIB,
     VC_HEADER_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     ceil_div,
     round_up,
@@ -62,7 +62,7 @@ class DerivedValueTests(unittest.TestCase):
     def test_ntfs_overhead_matches_measurements(self):
         for record in reference.ALL:
             with self.subTest(record.id):
-                self.assertEqual(record.ntfs_bytes, reference.EXPECTED_NTFS[record.id])
+                self.assertEqual(record.metadata_bytes, reference.EXPECTED_NTFS[record.id])
 
     def test_copy_slack_matches_measurements(self):
         for record_id, expected in reference.EXPECTED_SLACK.items():
@@ -77,33 +77,33 @@ class DerivedValueTests(unittest.TestCase):
 
 class NtfsModelTests(unittest.TestCase):
     def test_falls_back_to_affine_without_points(self):
-        model = NtfsModel()
+        model = MetadataModel()
         self.assertFalse(model.calibrated)
         self.assertTrue(model.is_extrapolation(10 * 1024**3))
 
     def test_default_model_never_underestimates_measurements_by_much(self):
         """An underestimate must fit within the 4 MiB safety margin."""
-        model = NtfsModel()
+        model = MetadataModel()
         for record in reference.ALL:
             with self.subTest(record.id):
-                shortfall = record.ntfs_bytes - model.overhead(record.mounted_bytes)
+                shortfall = record.metadata_bytes - model.overhead(record.mounted_bytes)
                 self.assertLess(shortfall, 4 * MIB)
 
     def test_calibrated_model_is_exact_at_measured_points(self):
-        points = [(r.mounted_bytes, r.ntfs_bytes) for r in reference.ALL]
-        model = NtfsModel(points)
+        points = [(r.mounted_bytes, r.metadata_bytes) for r in reference.ALL]
+        model = MetadataModel(points)
         self.assertTrue(model.calibrated)
         for volume, overhead in points:
             with self.subTest(volume=volume):
                 self.assertEqual(model.overhead(volume), overhead)
 
     def test_interpolates_between_points(self):
-        model = NtfsModel([(8 * 1024**3, 32 * MIB), (12 * 1024**3, 40 * MIB)])
+        model = MetadataModel([(8 * 1024**3, 32 * MIB), (12 * 1024**3, 40 * MIB)])
         self.assertEqual(model.overhead(10 * 1024**3), 36 * MIB)
 
     def test_extrapolates_from_the_edge_point_at_the_baseline_rate(self):
         edge = 12 * 1024**3
-        model = NtfsModel([(8 * 1024**3, 32 * MIB), (edge, 40 * MIB)])
+        model = MetadataModel([(8 * 1024**3, 32 * MIB), (edge, 40 * MIB)])
         far = 60 * 1024**3
 
         expected = 40 * MIB + math.ceil(DEFAULT_NTFS_RATE * (far - edge))
@@ -117,7 +117,7 @@ class NtfsModelTests(unittest.TestCase):
             (11 * 1024**3, 38 * MIB),
             (11 * 1024**3 + 1024**2, 44 * MIB),  # close by, huge slope
         ]
-        model = NtfsModel(points)
+        model = MetadataModel(points)
         local_slope = 6 * MIB / 1024**2
 
         far = 60 * 1024**3
@@ -127,28 +127,28 @@ class NtfsModelTests(unittest.TestCase):
     def test_downward_extrapolation_stays_within_the_safety_margin(self):
         """Where the leave-one-out check gave a 10.8 MiB underestimate."""
         without_smallest = [
-            (reference.CACHE_2.mounted_bytes, reference.CACHE_2.ntfs_bytes),
-            (reference.CACHE_1.mounted_bytes, reference.CACHE_1.ntfs_bytes),
+            (reference.CACHE_2.mounted_bytes, reference.CACHE_2.metadata_bytes),
+            (reference.CACHE_1.mounted_bytes, reference.CACHE_1.metadata_bytes),
         ]
-        predicted = NtfsModel(without_smallest).overhead(reference.CACHE_4.mounted_bytes)
-        shortfall = reference.CACHE_4.ntfs_bytes - predicted
+        predicted = MetadataModel(without_smallest).overhead(reference.CACHE_4.mounted_bytes)
+        shortfall = reference.CACHE_4.metadata_bytes - predicted
         self.assertLess(shortfall, 4 * MIB)
 
     def test_real_measurements_extrapolate_close_to_the_baseline(self):
         """At 60 GiB, calibration on 8–12 GiB must not fly off the baseline."""
-        points = [(r.mounted_bytes, r.ntfs_bytes) for r in reference.ALL]
-        calibrated = NtfsModel(points).overhead(60 * 1024**3)
-        baseline = NtfsModel().overhead(60 * 1024**3)
+        points = [(r.mounted_bytes, r.metadata_bytes) for r in reference.ALL]
+        calibrated = MetadataModel(points).overhead(60 * 1024**3)
+        baseline = MetadataModel().overhead(60 * 1024**3)
         self.assertLess(abs(calibrated - baseline), 32 * MIB)
 
     def test_never_returns_degenerate_value(self):
         """Extrapolating down a steep slope must not go to zero."""
-        model = NtfsModel([(1_000_000, 900_000), (2_000_000, 1_800_000)])
+        model = MetadataModel([(1_000_000, 900_000), (2_000_000, 1_800_000)])
         self.assertGreaterEqual(model.overhead(1000), MIB)
 
     def test_duplicate_volumes_keep_the_larger_overhead(self):
         volume = 8 * 1024**3
-        model = NtfsModel(
+        model = MetadataModel(
             [(volume, 32 * MIB), (volume, 34 * MIB), (12 * 1024**3, 40 * MIB)]
         )
         self.assertEqual(model.overhead(volume), 34 * MIB)
@@ -217,7 +217,7 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(
             solution.predicted_left_bytes,
             solution.volume_bytes
-            - solution.ntfs_bytes
+            - solution.metadata_bytes
             - solution.payload_alloc
             - solution.copy_slack,
         )
@@ -227,7 +227,7 @@ class SolverTests(unittest.TestCase):
         for record in reference.ALL:
             with self.subTest(record.id):
                 solution = self._solve(record)
-                available = solution.volume_bytes - solution.ntfs_bytes
+                available = solution.volume_bytes - solution.metadata_bytes
                 self.assertGreaterEqual(
                     available, solution.payload_alloc + solution.copy_slack
                 )

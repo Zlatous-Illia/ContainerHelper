@@ -37,7 +37,7 @@ from containerhelper.model import (
     MIB,
     VC_HEADER_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     solve_container_mib,
 )
 from containerhelper.veracrypt import VeraCrypt, VeraCryptError, install_at
@@ -53,10 +53,10 @@ TINY_SET = FileSet("tiny", "10 файлов по 1 KiB", (Group(10, KIB),))
 FAT_SET = FileSet("fat", "4 файла по 1 MiB", (Group(4, MIB),))
 
 
-def factory_model() -> NtfsModel:
+def factory_model() -> MetadataModel:
     """A model on the factory points, the same one Store builds."""
-    return NtfsModel(
-        [(point.mounted_bytes, point.ntfs_bytes) for point in factory_data().points]
+    return MetadataModel(
+        [(point.mounted_bytes, point.metadata_bytes) for point in factory_data().points]
     )
 
 
@@ -71,7 +71,7 @@ class SlackPlanTests(unittest.TestCase):
         self.assertEqual(step.container_mib, step.predicted_mib + SLACK_CUSHION_MIB)
 
     def test_the_promise_matches_what_the_calc_tab_would_say(self):
-        ntfs, slack = NtfsModel(), CopySlackModel()
+        ntfs, slack = MetadataModel(), CopySlackModel()
         step = slack_step(TINY_SET, ntfs, slack)
         expected = solve_container_mib(TINY_SET.payload(4096), ntfs=ntfs, slack=slack)
         self.assertEqual(step.predicted_mib, expected.container_mib)
@@ -229,7 +229,7 @@ class ProgressShareTests(unittest.TestCase):
     def test_a_calibrated_model_sharpens_the_estimate(self):
         """Space is estimated by the very model the collection calibrates."""
         volume = 2048 * MIB - VC_HEADER_BYTES
-        model = NtfsModel([(volume, 3 * MIB), (2 * volume, 4 * MIB)])
+        model = MetadataModel([(volume, 3 * MIB), (2 * volume, 4 * MIB)])
         self.assertLess(required_bytes(Step(2048), model), required_bytes(Step(2048)))
 
 
@@ -275,7 +275,7 @@ class SlackMeasureTests(Fixture):
     def test_the_empty_volume_is_measured_before_the_files_land(self):
         """One step gives both an NTFS point and a copy-slack measurement."""
         result = measure(self.vc, self.workdir, slack_step(TINY_SET))
-        self.assertEqual(result.ntfs_bytes, self.fake.ntfs)
+        self.assertEqual(result.metadata_bytes, self.fake.ntfs)
 
     def test_the_left_space_is_read_on_a_freshly_mounted_volume(self):
         """The model predicts Left space, which is what VeraCrypt will show."""
@@ -286,7 +286,7 @@ class SlackMeasureTests(Fixture):
     def test_the_record_is_a_slack_sample_and_a_calibration_point_at_once(self):
         record = measure(self.vc, self.workdir, slack_step(TINY_SET)).as_record()
         self.assertFalse(record.is_calibration_point)
-        self.assertIsNotNone(record.ntfs_bytes)
+        self.assertIsNotNone(record.metadata_bytes)
         self.assertIsNotNone(record.copy_slack_measured)
         self.assertEqual(record.fileset, TINY_SET.key)
 

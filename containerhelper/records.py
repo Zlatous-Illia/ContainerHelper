@@ -24,7 +24,7 @@ from .model import (
     MIB,
     VC_HEADER_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     SafetyModel,
     ceil_div,
     round_up,
@@ -52,7 +52,7 @@ NTFS_MAX_SHARE = 0.02
 #: The scope an error invalidates. A record with a broken left_bytes still
 #: gives a usable point for the NTFS model, and there is no need to lose it
 #: because of that.
-SCOPE_NTFS = "ntfs"
+SCOPE_METADATA = "metadata"
 SCOPE_SLACK = "slack"
 SCOPE_BOTH = "both"
 
@@ -122,7 +122,7 @@ class Record:
         return self.container_bytes - self.mounted_bytes
 
     @property
-    def ntfs_bytes(self) -> int | None:
+    def metadata_bytes(self) -> int | None:
         if self.mounted_bytes is None or self.empty_free_bytes is None:
             return None
         return self.mounted_bytes - self.empty_free_bytes
@@ -298,7 +298,7 @@ def validate(record: Record) -> list[Issue]:
                     f"Размер тома ({mounted}) не меньше размера контейнера "
                     f"({record.container_bytes}): заголовок VeraCrypt получается "
                     f"отрицательным.",
-                    SCOPE_NTFS,
+                    SCOPE_METADATA,
                 )
             )
         elif header != VC_HEADER_BYTES:
@@ -307,7 +307,7 @@ def validate(record: Record) -> list[Issue]:
                     "header_unusual",
                     f"Заголовок VeraCrypt вышел {header} B вместо ожидаемых "
                     f"{VC_HEADER_BYTES} B. Проверьте container_mib и mounted_bytes.",
-                    SCOPE_NTFS,
+                    SCOPE_METADATA,
                 )
             )
 
@@ -330,7 +330,7 @@ def validate(record: Record) -> list[Issue]:
                         f"Метаданные NTFS вышли {ntfs} B — вне правдоподобного "
                         f"диапазона {NTFS_MIN_BYTES}..{ceiling} B. Похоже на "
                         f"потерю или лишние разряды.",
-                        SCOPE_NTFS,
+                        SCOPE_METADATA,
                     )
                 )
 
@@ -355,7 +355,7 @@ def validate(record: Record) -> list[Issue]:
                 f"метаданных снята на {SUPPORTED_FS}. У других файловых систем "
                 f"накладные расходы устроены иначе, и в калибровку такая "
                 f"запись не идёт.",
-                SCOPE_NTFS,
+                SCOPE_METADATA,
             )
         )
 
@@ -416,12 +416,12 @@ def is_usable(record: Record, scope: str = SCOPE_BOTH) -> bool:
     return not any(issue.affects(scope) for issue in validate(record))
 
 
-def ntfs_points(records: Iterable[Record]) -> list[tuple[int, int]]:
-    """Points (volume size → NTFS metadata) for calibrating NtfsModel."""
+def metadata_points(records: Iterable[Record]) -> list[tuple[int, int]]:
+    """Points (volume size → NTFS metadata) for calibrating MetadataModel."""
     points = []
     for record in records:
-        overhead = record.ntfs_bytes
-        if overhead is not None and is_usable(record, SCOPE_NTFS):
+        overhead = record.metadata_bytes
+        if overhead is not None and is_usable(record, SCOPE_METADATA):
             points.append((record.mounted_bytes, overhead))
     return points
 
@@ -439,10 +439,10 @@ def slack_samples(records: Iterable[Record]) -> list[tuple[int, int]]:
 
 def build_models(
     records: Sequence[Record],
-) -> tuple[NtfsModel, CopySlackModel]:
+) -> tuple[MetadataModel, CopySlackModel]:
     """Build both models from the accumulated records."""
     return (
-        NtfsModel(ntfs_points(records)),
+        MetadataModel(metadata_points(records)),
         CopySlackModel.calibrate(slack_samples(records)),
     )
 
@@ -462,7 +462,7 @@ def build_safety(
     and the largest underestimate over all records goes there — deliberately
     cautious.
     """
-    checks = ntfs_cross_check(records)
+    checks = metadata_cross_check(records)
     deviations = [
         (check.record.mounted_bytes, check.deviation, check.record.id)
         for check in checks
@@ -473,7 +473,7 @@ def build_safety(
         for check in slack_cross_check(records)
     ]
     return SafetyModel(
-        ntfs=NtfsModel(ntfs_points(records)),
+        ntfs=MetadataModel(metadata_points(records)),
         ntfs_deviations=deviations,
         slack_deviations=slack_deviations,
         extrapolation_bytes=worst_shortfall(checks),
@@ -496,7 +496,7 @@ class Check:
         return self.measured - self.predicted
 
 
-def ntfs_cross_check(records: Sequence[Record]) -> list[Check]:
+def metadata_cross_check(records: Sequence[Record]) -> list[Check]:
     """Check the NTFS model, leaving the checked record out of calibration.
 
     Without leaving it out the check is meaningless: a piecewise-linear model
@@ -504,11 +504,11 @@ def ntfs_cross_check(records: Sequence[Record]) -> list[Check]:
     """
     checks = []
     for index, record in enumerate(records):
-        measured = record.ntfs_bytes
-        if measured is None or not is_usable(record, SCOPE_NTFS):
+        measured = record.metadata_bytes
+        if measured is None or not is_usable(record, SCOPE_METADATA):
             continue
         others = [*records[:index], *records[index + 1 :]]
-        model = NtfsModel(ntfs_points(others))
+        model = MetadataModel(metadata_points(others))
         checks.append(
             Check(
                 record=record,
@@ -780,7 +780,7 @@ class Store:
         """Points that take part in the model: own enabled ones plus factory.
 
         An own measurement supersedes the factory one at the same volume size.
-        Not "the larger of the two", as in NtfsModel._dedupe: the factory value
+        Not "the larger of the two", as in MetadataModel._dedupe: the factory value
         was taken on another machine, and a smaller own value is truer than
         any foreign one.
         """
@@ -885,7 +885,7 @@ class Store:
         volumes.update(sample.mounted_bytes for sample in factory_data().samples)
         return {volume for volume in volumes if volume not in own}
 
-    def models(self) -> tuple[NtfsModel, CopySlackModel]:
+    def models(self) -> tuple[MetadataModel, CopySlackModel]:
         return build_models(self.all_for_model())
 
     def safety(self) -> SafetyModel:

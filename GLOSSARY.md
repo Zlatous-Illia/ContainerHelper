@@ -88,7 +88,7 @@ its English term.
 | copy-slack measurement | «замер запаса» | |
 | measurements file | «файл замеров» | |
 | manual record | «ручная запись» | Entered by hand rather than measured by the program. |
-| scope | «область» | Of an `Issue`: `ntfs` or `slack`. |
+| scope | «область» | Of an `Issue`: `metadata` or `slack`. |
 | reconciliation | «сверка» | Comparing two figures that must agree, e.g. volume against copied data. |
 | run | «прогон» | One pass of automatic collection on a real machine. |
 | this machine | «эта машина» | |

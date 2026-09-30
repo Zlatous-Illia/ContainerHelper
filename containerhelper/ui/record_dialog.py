@@ -547,7 +547,7 @@ class RecordDialog(QDialog):
         record = self.build_record()
         self.payload_button.setEnabled(self._payload_provider is not None)
         self.header_label.setText(fmt_both(record.vc_header))
-        self.ntfs_label.setText(fmt_both(record.ntfs_bytes))
+        self.ntfs_label.setText(fmt_both(record.metadata_bytes))
         self.consumed_label.setText(fmt_both(record.consumed_bytes))
         self.slack_label.setText(fmt_both(record.copy_slack_measured))
         self._refresh_forecast(record)

@@ -100,15 +100,15 @@ class SelfCheckTests(unittest.TestCase):
         slow = measurement(SELF_CHECK_MIB, 17_879_040 + 4 * SELF_CHECK_TOLERANCE)
         verdict = self_check_verdict(fast, slow)
         self.assertIn("не сошлась", verdict)
-        self.assertIn(str(fast.ntfs_bytes), verdict)
-        self.assertIn(str(slow.ntfs_bytes), verdict)
+        self.assertIn(str(fast.metadata_bytes), verdict)
+        self.assertIn(str(slow.metadata_bytes), verdict)
 
 
 class MeasurementTests(unittest.TestCase):
     def test_the_record_keeps_only_what_was_measured(self):
         """Nothing computable is stored, or the hand records' error repeats."""
         stored = measurement(1024, 17_879_040).as_record().to_json()
-        self.assertNotIn("ntfs_bytes", stored)
+        self.assertNotIn("metadata_bytes", stored)
         self.assertNotIn("vc_header", stored)
         self.assertEqual(stored["container_mib"], 1024)
         self.assertEqual(stored["filesystem"], "NTFS")

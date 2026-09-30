@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
+from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
 from containerhelper.ui.calc_tab import CalcTab  # noqa: E402
 from tests import reference  # noqa: E402
 
@@ -18,7 +18,7 @@ _app = QApplication.instance() or QApplication([])
 
 
 def default_models():
-    return NtfsModel(), CopySlackModel()
+    return MetadataModel(), CopySlackModel()
 
 
 class CalcTabTests(unittest.TestCase):

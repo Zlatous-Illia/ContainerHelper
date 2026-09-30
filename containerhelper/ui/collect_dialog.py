@@ -50,7 +50,7 @@ from ..collect import (
 from ..elevation import is_admin, relaunch_as_admin
 from ..fileset import FileSet
 from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit, plural
-from ..model import MIB, CopySlackModel, NtfsModel, SafetyModel
+from ..model import MIB, CopySlackModel, MetadataModel, SafetyModel
 from ..paths import is_writable
 from .table import scrollable, wrapped
 from ..veracrypt import (
@@ -106,7 +106,7 @@ NOTE_INDENT = 20
 #: alive froze exactly when it was needed.
 CLOCK_INTERVAL = 1000
 
-ModelProvider = Callable[[], "tuple[NtfsModel, CopySlackModel]"]
+ModelProvider = Callable[[], "tuple[MetadataModel, CopySlackModel]"]
 SafetyProvider = Callable[[], SafetyModel]
 
 
@@ -686,8 +686,8 @@ class CollectDialog(QDialog):
 
     # --- plan --------------------------------------------------------------
 
-    def current_models(self) -> tuple[NtfsModel, CopySlackModel]:
-        return self._models() if self._models is not None else (NtfsModel(), CopySlackModel())
+    def current_models(self) -> tuple[MetadataModel, CopySlackModel]:
+        return self._models() if self._models is not None else (MetadataModel(), CopySlackModel())
 
     def chosen_filesets(self) -> list[FileSet]:
         if not self.want_slack.isChecked():
@@ -997,7 +997,7 @@ class CollectDialog(QDialog):
 
     def _measurement_line(self, result: StepResult) -> str:
         measurement = result.measurement
-        line = f"    метаданные NTFS: {fmt_both(measurement.ntfs_bytes)}"
+        line = f"    метаданные NTFS: {fmt_both(measurement.metadata_bytes)}"
         slack = measurement.copy_slack_bytes
         if slack is not None:
             record = measurement.as_record()

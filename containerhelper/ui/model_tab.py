@@ -25,11 +25,11 @@ from ..formatting import (
     plural,
     unit_suffix,
 )
-from ..model import MIB, CopySlackModel, NtfsModel
+from ..model import MIB, CopySlackModel, MetadataModel
 from ..records import (
     Check,
     Record,
-    ntfs_cross_check,
+    metadata_cross_check,
     slack_cross_check,
     worst_shortfall,
 )
@@ -86,7 +86,7 @@ class ModelTab(QWidget):
 
     def __init__(
         self,
-        models: Callable[[], tuple[NtfsModel, CopySlackModel]],
+        models: Callable[[], tuple[MetadataModel, CopySlackModel]],
         records: Callable[[], Sequence[Record]],
         parent: QWidget | None = None,
     ) -> None:
@@ -296,14 +296,14 @@ class ModelTab(QWidget):
         records = list(self._records())
 
         self._refresh_state(ntfs, slack)
-        ntfs_checks = ntfs_cross_check(records)
+        ntfs_checks = metadata_cross_check(records)
         slack_checks = slack_cross_check(records)
         self._checks = (ntfs_checks, slack_checks)
         self._fill_checks(self.ntfs_table, self.ntfs_summary, ntfs_checks)
         self._fill_checks(self.slack_table, self.slack_summary, slack_checks)
         self._refresh_safety_hint(ntfs_checks, slack_checks)
 
-    def _refresh_state(self, ntfs: NtfsModel, slack: CopySlackModel) -> None:
+    def _refresh_state(self, ntfs: MetadataModel, slack: CopySlackModel) -> None:
         if ntfs.calibrated:
             low, high = ntfs.covered_range
             self.ntfs_state.setText(

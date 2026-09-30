@@ -283,7 +283,7 @@ Rules whose violation does not crash the program but quietly corrupts the
 numbers. The full list is in `SPEC.md` and in the comments next to the relevant
 code; here are the ones people trip over first:
 
-- **Computed values are not stored.** `ntfs_bytes`, `vc_header`,
+- **Computed values are not stored.** `metadata_bytes`, `vc_header`,
   `copy_slack_measured` are properties, not JSON fields. Duplicating computed
   fields is exactly what spoiled the original handwritten records.
 - **Qt signals carrying volume sizes must be 64-bit** (`Signal("qint64", bool)`).

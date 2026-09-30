@@ -414,10 +414,10 @@ class CalibrationTab(QWidget):
             point = factory.get(volume)
 
             if record is not None and not record.disabled:
-                source, colour, ntfs = SOURCE_OWN, COLOUR_OWN, record.ntfs_bytes
+                source, colour, ntfs = SOURCE_OWN, COLOUR_OWN, record.metadata_bytes
                 counts["own"] += 1
             elif point is not None:
-                source, colour, ntfs = SOURCE_FACTORY, COLOUR_FACTORY, point.ntfs_bytes
+                source, colour, ntfs = SOURCE_FACTORY, COLOUR_FACTORY, point.metadata_bytes
                 counts["factory"] += 1
                 if record is not None:
                     source = SOURCE_DISABLED

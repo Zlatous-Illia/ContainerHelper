@@ -15,7 +15,7 @@ from .model import (
     MIB,
     VC_HEADER_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     Solution,
 )
@@ -39,8 +39,8 @@ from .plot import (
 )
 from .records import (
     Record,
-    ntfs_cross_check,
-    ntfs_points,
+    metadata_cross_check,
+    metadata_points,
     slack_cross_check,
     slack_samples,
 )
@@ -117,12 +117,12 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
     """
     own = _own(store)
     records = store.all_for_model()
-    model = NtfsModel(ntfs_points(records))
+    model = MetadataModel(metadata_points(records))
 
     mine: list[Point] = []
     factory: list[Point] = []
     for record in records:
-        overhead = record.ntfs_bytes
+        overhead = record.metadata_bytes
         if overhead is None or not record.mounted_bytes:
             continue
         point = Point(
@@ -178,7 +178,7 @@ def ntfs_residuals(store) -> Chart:
     """
     checks = [
         check
-        for check in ntfs_cross_check(store.all_for_model())
+        for check in metadata_cross_check(store.all_for_model())
         if check.record.mounted_bytes
     ]
     volumes = [check.record.mounted_bytes for check in checks]
@@ -248,12 +248,12 @@ def ntfs_share(store) -> Chart:
     """
     own = _own(store)
     records = store.all_for_model()
-    model = NtfsModel(ntfs_points(records))
+    model = MetadataModel(metadata_points(records))
 
     mine: list[Point] = []
     factory: list[Point] = []
     for record in records:
-        overhead = record.ntfs_bytes
+        overhead = record.metadata_bytes
         if overhead is None or not record.mounted_bytes:
             continue
         share = overhead / record.mounted_bytes * 100.0
@@ -305,7 +305,7 @@ def ntfs_slopes(store) -> Chart:
     the difference between 0.128 % and 0.324 % is the thickness of a line. And
     that is exactly the $LogFile steps.
     """
-    model = NtfsModel(ntfs_points(store.all_for_model()))
+    model = MetadataModel(metadata_points(store.all_for_model()))
     points = model.points
     steps: list[Point] = []
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
@@ -496,7 +496,7 @@ def container_breakdown(solution: Solution) -> Chart:
     parts = (
         ("Полезные данные (по кластерам)", solution.payload_alloc),
         ("Заголовок VeraCrypt", solution.vc_header),
-        ("Метаданные NTFS", solution.ntfs_bytes),
+        ("Метаданные NTFS", solution.metadata_bytes),
         ("Запас на копирование", solution.copy_slack),
         ("Страховочный запас", solution.safety_bytes),
         ("Округление до целых MiB", rounding),

@@ -30,7 +30,7 @@ from ..model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     SafetyAdvice,
     SafetyModel,
@@ -174,7 +174,7 @@ NO_SOURCE_HINT = (
     "или введите размер вручную."
 )
 
-ModelProvider = Callable[[], tuple[NtfsModel, CopySlackModel]]
+ModelProvider = Callable[[], tuple[MetadataModel, CopySlackModel]]
 SafetyProvider = Callable[[], SafetyModel]
 
 
@@ -901,7 +901,7 @@ class CalcTab(QWidget):
 
         advice = self._advice
         parts = [
-            f"NTFS {fmt_both(advice.ntfs_bytes)} — {advice.ntfs_reason};",
+            f"NTFS {fmt_both(advice.metadata_bytes)} — {advice.ntfs_reason};",
             f"копирование {fmt_both(advice.slack_bytes)} — {advice.slack_reason}.",
         ]
         if advice.basis:
@@ -913,7 +913,7 @@ class CalcTab(QWidget):
             ("Полезные данные (по кластерам)", solution.payload_alloc),
             ("    в том числе кластерный хвост", solution.cluster_tail),
             ("Заголовок VeraCrypt", solution.vc_header),
-            ("Метаданные NTFS", solution.ntfs_bytes),
+            ("Метаданные NTFS", solution.metadata_bytes),
             ("Запас на копирование", solution.copy_slack),
             ("Страховочный запас", solution.safety_bytes),
             ("Итого контейнер", solution.container_bytes),

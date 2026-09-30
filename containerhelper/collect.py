@@ -33,7 +33,7 @@ from .model import (
     MIB,
     VC_HEADER_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     SafetyModel,
     ceil_div,
     solve_container_mib,
@@ -239,7 +239,7 @@ class Measurement:
     predicted_safety_mib: int = 0
 
     @property
-    def ntfs_bytes(self) -> int:
+    def metadata_bytes(self) -> int:
         return self.mounted_bytes - self.empty_free_bytes
 
     @property
@@ -333,7 +333,7 @@ def plan(
 
 def slack_step(
     fileset: FileSet,
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     slack: CopySlackModel | None = None,
     safety: SafetyModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
@@ -354,7 +354,7 @@ def slack_step(
     the coverage table, otherwise the Use factory button in that row would
     disable it along with the NTFS point.
     """
-    ntfs = ntfs or NtfsModel()
+    ntfs = ntfs or MetadataModel()
     slack = slack or CopySlackModel()
     payload = fileset.payload(cluster_bytes)
 
@@ -385,7 +385,7 @@ def slack_step(
 
 def slack_plan(
     filesets: Sequence[FileSet],
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     slack: CopySlackModel | None = None,
     safety: SafetyModel | None = None,
     covered: Sequence[str] = (),
@@ -414,7 +414,7 @@ def slack_plan(
 
 def disk_bytes(
     step: Step,
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
     """How many bytes the step will actually lay down on the disk.
@@ -428,7 +428,7 @@ def disk_bytes(
     A normal container with full format materialises in full — in the whole
     collection exactly one step is like that, the second self-check container.
     """
-    ntfs = ntfs or NtfsModel()
+    ntfs = ntfs or MetadataModel()
     if not (step.dynamic and step.quick):
         return step.container_mib * MIB
     volume = step.container_mib * MIB - VC_HEADER_BYTES
@@ -437,7 +437,7 @@ def disk_bytes(
 
 def required_bytes(
     step: Step,
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
     """How much free space the step needs before it can be taken on.
@@ -453,7 +453,7 @@ def required_bytes(
 
 def weight_bytes(
     step: Step,
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
     """What the step costs in time, expressed in bytes of writing.
@@ -469,7 +469,7 @@ def weight_bytes(
 
 def total_bytes(
     steps: Sequence[Step],
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> int:
     """The weight of the whole plan — overall progress is measured by it.
@@ -487,13 +487,13 @@ def self_check_verdict(fast: Measurement, slow: Measurement) -> str:
 
     Otherwise the text explaining the refusal.
     """
-    difference = abs(fast.ntfs_bytes - slow.ntfs_bytes)
+    difference = abs(fast.metadata_bytes - slow.metadata_bytes)
     if difference <= SELF_CHECK_TOLERANCE:
         return ""
     return (
         f"Самопроверка не сошлась: динамический контейнер с быстрым "
-        f"форматированием дал {fast.ntfs_bytes} B метаданных, обычный с полным "
-        f"— {slow.ntfs_bytes} B, разница {difference} B. На этой машине "
+        f"форматированием дал {fast.metadata_bytes} B метаданных, обычный с полным "
+        f"— {slow.metadata_bytes} B, разница {difference} B. На этой машине "
         f"динамические контейнеры меряются иначе, и гнать по ним остальные "
         f"размеры нельзя: числа получились бы не про те контейнеры, которые "
         f"будут созданы на самом деле."
@@ -659,7 +659,7 @@ class Collector:
     workdir: Path
     steps: list[Step] = field(default_factory=list)
     #: The metadata model: it estimates the space a step will take.
-    ntfs: NtfsModel = field(default_factory=NtfsModel)
+    ntfs: MetadataModel = field(default_factory=MetadataModel)
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES
     #: The host's free space. Replaced in tests — the real disk is full one
     #: time and empty the next, and there is nothing to check against it.

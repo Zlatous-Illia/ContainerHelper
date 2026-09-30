@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from .. import charts
 from ..fileset import FILE_SETS
 from ..formatting import DEFAULT_UNIT, UNITS, unit_by_key
-from ..model import CopySlackModel, NtfsModel, SafetyModel
+from ..model import CopySlackModel, MetadataModel, SafetyModel
 from ..paths import (
     DataDirError,
     records_path,
@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         # a trace outside it.
         self.settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
 
-        self._ntfs = NtfsModel()
+        self._ntfs = MetadataModel()
         self._slack = CopySlackModel()
         self._safety = SafetyModel()
         #: Confirmations go through a replaceable handler, as on the tabs: a
@@ -233,7 +233,7 @@ class MainWindow(QMainWindow):
 
     # --- models ------------------------------------------------------------
 
-    def models(self) -> tuple[NtfsModel, CopySlackModel]:
+    def models(self) -> tuple[MetadataModel, CopySlackModel]:
         return self._ntfs, self._slack
 
     def safety(self) -> SafetyModel:

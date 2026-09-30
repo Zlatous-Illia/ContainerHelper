@@ -61,7 +61,7 @@ def round_up(value: int, unit: int) -> int:
     return ceil_div(value, unit) * unit
 
 
-class NtfsModel:
+class MetadataModel:
     """NTFS metadata as a function of the mounted volume size.
 
     Fewer than two points — the default affine model. Two or more —
@@ -344,7 +344,7 @@ class Solution:
     payload_alloc: int
     cluster_tail: int
     vc_header: int
-    ntfs_bytes: int
+    metadata_bytes: int
     copy_slack: int
     safety_bytes: int
     predicted_left_bytes: int
@@ -354,7 +354,7 @@ class Solution:
 
 def solve_container_mib(
     payload: Payload,
-    ntfs: NtfsModel | None = None,
+    ntfs: MetadataModel | None = None,
     slack: CopySlackModel | None = None,
     safety_bytes: int = DEFAULT_SAFETY_BYTES,
     max_iterations: int = 8,
@@ -365,7 +365,7 @@ def solve_container_mib(
     the result being sought, so the solution is iterative. It converges in two
     or three iterations: NTFS changes much more slowly than the volume itself.
     """
-    ntfs = ntfs or NtfsModel()
+    ntfs = ntfs or MetadataModel()
     slack = slack or CopySlackModel()
 
     slack_bytes = slack.slack(payload.file_count)
@@ -373,11 +373,11 @@ def solve_container_mib(
 
     volume_guess = payload.alloc_bytes
     container_mib = 0
-    ntfs_bytes = 0
+    metadata_bytes = 0
 
     for _ in range(max_iterations):
-        ntfs_bytes = ntfs.overhead(volume_guess)
-        container_mib = ceil_div(fixed + ntfs_bytes, MIB)
+        metadata_bytes = ntfs.overhead(volume_guess)
+        container_mib = ceil_div(fixed + metadata_bytes, MIB)
         next_volume = container_mib * MIB - VC_HEADER_BYTES
         if next_volume == volume_guess:
             break
@@ -385,7 +385,7 @@ def solve_container_mib(
 
     container_bytes = container_mib * MIB
     volume_bytes = container_bytes - VC_HEADER_BYTES
-    ntfs_bytes = ntfs.overhead(volume_bytes)
+    metadata_bytes = ntfs.overhead(volume_bytes)
 
     return Solution(
         container_mib=container_mib,
@@ -395,11 +395,11 @@ def solve_container_mib(
         payload_alloc=payload.alloc_bytes,
         cluster_tail=payload.cluster_tail,
         vc_header=VC_HEADER_BYTES,
-        ntfs_bytes=ntfs_bytes,
+        metadata_bytes=metadata_bytes,
         copy_slack=slack_bytes,
         safety_bytes=safety_bytes,
         predicted_left_bytes=(
-            volume_bytes - ntfs_bytes - payload.alloc_bytes - slack_bytes
+            volume_bytes - metadata_bytes - payload.alloc_bytes - slack_bytes
         ),
         ntfs_extrapolated=ntfs.is_extrapolation(volume_bytes),
         slack_unverified=payload.file_count > 1 and not slack.per_file_calibrated,
@@ -429,7 +429,7 @@ class SafetyAdvice:
     """How much safety margin this very calculation needs, and why."""
 
     total_bytes: int
-    ntfs_bytes: int
+    metadata_bytes: int
     slack_bytes: int
     ntfs_reason: str
     slack_reason: str
@@ -473,7 +473,7 @@ class SafetyModel:
 
     def __init__(
         self,
-        ntfs: NtfsModel | None = None,
+        ntfs: MetadataModel | None = None,
         ntfs_deviations: Sequence[tuple[int, int, str]] = (),
         slack_deviations: Sequence[tuple[int, int, str]] = (),
         extrapolation_bytes: int = DEFAULT_SAFETY_BYTES,
@@ -482,7 +482,7 @@ class SafetyModel:
         factory_volumes: set[int] | None = None,
         factory_margin: int = FACTORY_MARGIN_BYTES,
     ) -> None:
-        self.ntfs = ntfs or NtfsModel()
+        self.ntfs = ntfs or MetadataModel()
         self.ntfs_deviations = tuple(ntfs_deviations)
         self.slack_deviations = tuple(slack_deviations)
         #: What to budget beyond the edge of the measurements: there is no
@@ -673,12 +673,12 @@ class SafetyModel:
         )
 
     def advise(self, volume_bytes: int, file_count: int = 1) -> SafetyAdvice:
-        ntfs_bytes, ntfs_reason, ntfs_names = self._advise_ntfs(volume_bytes)
+        metadata_bytes, ntfs_reason, ntfs_names = self._advise_ntfs(volume_bytes)
         slack_bytes, slack_reason, slack_names = self._advise_slack(file_count)
-        total = max(ntfs_bytes + slack_bytes, self.floor)
+        total = max(metadata_bytes + slack_bytes, self.floor)
         return SafetyAdvice(
             total_bytes=round_up(total, MIB),
-            ntfs_bytes=ntfs_bytes,
+            metadata_bytes=metadata_bytes,
             slack_bytes=slack_bytes,
             ntfs_reason=ntfs_reason,
             slack_reason=slack_reason,

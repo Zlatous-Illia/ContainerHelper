@@ -8,13 +8,13 @@ from pathlib import Path
 
 from containerhelper.records import (
     SCHEMA_VERSION,
-    SCOPE_NTFS,
+    SCOPE_METADATA,
     SCOPE_SLACK,
     Record,
     Store,
     StoreError,
     is_usable,
-    ntfs_points,
+    metadata_points,
     slack_samples,
     validate,
 )
@@ -37,7 +37,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_impossible_left_space_only_invalidates_slack(self):
         """The point for the NTFS model in such a record is still good."""
-        self.assertTrue(is_usable(reference.CACHE_2, SCOPE_NTFS))
+        self.assertTrue(is_usable(reference.CACHE_2, SCOPE_METADATA))
         self.assertFalse(is_usable(reference.CACHE_2, SCOPE_SLACK))
 
     def test_truncated_ntfs_value_is_caught(self):
@@ -83,13 +83,13 @@ class ValidationTests(unittest.TestCase):
 
     def test_flagged_record_is_excluded_everywhere(self):
         flagged = replace(reference.CACHE_1, flagged=True)
-        self.assertFalse(is_usable(flagged, SCOPE_NTFS))
+        self.assertFalse(is_usable(flagged, SCOPE_METADATA))
         self.assertFalse(is_usable(flagged, SCOPE_SLACK))
 
 
 class CalibrationInputTests(unittest.TestCase):
     def test_all_three_records_give_ntfs_points(self):
-        points = ntfs_points(reference.ALL)
+        points = metadata_points(reference.ALL)
         self.assertEqual(len(points), 3)
         self.assertEqual(
             sorted(overhead for _, overhead in points),
@@ -112,7 +112,7 @@ class CalibrationInputTests(unittest.TestCase):
             mounted_bytes=reference.CACHE_1.mounted_bytes,
             empty_free_bytes=reference.CACHE_1.empty_free_bytes,
         )
-        self.assertEqual(len(ntfs_points([empty])), 1)
+        self.assertEqual(len(metadata_points([empty])), 1)
         self.assertEqual(len(slack_samples([empty])), 0)
 
 
@@ -138,7 +138,7 @@ class StoreTests(unittest.TestCase):
         Store(path=self.path, records=[reference.CACHE_1]).save()
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         stored = raw["records"][0]
-        for forbidden in ("ntfs_bytes", "vc_header", "consumed_bytes", "container_bytes"):
+        for forbidden in ("metadata_bytes", "vc_header", "consumed_bytes", "container_bytes"):
             self.assertNotIn(forbidden, stored)
 
     def test_missing_optional_fields_are_omitted(self):
@@ -243,7 +243,7 @@ class PayloadAllocTests(unittest.TestCase):
             reference.CACHE_1, file_alloc_bytes=12_290, file_bytes=10_000
         )
         self.assertFalse(is_usable(record, SCOPE_SLACK))
-        self.assertTrue(is_usable(record, SCOPE_NTFS))
+        self.assertTrue(is_usable(record, SCOPE_METADATA))
 
 
 class SchemaCompatibilityTests(unittest.TestCase):

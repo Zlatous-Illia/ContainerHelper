@@ -27,13 +27,13 @@ from containerhelper.model import (  # noqa: E402
 from containerhelper.paths import CALIBRATION_NAME  # noqa: E402
 from containerhelper.records import (  # noqa: E402
     SCHEMA_VERSION,
-    SCOPE_NTFS,
+    SCOPE_METADATA,
     SCOPE_SLACK,
     Record,
     Store,
     StoreError,
     is_usable,
-    ntfs_points,
+    metadata_points,
     validate,
 )
 from containerhelper.sizes import SUPPORTED_FS  # noqa: E402
@@ -79,8 +79,8 @@ class FilesystemTests(unittest.TestCase):
     def test_a_non_ntfs_record_leaves_the_ntfs_calibration(self):
         """exFAT overhead is another story: the point would spoil the model."""
         record = point(1024, filesystem="exFAT")
-        self.assertFalse(is_usable(record, SCOPE_NTFS))
-        self.assertEqual(ntfs_points([record]), [])
+        self.assertFalse(is_usable(record, SCOPE_METADATA))
+        self.assertEqual(metadata_points([record]), [])
 
     def test_it_does_not_touch_the_copy_slack(self):
         """Cluster arithmetic does not depend on the filesystem."""
@@ -229,7 +229,7 @@ class SeparateStoreTests(unittest.TestCase):
         )
         store = Store.load(self.path)
         self.assertEqual(len(store.calibration), 1)
-        self.assertEqual(store.calibration[0].ntfs_bytes, 20 * MIB)
+        self.assertEqual(store.calibration[0].metadata_bytes, 20 * MIB)
 
     def test_nothing_to_migrate_leaves_the_flag_down(self):
         self.assertFalse(self.seeded().migrated)
@@ -289,17 +289,17 @@ class FactoryOverrideTests(unittest.TestCase):
     def test_factory_fills_an_empty_store(self):
         store = Store(path=self.path)
         self.assertEqual(len(store.calibration_records()), self.factory_count())
-        self.assertEqual(self.overhead_at(store), self.factory.ntfs_bytes)
+        self.assertEqual(self.overhead_at(store), self.factory.metadata_bytes)
 
     def test_own_point_wins_even_when_smaller(self):
         """_dedupe takes the larger; for factory values that rule is wrong."""
         store = Store(path=self.path, calibration=[self.mine])
-        self.assertLess(self.overhead_at(store), self.factory.ntfs_bytes)
-        self.assertEqual(self.overhead_at(store), self.mine.ntfs_bytes)
+        self.assertLess(self.overhead_at(store), self.factory.metadata_bytes)
+        self.assertEqual(self.overhead_at(store), self.mine.metadata_bytes)
 
     def test_disabling_brings_the_factory_value_back(self):
         store = Store(path=self.path, calibration=[replace(self.mine, disabled=True)])
-        self.assertEqual(self.overhead_at(store), self.factory.ntfs_bytes)
+        self.assertEqual(self.overhead_at(store), self.factory.metadata_bytes)
 
     def test_disabled_point_stays_in_the_file(self):
         """Resetting to factory values loses nothing."""
@@ -322,7 +322,7 @@ class FactoryOverrideTests(unittest.TestCase):
         volume = int(18 * 1024**3)
         with_factory = empty.safety().advise(volume, 1)
         self.assertIn("заводских", with_factory.ntfs_reason)
-        self.assertGreaterEqual(with_factory.ntfs_bytes, FACTORY_MARGIN_BYTES)
+        self.assertGreaterEqual(with_factory.metadata_bytes, FACTORY_MARGIN_BYTES)
 
 
 class SimplifiedDialogTests(unittest.TestCase):

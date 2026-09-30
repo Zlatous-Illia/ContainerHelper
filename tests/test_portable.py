@@ -95,8 +95,8 @@ class FactoryDataTests(unittest.TestCase):
     def test_every_point_has_a_plausible_overhead(self):
         for point in factory_data().points:
             with self.subTest(point.container_mib):
-                self.assertGreater(point.ntfs_bytes, MIB)
-                self.assertLess(point.ntfs_bytes, point.mounted_bytes // 20)
+                self.assertGreater(point.metadata_bytes, MIB)
+                self.assertLess(point.metadata_bytes, point.mounted_bytes // 20)
 
     def test_volume_matches_the_container(self):
         point = factory_data().points[0]

@@ -65,7 +65,7 @@ from containerhelper.model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     round_up,
     solve_container_mib,
@@ -220,7 +220,7 @@ def factory_rows() -> list[tuple[int, ...]]:
                     count,
                     solution.container_mib,
                     advice.total_mib,
-                    solution.ntfs_bytes,
+                    solution.metadata_bytes,
                     solution.copy_slack,
                 )
             )
@@ -235,7 +235,7 @@ def default_rows() -> list[tuple[int, ...]]:
             payload = payload_of(size_mib, count)
             solution = solve_container_mib(
                 payload,
-                ntfs=NtfsModel(),
+                ntfs=MetadataModel(),
                 slack=CopySlackModel(),
                 safety_bytes=DEFAULT_SAFETY_BYTES,
             )
@@ -244,7 +244,7 @@ def default_rows() -> list[tuple[int, ...]]:
                     size_mib,
                     count,
                     solution.container_mib,
-                    solution.ntfs_bytes,
+                    solution.metadata_bytes,
                     solution.copy_slack,
                 )
             )

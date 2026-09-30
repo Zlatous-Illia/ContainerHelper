@@ -15,7 +15,7 @@ _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
-from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
+from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
 from containerhelper.records import Store, build_models  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.model_tab import ModelTab  # noqa: E402
@@ -23,7 +23,7 @@ from tests import reference  # noqa: E402
 
 
 def tab_with(records):
-    models = build_models(records) if records else (NtfsModel(), CopySlackModel())
+    models = build_models(records) if records else (MetadataModel(), CopySlackModel())
     return ModelTab(lambda: models, lambda: records)
 
 
