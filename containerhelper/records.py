@@ -53,7 +53,7 @@ NTFS_MAX_SHARE = 0.02
 
 
 #: The scope an error invalidates. A record with a broken left_bytes still
-#: gives a usable point for the NTFS model, and there is no need to lose it
+#: gives a usable point for the metadata model, and there is no need to lose it
 #: because of that.
 SCOPE_METADATA = "metadata"
 SCOPE_SLACK = "slack"
@@ -109,16 +109,20 @@ def filesystem_name(raw: str) -> str:
 def profile_of(item: "Record | FactoryPoint | FactorySample") -> VolumeProfile:
     """The profile a record or a factory measurement was taken on.
 
-    An unread cluster (0) counts as 4 KiB on NTFS, as it does in `validate`:
+    An unread cluster (0) counts as 4 KiB on NTFS, and `validate` relies on it:
     that is NTFS's cluster on every size the program reaches. Elsewhere it
     stays 0 — exFAT's default depends on the volume size, and a guess would
     file the record under a profile it was not taken on.
     """
-    filesystem = filesystem_name(item.filesystem)
-    cluster = item.cluster_bytes
-    if not cluster and filesystem == SUPPORTED_FS:
-        cluster = DEFAULT_CLUSTER_BYTES
-    return VolumeProfile(filesystem, cluster)
+    return volume_profile(item.filesystem, item.cluster_bytes)
+
+
+def volume_profile(filesystem: str, cluster_bytes: int) -> VolumeProfile:
+    """The profile of a volume from what the volume reports, as `profile_of`."""
+    name = filesystem_name(filesystem)
+    if not cluster_bytes and name == SUPPORTED_FS:
+        cluster_bytes = DEFAULT_CLUSTER_BYTES
+    return VolumeProfile(name, cluster_bytes)
 
 
 @dataclass(frozen=True)
@@ -374,13 +378,13 @@ def validate(record: Record) -> list[Issue]:
     mounted = record.mounted_bytes
     free = record.empty_free_bytes
 
-    # The tail is checked only on NTFS: the other filesystems do not reach
-    # the calibration at all (the "filesystem" check below), and what their
-    # tail should be is not measured yet. And only with the 4 KiB cluster:
-    # the metadata model is taken on it alone, and that the tail is one
-    # cluster is measured, not assumed, only for it.
-    is_ntfs = filesystem_name(record.filesystem) == SUPPORTED_FS
-    cluster = record.cluster_bytes or DEFAULT_CLUSTER_BYTES
+    # The tail and the metadata range are checked only on NTFS with a 4 KiB
+    # cluster: that is the only profile measured so far. That NTFS keeps one
+    # cluster back at other cluster sizes too is expected, not measured, and
+    # what the other filesystems keep and spend on metadata is not known yet.
+    # A check that fired on a correct measurement would flag it and throw it
+    # out of its own profile's calibration.
+    is_measured = profile_of(record) == DEFAULT_PROFILE
     tail = record.tail_bytes
     if tail is not None:
         if tail < 0:
@@ -393,23 +397,14 @@ def validate(record: Record) -> list[Issue]:
                     SCOPE_METADATA,
                 )
             )
-        elif is_ntfs and cluster != DEFAULT_CLUSTER_BYTES:
-            issues.append(
-                Issue(
-                    "cluster",
-                    f"Кластер тома {cluster} B, а модель метаданных снята на "
-                    f"кластере {DEFAULT_CLUSTER_BYTES} B. С другим кластером "
-                    f"метаданные другие, и в калибровку такая запись не идёт.",
-                    SCOPE_METADATA,
-                )
-            )
-        elif is_ntfs and tail != cluster:
+        elif is_measured and tail != DEFAULT_CLUSTER_BYTES:
             issues.append(
                 Issue(
                     "tail_unusual",
                     f"Ёмкость тома меньше контейнера без заголовков VeraCrypt "
                     f"на {tail} B, а NTFS оставляет себе ровно один кластер, "
-                    f"{cluster} B. Проверьте container_mib и mounted_bytes.",
+                    f"{DEFAULT_CLUSTER_BYTES} B. Проверьте container_mib и "
+                    f"mounted_bytes.",
                     SCOPE_METADATA,
                 )
             )
@@ -423,7 +418,7 @@ def validate(record: Record) -> list[Issue]:
                     f"ёмкости ({mounted}).",
                 )
             )
-        else:
+        elif is_measured:
             ntfs = record.volume_bytes - free
             ceiling = max(NTFS_MAX_FLOOR, int(record.volume_bytes * NTFS_MAX_SHARE))
             if not (NTFS_MIN_BYTES <= ntfs <= ceiling):
@@ -447,18 +442,6 @@ def validate(record: Record) -> list[Issue]:
                 f"Занятое не может быть меньше файла — ошибка в одном из полей "
                 f"empty_free_bytes / left_bytes / file_bytes.",
                 SCOPE_SLACK,
-            )
-        )
-
-    if not is_ntfs:
-        issues.append(
-            Issue(
-                "filesystem",
-                f"Том отформатирован как {record.filesystem}, а модель "
-                f"метаданных снята на {SUPPORTED_FS}. У других файловых систем "
-                f"накладные расходы устроены иначе, и в калибровку такая "
-                f"запись не идёт.",
-                SCOPE_METADATA,
             )
         )
 

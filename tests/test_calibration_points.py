@@ -27,14 +27,16 @@ from containerhelper.model import (  # noqa: E402
 from containerhelper.paths import CALIBRATION_NAME  # noqa: E402
 from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.records import (  # noqa: E402
+    EXFAT,
     SCHEMA_VERSION,
-    SCOPE_METADATA,
     SCOPE_SLACK,
     Record,
     Store,
     StoreError,
     is_usable,
+    VolumeProfile,
     metadata_points,
+    slack_samples,
     validate,
 )
 from containerhelper.sizes import SUPPORTED_FS  # noqa: E402
@@ -73,20 +75,39 @@ class FilesystemTests(unittest.TestCase):
         record = point(1024, filesystem=SUPPORTED_FS)
         self.assertEqual([issue.code for issue in validate(record)], [])
 
-    def test_other_filesystem_is_flagged(self):
+    def test_other_filesystem_is_not_an_error(self):
+        """The profile keeps it apart now; a check would only lose the point."""
         record = point(1024, filesystem="exFAT")
-        self.assertIn("filesystem", {issue.code for issue in validate(record)})
+        self.assertEqual([issue.code for issue in validate(record)], [])
 
     def test_a_non_ntfs_record_leaves_the_ntfs_calibration(self):
         """exFAT overhead is another story: the point would spoil the model."""
-        record = point(1024, filesystem="exFAT")
-        self.assertFalse(is_usable(record, SCOPE_METADATA))
+        record = point(1024, filesystem="exFAT", cluster_bytes=32768)
         self.assertEqual(metadata_points([record]), [])
+        self.assertEqual(
+            metadata_points([record], VolumeProfile(EXFAT, 32768)),
+            [(record.volume_bytes, record.metadata_bytes)],
+        )
 
-    def test_it_does_not_touch_the_copy_slack(self):
-        """Cluster arithmetic does not depend on the filesystem."""
-        record = point(1024, filesystem="exFAT")
+    def test_its_copy_slack_goes_to_its_own_profile(self):
+        """Stated the other way round before schema 6.
+
+        The copy slack was taken to be pure cluster arithmetic, and an exFAT
+        measurement went into the NTFS copy slack. exFAT spends a fraction of
+        NTFS's bytes per file, so it pulled the NTFS per-file slack down — the
+        dangerous side.
+        """
+        record = point(
+            1024,
+            filesystem="exFAT",
+            cluster_bytes=32768,
+            file_bytes=100 * 32768,
+            file_count=100,
+            left_bytes=volume_of(1024 * MIB) - 17_879_040 - 101 * 32768,
+        )
         self.assertTrue(is_usable(record, SCOPE_SLACK))
+        self.assertEqual(slack_samples([record]), [])
+        self.assertEqual(len(slack_samples([record], VolumeProfile(EXFAT, 32768))), 1)
 
     def test_empty_filesystem_means_not_read(self):
         """Every record made before this check existed is silently NTFS."""

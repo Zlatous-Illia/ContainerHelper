@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import fmt_both
-from ..sizes import SUPPORTED_FS, cluster_size, mounted_drives, volume_filesystem, volume_usage
+from ..records import DEFAULT_PROFILE, VolumeProfile, volume_profile
+from ..sizes import cluster_size, mounted_drives, volume_filesystem, volume_usage
 
 
 #: What the dialog does when opened without specifics. The caller usually
@@ -22,6 +23,18 @@ DEFAULT_PROMPT = (
     "Пустой том даёт ёмкость и метаданные NTFS, после\n"
     "копирования — остаток свободного места."
 )
+
+
+def _profile_text(profile: VolumeProfile) -> str:
+    """«exFAT, 32 KiB»: the profile as the warning names it."""
+    cluster = profile.cluster_bytes
+    if not cluster:
+        size = "кластер не определён"
+    elif cluster % 1024:
+        size = f"{cluster} B"
+    else:
+        size = f"{cluster // 1024} KiB"
+    return f"{profile.filesystem}, {size}"
 
 
 class MeasureDialog(QDialog):
@@ -91,14 +104,17 @@ class MeasureDialog(QDialog):
             return
 
         self.ok_button.setEnabled(True)
-        filesystem = volume_filesystem(drive) or "неизвестна"
+        raw_filesystem = volume_filesystem(drive)
+        filesystem = raw_filesystem or "неизвестна (считается NTFS)"
         cluster = cluster_size(drive)
         warning = ""
-        if filesystem.upper() not in (SUPPORTED_FS, "НЕИЗВЕСТНА"):
+        profile = volume_profile(raw_filesystem, cluster or 0)
+        if profile != DEFAULT_PROFILE:
             warning = (
-                f"\n\u26a0 Модель метаданных снята на {SUPPORTED_FS}. У {filesystem}"
-                f" накладные расходы устроены иначе, и в калибровку такой замер"
-                f" не пойдёт."
+                f"\n⚠ Замер пойдёт в профиль {_profile_text(profile)}. "
+                f"Расчёт пока ведётся только для "
+                f"{_profile_text(DEFAULT_PROFILE)}, и этот замер в нём не "
+                f"участвует."
             )
         self.details.setText(
             f"Ёмкость:   {fmt_both(total)}\n"

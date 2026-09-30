@@ -422,10 +422,18 @@ on NTFS is 4 KiB (on other filesystems the default cluster depends on the
 volume size, and an unread one stays 0). Until the profile can be chosen the
 program calculates for NTFS with 4 KiB, the only profile measured so far; the
 others' measurements stay in the files, but no model, chart or table shows
-them yet. Before schema 6 only the metadata was guarded, by check 1 and
-check 8; a copy record on exFAT or with another cluster went into the NTFS
-copy slack. Mixed in, it pulls the NTFS per-file slack down: exFAT spends a
-fraction of NTFS's bytes per file, and underestimate is the dangerous side.
+them yet. Before schema 6 only the metadata was guarded, by two checks on
+save that flagged a record of another filesystem or another NTFS cluster; a
+copy record on exFAT or with another cluster went into the NTFS copy slack.
+Mixed in, it pulls the NTFS per-file slack down: exFAT spends a fraction of
+NTFS's bytes per file, and underestimate is the dangerous side. The profile
+made both checks pointless and they are gone: a check keeps a record out of
+every calibration, the profile only out of the others', and an exFAT
+measurement is exactly what the exFAT calibration will be built from.
+
+The volume picker names the profile when it is not NTFS with 4 KiB: the
+measurement goes into that profile, and the calculation does not use it yet.
+Before, it said such a measurement would not go into the calibration at all.
 
 **A calibration point** is not marked by a separate field; the flag is derived:
 a record without `file_bytes` and without `left_bytes` is an empty-volume
@@ -553,19 +561,22 @@ will give a meaningless miss in one column, and that is all.
 Each check catches a real class of error:
 
 1. `container_mib > 0`, and `mounted_bytes <= volume_bytes` — otherwise the
-   filesystem tail is negative. On NTFS (or an unread filesystem) two more,
-   for the metadata model only (scope `metadata`): a cluster other than
-   4 KiB, because the metadata model is taken on 4 KiB alone; and, with
-   4 KiB, a tail other than exactly one cluster — a typo in `container_mib`
-   or `mounted_bytes` gives itself away here. An unread cluster (0) counts
-   as 4 KiB. On other filesystems the tail is not checked: check 8 keeps them
-   out anyway, and their tail is not measured yet.
+   filesystem tail is negative. On NTFS with 4 KiB (an unread filesystem is
+   NTFS, an unread cluster there is 4 KiB) one more, for the metadata model
+   only (scope `metadata`): a tail other than exactly one cluster — a typo in
+   `container_mib` or `mounted_bytes` gives itself away here. On other
+   profiles the tail is not checked: one cluster at other NTFS cluster sizes
+   is expected, not measured, and what exFAT and FAT keep back is not known.
+   A check that fired on a correct measurement would throw it out of its own
+   profile's calibration.
 2. `empty_free_bytes < mounted_bytes`.
-3. `volume_bytes - empty_free_bytes` from 1 MiB up to the larger of 128 MiB
-   and 2 % of `volume_bytes` — a rough filter for typos that drop or add
-   digits. The ceiling grows with the volume: on a terabyte the metadata is
-   136 MiB (factory point), past any fixed 128 MiB, and a fixed ceiling would
-   raise false alarms.
+3. On NTFS with 4 KiB: `volume_bytes - empty_free_bytes` from 1 MiB up to
+   the larger of 128 MiB and 2 % of `volume_bytes` — a rough filter for typos
+   that drop or add digits. The ceiling grows with the volume: on a terabyte
+   the metadata is 136 MiB (factory point), past any fixed 128 MiB, and a
+   fixed ceiling would raise false alarms. Other profiles are not checked,
+   for the reason of check 1: a small exFAT volume may well spend less than
+   a mebibyte.
 4. If `file_bytes` and `left_bytes` are filled in:
    `empty_free_bytes - left_bytes >= ceil(file_bytes / cluster_bytes) * cluster_bytes`.
    The space taken cannot be less than the file itself. This check would have
@@ -575,9 +586,12 @@ Each check catches a real class of error:
 6. If `file_alloc_bytes` is filled in: it is not less than `file_bytes`.
    Rounding up cannot reduce the size.
 7. If `file_alloc_bytes` is filled in: it is a multiple of `cluster_bytes`.
-8. If `filesystem` is filled in and it is not NTFS — the record does not go into
-   the calibration of the metadata model (scope `metadata`), but stays valid
-   for copy slack (`slack`).
+
+Another filesystem or another cluster is not a check: the volume profile
+keeps such a record out of the NTFS 4 KiB models (see "The volume profile").
+A record flagged by the former checks keeps its `flagged`: the flag is what
+the person chose on save, not a computed value, and it is lifted by saving the
+record again, when no check fires any more.
 
 A violation is a warning with the option to save anyway, but such a record is
 flagged and excluded from calibration.

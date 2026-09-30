@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -132,6 +133,31 @@ class MeasureDialogTests(unittest.TestCase):
     def test_without_wording_it_explains_both_cases(self):
         dialog = MeasureDialog()
         self.assertIn("Пустой том", dialog.prompt.text())
+
+    def details(self, filesystem, cluster):
+        """The dialog's text for one volume, read from substituted sizes."""
+        module = "containerhelper.ui.measure_dialog"
+        with (
+            mock.patch(f"{module}.mounted_drives", return_value=["X:\\"]),
+            mock.patch(f"{module}.volume_usage", return_value=(1024 * MIB, 512 * MIB)),
+            mock.patch(f"{module}.volume_filesystem", return_value=filesystem),
+            mock.patch(f"{module}.cluster_size", return_value=cluster),
+        ):
+            dialog = MeasureDialog()
+        return dialog.details.text()
+
+    def test_another_profile_is_named(self):
+        """The measurement is kept, not rejected: it goes to its own profile."""
+        text = self.details("exFAT", 32768)
+        self.assertIn("профиль exFAT, 32 KiB", text)
+        self.assertIn("NTFS, 4 KiB", text)
+
+    def test_another_ntfs_cluster_is_another_profile(self):
+        self.assertIn("профиль NTFS, 64 KiB", self.details("NTFS", 65536))
+
+    def test_the_default_profile_has_no_warning(self):
+        self.assertNotIn("профиль", self.details("NTFS", 4096))
+        self.assertNotIn("профиль", self.details("", None))
 
     def test_the_record_dialog_can_open_it(self):
         """Measure volume and Measure left space pass their own wording."""

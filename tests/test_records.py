@@ -14,6 +14,7 @@ from containerhelper.records import (
     Record,
     Store,
     StoreError,
+    VolumeProfile,
     is_usable,
     metadata_points,
     slack_samples,
@@ -94,16 +95,25 @@ class TailTests(unittest.TestCase):
         )
         self.assertEqual(short.metadata_bytes, reference.CACHE_1.metadata_bytes)
 
-    def test_another_ntfs_cluster_stays_out_of_the_metadata(self):
-        """The model is taken on 4 KiB; a correct 64 KiB tail must not let it in."""
+    def test_another_ntfs_cluster_stays_out_of_the_default_profile(self):
+        """The model is taken on 4 KiB; a 64 KiB point is another curve's node.
+
+        It used to be flagged by a "cluster" check of its own. The profile
+        keeps it apart now, and the record stays valid for its own profile.
+        """
         big = replace(
             reference.CACHE_1,
             cluster_bytes=65536,
             mounted_bytes=reference.CACHE_1.volume_bytes - 65536,
         )
-        self.assertIn("cluster", codes(big))
+        self.assertEqual(codes(big), set())
+        self.assertEqual(metadata_points([big]), [])
+        self.assertEqual(len(metadata_points([big], VolumeProfile("NTFS", 65536))), 1)
+
+    def test_an_unmeasured_ntfs_cluster_has_its_tail_unchecked(self):
+        """One cluster at 64 KiB is expected, not measured: no false alarm."""
+        big = replace(reference.CACHE_1, cluster_bytes=65536)
         self.assertNotIn("tail_unusual", codes(big))
-        self.assertFalse(is_usable(big, SCOPE_METADATA))
 
     def test_an_unread_cluster_counts_as_the_default(self):
         point = Record(
@@ -116,14 +126,23 @@ class TailTests(unittest.TestCase):
         self.assertEqual(codes(point), set())
 
     def test_the_tail_is_not_checked_off_ntfs(self):
-        """Other filesystems are kept out by their own check, not by the tail."""
+        """What exFAT keeps back is not measured yet."""
         fat = replace(
             reference.CACHE_1,
             filesystem="exFAT",
             mounted_bytes=reference.CACHE_1.mounted_bytes - MIB,
         )
-        self.assertIn("filesystem", codes(fat))
-        self.assertNotIn("tail_unusual", codes(fat))
+        self.assertEqual(codes(fat), set())
+
+    def test_the_metadata_range_is_not_checked_off_ntfs(self):
+        """A small exFAT volume may spend less than a mebibyte on metadata."""
+        fat = replace(
+            reference.CACHE_1,
+            filesystem="exFAT",
+            empty_free_bytes=reference.CACHE_1.volume_bytes - 512 * 1024,
+        )
+        self.assertEqual(codes(fat), set())
+        self.assertIn("ntfs_range", codes(replace(fat, filesystem="NTFS")))
 
     def test_free_space_above_capacity_is_caught(self):
         broken = replace(
