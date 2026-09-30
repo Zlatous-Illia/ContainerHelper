@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "name": "Русский",
+    "plural": "one_few_many",
+    "qt": "qtbase_ru",
+    "status": "reviewed"
+  },
+  "unit.auto": "Авто"
+}

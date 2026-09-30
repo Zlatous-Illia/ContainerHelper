@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "name": "English",
+    "plural": "one_other",
+    "qt": "qtbase_en",
+    "status": "reviewed"
+  },
+  "unit.auto": "Auto"
+}

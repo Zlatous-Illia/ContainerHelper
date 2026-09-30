@@ -8,11 +8,16 @@ Comments, docstrings, docs (`*.md`) and commit messages are **English**;
 identifiers are English. Terms come from `GLOSSARY.md` — one word per idea,
 and *copy slack* is never *safety margin*.
 
-The UI is still Russian, and its strings still live in the code as literals.
-They move to per-language catalogs (`containerhelper/locale/*.json`) in a
-later stage; until then, write new UI strings in Russian and don't translate
-existing ones in place. English prose quotes a Russian label only where the
-exact wording matters, in «guillemets».
+The UI is still Russian, and its strings are moving out of the code into
+per-language catalogs (`containerhelper/locale/<code>.json`), module by
+module. A new UI string goes in as a key: `tr("records.col.metadata")`, with
+the text in `en.json` and `ru.json` both; a string not yet moved stays a
+Russian literal and is not translated in place. English prose quotes a
+Russian label only where the exact wording matters, in «guillemets».
+
+`tests/test_i18n.py` fails on a key that is missing from a catalog or unused,
+on a key glued together (a key chosen by condition comes from a dict of
+literals), and on a `tr()` that runs at import.
 
 `tests/test_source_language.py` fails on Cyrillic in comments, docstrings or
 docs outside «…» and backticks.
@@ -128,6 +133,14 @@ is pixels, and no number from here goes back into the model.
 **`charts.py`** — building a `Chart` from measurements and models: nine
 charts. Also without Qt: what to draw is data, and what has to be checked is
 which points ended up on the chart and what the tooltip says.
+
+**`i18n.py`** — UI text by key: `tr`, `tr_n` (plural forms by the rule
+of the language), `set_language`. English is the reference and the fallback.
+The first launch speaks the Windows UI language if it is shipped, English
+otherwise (`system_language`); the suite pins Russian in `tests/__init__.py`.
+No Qt: the layers below `ui/` build text too. Text is built when shown, not
+when the object is created — a module-level constant holds the key, not the
+text, or it would stay in the language of the import.
 
 **`ui/`** — four tabs in working order: Calculation → Records → Model →
 Calibration. `app.py` owns the models and hands them to the tabs through

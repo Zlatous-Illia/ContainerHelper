@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .i18n import tr
 from .model import MIB
 
 #: Digit group separator on screen. A plain space, not a non-breaking one: the
@@ -108,9 +109,14 @@ class Unit:
     """Display unit. factor = 0 means auto-selection by magnitude."""
 
     key: str
-    label: str
+    symbol: str
     factor: int
     digits: int
+
+    @property
+    def label(self) -> str:
+        """The symbol; auto-selection has none and is named in words."""
+        return self.symbol or tr("unit.auto")
 
 
 UNIT_BYTE = Unit("B", "B", 1, 0)
@@ -118,7 +124,7 @@ UNIT_KIB = Unit("KiB", "KiB", 1024, 2)
 UNIT_MIB = Unit("MiB", "MiB", 1024**2, 2)
 UNIT_GIB = Unit("GiB", "GiB", 1024**3, 3)
 UNIT_TIB = Unit("TiB", "TiB", 1024**4, 3)
-UNIT_AUTO = Unit("auto", "Авто", 0, 2)
+UNIT_AUTO = Unit("auto", "", 0, 2)
 
 #: Order in the drop-down list. Bytes first: that is the default.
 UNITS = (UNIT_BYTE, UNIT_KIB, UNIT_MIB, UNIT_GIB, UNIT_TIB, UNIT_AUTO)
