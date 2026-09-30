@@ -7,7 +7,7 @@ from containerhelper.model import (
     DEFAULT_SLACK_PER_FILE,
     DEFAULT_NTFS_RATE,
     MIB,
-    VC_HEADER_BYTES,
+    VC_HEADERS_BYTES,
     CopySlackModel,
     MetadataModel,
     Payload,
@@ -57,7 +57,11 @@ class DerivedValueTests(unittest.TestCase):
     def test_veracrypt_header_is_constant_across_records(self):
         for record in reference.ALL:
             with self.subTest(record.id):
-                self.assertEqual(record.vc_header, VC_HEADER_BYTES)
+                self.assertEqual(
+                    record.container_bytes - record.mounted_bytes,
+                    VC_HEADERS_BYTES + record.cluster_bytes,
+                )
+                self.assertEqual(record.tail_bytes, record.cluster_bytes)
 
     def test_ntfs_overhead_matches_measurements(self):
         for record in reference.ALL:

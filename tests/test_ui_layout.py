@@ -27,6 +27,7 @@ QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.ui.table import TableGrip  # noqa: E402
 
 
@@ -49,8 +50,8 @@ def seeded(path):
             Record(
                 id=f"Test {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=gib * 1024 * 1024 * 1024 - 266_240,
-                empty_free_bytes=gib * 1024 * 1024 * 1024 - 266_240 - gib * 3_000_000,
+                mounted_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL,
+                empty_free_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL - gib * 3_000_000,
             )
             for gib in (1, 2, 4, 8, 16, 32, 64)
         ],

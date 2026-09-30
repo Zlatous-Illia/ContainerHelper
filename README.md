@@ -21,7 +21,7 @@ calculation also has to count the cluster tail and add a safety margin:
 
 | Component | Behaviour | Example for 700 MiB of data |
 |---|---|---|
-| VeraCrypt header | constant 266 240 B | 0.25 MiB |
+| VeraCrypt headers | constant 262 144 B | 0.25 MiB |
 | NTFS metadata | depends on the **volume** size, not on its contents | 16.7 MiB |
 | Copy slack | an MFT record per file + growth of directory indexes | 0.01 MiB |
 | Cluster tail | each file is rounded up to a whole cluster | part of the data |
@@ -283,7 +283,7 @@ Rules whose violation does not crash the program but quietly corrupts the
 numbers. The full list is in `SPEC.md` and in the comments next to the relevant
 code; here are the ones people trip over first:
 
-- **Computed values are not stored.** `metadata_bytes`, `vc_header`,
+- **Computed values are not stored.** `metadata_bytes`, `tail_bytes`,
   `copy_slack_measured` are properties, not JSON fields. Duplicating computed
   fields is exactly what spoiled the original handwritten records.
 - **Qt signals carrying volume sizes must be 64-bit** (`Signal("qint64", bool)`).

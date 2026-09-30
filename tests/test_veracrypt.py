@@ -11,6 +11,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from containerhelper.model import VC_HEADERS_BYTES
 from containerhelper.veracrypt import (
     CALIBRATION_PASSWORD,
     LETTER_TIMEOUT,
@@ -60,6 +61,7 @@ class Fake:
         #: tests to tell the two ways of creating a container apart.
         self.ntfs = 17_879_040
         self.total = 0
+        self.volume = 0
         self.cluster_bytes = 4096
         #: What the appearance of files costs on the fake volume. The numbers
         #: are the same as in the default model: what matters is not the value
@@ -110,7 +112,9 @@ class Fake:
             return
         letter = command[command.index("/letter") + 1]
         path = Path(command[command.index("/volume") + 1])
-        self.total = path.stat().st_size - 266_240
+        # The capacity is one cluster short of the volume, as on real NTFS.
+        self.volume = path.stat().st_size - VC_HEADERS_BYTES
+        self.total = self.volume - 4096
         self.drives.append(f"{letter}:")
 
     def _occupied(self) -> int:
@@ -172,7 +176,7 @@ class Fake:
         A stored value would not change when files are written, and the
         left-space measurement would return the same as the empty-volume one.
         """
-        return self.total - self.ntfs - self._occupied()
+        return self.volume - self.ntfs - self._occupied()
 
 
 class DiscoveryTests(unittest.TestCase):

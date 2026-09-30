@@ -31,12 +31,13 @@ from .model import (
     DEFAULT_CLUSTER_BYTES,
     DEFAULT_SAFETY_BYTES,
     MIB,
-    VC_HEADER_BYTES,
+    VC_HEADERS_BYTES,
     CopySlackModel,
     MetadataModel,
     SafetyModel,
     ceil_div,
     solve_container_mib,
+    volume_of,
 )
 from .records import Record
 from .sizes import scan_paths
@@ -240,7 +241,8 @@ class Measurement:
 
     @property
     def metadata_bytes(self) -> int:
-        return self.mounted_bytes - self.empty_free_bytes
+        """Counted from the volume size, as `Record.metadata_bytes` is."""
+        return volume_of(self.container_mib * MIB) - self.empty_free_bytes
 
     @property
     def copy_slack_bytes(self) -> int | None:
@@ -431,8 +433,8 @@ def disk_bytes(
     ntfs = ntfs or MetadataModel()
     if not (step.dynamic and step.quick):
         return step.container_mib * MIB
-    volume = step.container_mib * MIB - VC_HEADER_BYTES
-    return VC_HEADER_BYTES + ntfs.overhead(volume) + step.payload_bytes(cluster_bytes)
+    volume = volume_of(step.container_mib * MIB)
+    return VC_HEADERS_BYTES + ntfs.overhead(volume) + step.payload_bytes(cluster_bytes)
 
 
 def required_bytes(

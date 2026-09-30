@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .model import MIB, VC_HEADER_BYTES
+from .model import MIB, volume_of
 
 PACKAGE_DATA = "containerhelper.data"
 FACTORY_FILE = "factory_points.json"
@@ -37,8 +37,13 @@ class FactoryPoint:
     empty_free_bytes: int
 
     @property
+    def volume_bytes(self) -> int:
+        return volume_of(self.container_mib * MIB)
+
+    @property
     def metadata_bytes(self) -> int:
-        return self.mounted_bytes - self.empty_free_bytes
+        """Counted from the volume size, as `Record.metadata_bytes` is."""
+        return self.volume_bytes - self.empty_free_bytes
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,10 @@ class FactorySample:
     left_bytes: int
 
     @property
+    def volume_bytes(self) -> int:
+        return volume_of(self.container_mib * MIB)
+
+    @property
     def copy_slack_bytes(self) -> int:
         return (self.empty_free_bytes - self.left_bytes) - self.file_alloc_bytes
 
@@ -76,7 +85,7 @@ class FactoryData:
     samples: tuple[FactorySample, ...] = ()
 
     def by_volume(self) -> dict[int, FactoryPoint]:
-        return {point.mounted_bytes: point for point in self.points}
+        return {point.volume_bytes: point for point in self.points}
 
 
 def _empty() -> FactoryData:
@@ -161,4 +170,4 @@ def factory_data() -> FactoryData:
 
 def factory_volume(container_mib: int) -> int:
     """Volume size produced by a container of this size."""
-    return container_mib * MIB - VC_HEADER_BYTES
+    return volume_of(container_mib * MIB)

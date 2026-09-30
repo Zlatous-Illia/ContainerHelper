@@ -6,6 +6,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from containerhelper.model import MIB, VC_HEADERS_BYTES
 from containerhelper.records import (
     SCHEMA_VERSION,
     SCOPE_METADATA,
@@ -53,20 +54,76 @@ class ValidationTests(unittest.TestCase):
         volume = 100 * 1024**3
         record = Record(
             id="big",
-            container_mib=(volume + 266_240) // (1024 * 1024),
+            container_mib=(volume + reference.HEADERS_AND_TAIL) // (1024 * 1024),
             mounted_bytes=volume,
             empty_free_bytes=volume - 100 * 1024 * 1024,
         )
         self.assertNotIn("ntfs_range", codes(record))
 
     def test_wrong_container_size_is_caught(self):
-        """The VeraCrypt header is constant; a deviation gives away a typo."""
+        """The NTFS tail is one cluster; a deviation gives away a typo."""
         broken = replace(reference.CACHE_1, container_mib=11131)
-        self.assertIn("header_unusual", codes(broken))
+        self.assertIn("tail_unusual", codes(broken))
 
     def test_volume_larger_than_container_is_caught(self):
         broken = replace(reference.CACHE_1, container_mib=1)
-        self.assertIn("header", codes(broken))
+        self.assertIn("tail_negative", codes(broken))
+
+
+class TailTests(unittest.TestCase):
+    """The filesystem tail: the volume size minus the measured capacity.
+
+    It used to hide inside a single 266 240 B header constant, which also kept
+    every volume other than NTFS with a 4 KiB cluster out of the calibration —
+    by accident, through a header that "came out wrong". The checks below say
+    it on purpose.
+    """
+
+    def test_the_parts_add_up_to_the_container(self):
+        for record in reference.ALL:
+            with self.subTest(record.id):
+                self.assertEqual(
+                    VC_HEADERS_BYTES + record.metadata_bytes + record.empty_free_bytes,
+                    record.container_bytes,
+                )
+
+    def test_the_metadata_does_not_follow_the_capacity(self):
+        """FAT leaves its tables out of the capacity; the volume size stays."""
+        short = replace(
+            reference.CACHE_1, mounted_bytes=reference.CACHE_1.mounted_bytes - MIB
+        )
+        self.assertEqual(short.metadata_bytes, reference.CACHE_1.metadata_bytes)
+
+    def test_another_ntfs_cluster_stays_out_of_the_metadata(self):
+        """The model is taken on 4 KiB; a correct 64 KiB tail must not let it in."""
+        big = replace(
+            reference.CACHE_1,
+            cluster_bytes=65536,
+            mounted_bytes=reference.CACHE_1.volume_bytes - 65536,
+        )
+        self.assertIn("cluster", codes(big))
+        self.assertNotIn("tail_unusual", codes(big))
+        self.assertFalse(is_usable(big, SCOPE_METADATA))
+
+    def test_an_unread_cluster_counts_as_the_default(self):
+        point = Record(
+            id="Точка",
+            container_mib=1024,
+            cluster_bytes=0,
+            mounted_bytes=1024 * MIB - reference.HEADERS_AND_TAIL,
+            empty_free_bytes=1000 * MIB,
+        )
+        self.assertEqual(codes(point), set())
+
+    def test_the_tail_is_not_checked_off_ntfs(self):
+        """Other filesystems are kept out by their own check, not by the tail."""
+        fat = replace(
+            reference.CACHE_1,
+            filesystem="exFAT",
+            mounted_bytes=reference.CACHE_1.mounted_bytes - MIB,
+        )
+        self.assertIn("filesystem", codes(fat))
+        self.assertNotIn("tail_unusual", codes(fat))
 
     def test_free_space_above_capacity_is_caught(self):
         broken = replace(
@@ -138,7 +195,14 @@ class StoreTests(unittest.TestCase):
         Store(path=self.path, records=[reference.CACHE_1]).save()
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         stored = raw["records"][0]
-        for forbidden in ("metadata_bytes", "vc_header", "consumed_bytes", "container_bytes"):
+        for forbidden in (
+            "metadata_bytes",
+            "vc_header",
+            "tail_bytes",
+            "volume_bytes",
+            "consumed_bytes",
+            "container_bytes",
+        ):
             self.assertNotIn(forbidden, stored)
 
     def test_missing_optional_fields_are_omitted(self):

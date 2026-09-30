@@ -35,8 +35,8 @@ from ..formatting import (
     plural,
     unit_suffix,
 )
-from ..model import MIB, VC_HEADER_BYTES
-from ..records import Record, forecast
+from ..model import MIB, VC_HEADERS_BYTES, volume_of
+from ..records import Record, forecast, gives_metadata_point
 from .chart_window import CHART_NTFS
 from .table import (
     fit_columns,
@@ -95,9 +95,9 @@ COLUMNS = (
     (
         "Метаданные NTFS",
         True,
-        "Сколько файловая система забирает себе на пустом томе: ёмкость "
-        "минус свободное место сразу после форматирования. Эту величину "
-        "модель и предсказывает.",
+        "Сколько файловая система забирает себе на пустом томе: размер "
+        "тома минус свободное место сразу после форматирования. Эту "
+        "величину модель и предсказывает.",
     ),
     (
         "",
@@ -399,9 +399,9 @@ class CalibrationTab(QWidget):
 
     def refresh(self) -> None:
         own = {
-            record.mounted_bytes: record
+            record.volume_bytes: record
             for record in self._points()
-            if record.mounted_bytes
+            if gives_metadata_point(record)
         }
         factory = factory_data().by_volume()
 
@@ -409,7 +409,7 @@ class CalibrationTab(QWidget):
         counts = {"own": 0, "factory": 0, "missing": 0}
 
         for row, size_mib in enumerate(RECOMMENDED_MIB):
-            volume = size_mib * MIB - VC_HEADER_BYTES
+            volume = volume_of(size_mib * MIB)
             record = own.get(volume)
             point = factory.get(volume)
 
@@ -501,7 +501,7 @@ class CalibrationTab(QWidget):
 
     def _slack_tooltip(self, record: Record) -> str:
         lines = [
-            f"Контейнер {fmt_bytes(record.container_mib)} MiB, том "
+            f"Контейнер {fmt_bytes(record.container_mib)} MiB, ёмкость тома "
             f"{fmt_bytes(record.mounted_bytes)} B, кластер "
             f"{fmt_bytes(record.cluster_bytes)} B."
         ]
@@ -576,8 +576,8 @@ class CalibrationTab(QWidget):
         """
         lines = [
             f"Контейнер {fmt_bytes(size_mib)} MiB, том {fmt_bytes(volume)} B "
-            f"— заголовок VeraCrypt {fmt_bytes(VC_HEADER_BYTES)} B уже "
-            f"вычтен.",
+            f"— заголовки VeraCrypt {fmt_bytes(VC_HEADERS_BYTES)} B уже "
+            f"вычтены.",
             f"Состояние: {source}.",
         ]
         if record is not None:
@@ -600,7 +600,7 @@ class CalibrationTab(QWidget):
         layout.addWidget(take)
 
         if record is not None and point is not None:
-            volume = size_mib * MIB - VC_HEADER_BYTES
+            volume = volume_of(size_mib * MIB)
             if record.disabled:
                 restore = QPushButton("Вернуть своё")
                 restore.setToolTip(

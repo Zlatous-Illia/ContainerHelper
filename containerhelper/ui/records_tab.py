@@ -68,20 +68,22 @@ COLUMNS = (
     (
         "Container init, MiB",
         COL_COUNT,
-        "Размер, заданный в VeraCrypt при создании контейнера. Больше ёмкости "
-        "тома ровно на заголовок VeraCrypt.",
+        "Размер, заданный в VeraCrypt при создании контейнера. Без "
+        "заголовков VeraCrypt это размер тома — от него и зависят "
+        "метаданные NTFS.",
     ),
     (
         "Ёмкость тома",
         COL_BYTES,
-        "Сколько показывает смонтированный том. От него и зависят "
-        "метаданные NTFS.",
+        "Сколько показывает смонтированный том: размер тома без одного "
+        "кластера, который NTFS оставляет себе. По разнице видна опечатка "
+        "в размере контейнера.",
     ),
     (
         "NTFS",
         COL_BYTES,
-        "Ёмкость тома минус свободное место на пустом. Считается на лету, в "
-        "файл не пишется.",
+        "Размер тома (контейнер без заголовков VeraCrypt) минус свободное "
+        "место на пустом. Считается на лету, в файл не пишется.",
     ),
     (
         "Откл. от базовой",
@@ -595,7 +597,7 @@ class RecordsTab(QWidget):
             deviation = None
             if record.metadata_bytes is not None and record.mounted_bytes:
                 deviation = record.metadata_bytes - self._baseline.overhead(
-                    record.mounted_bytes
+                    record.volume_bytes
                 )
             issues = validate(record)
             status = "помечена" if record.flagged else ("ошибки" if issues else "ок")

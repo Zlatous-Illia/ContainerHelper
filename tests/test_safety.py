@@ -16,7 +16,9 @@ from containerhelper.model import (
     MetadataModel,
     SafetyModel,
 )
+from containerhelper.model import volume_of as model_volume_of
 from containerhelper.records import Record, build_safety
+from tests.reference import HEADERS_AND_TAIL
 
 GIB = 1024**3
 
@@ -43,7 +45,7 @@ def grid_records():
         Record(
             id=f"Test {mib // 1024} GiB",
             container_mib=mib,
-            mounted_bytes=mib * MIB - 266_240,
+            mounted_bytes=mib * MIB - HEADERS_AND_TAIL,
             empty_free_bytes=free,
         )
         for mib, free in GRID
@@ -51,7 +53,7 @@ def grid_records():
 
 
 def volume_of(mib):
-    return mib * MIB - 266_240
+    return model_volume_of(mib * MIB)
 
 
 class InterpolationBoundTests(unittest.TestCase):

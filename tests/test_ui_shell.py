@@ -23,6 +23,7 @@ from containerhelper.ui.app import MIN_WINDOW_WIDTH, MainWindow  # noqa: E402
 from containerhelper.ui.calibration_tab import RECOMMENDED_MIB  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
 from containerhelper.ui.table import MIN_TABLE_ROWS, height_for_rows  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 
 
 def seeded(path):
@@ -32,8 +33,8 @@ def seeded(path):
             Record(
                 id=f"Test {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=gib * 1024 * 1024 * 1024 - 266_240,
-                empty_free_bytes=gib * 1024 * 1024 * 1024 - 266_240 - gib * 3_000_000,
+                mounted_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL,
+                empty_free_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL - gib * 3_000_000,
             )
             for gib in (1, 2, 4, 8, 16, 32, 64, 100)
         ],

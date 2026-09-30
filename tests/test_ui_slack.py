@@ -24,7 +24,8 @@ QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.fileset import FILE_SETS, KIB, FileSet, Group  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.model import MIB  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.calibration_tab import (  # noqa: E402
@@ -41,7 +42,7 @@ from tests.test_veracrypt import Fake, make_install
 TINY_SET = FileSet("tiny", "10 файлов по 1 KiB", (Group(10, KIB),))
 FAT_SET = FileSet("fat", "4 файла по 1 MiB", (Group(4, MIB),))
 
-VOLUME = 1024 * MIB - VC_HEADER_BYTES
+VOLUME = 1024 * MIB - HEADERS_AND_TAIL
 
 
 def column_of(columns, title: str) -> int:

@@ -14,7 +14,7 @@ from containerhelper.collect import (
     plan,
     self_check_verdict,
 )
-from containerhelper.model import MIB, VC_HEADER_BYTES
+from containerhelper.model import MIB
 from containerhelper.veracrypt import (
     VeraCrypt,
     VeraCryptError,
@@ -22,6 +22,7 @@ from containerhelper.veracrypt import (
     install_at,
 )
 
+from tests.reference import HEADERS_AND_TAIL
 from tests.test_veracrypt import Fake, make_install
 
 #: Tiny sizes: the step does not care what size it is, and there is no reason
@@ -30,7 +31,7 @@ TINY = (1, 2, 4)
 
 
 def measurement(mib, ntfs):
-    volume = mib * MIB - VC_HEADER_BYTES
+    volume = mib * MIB - HEADERS_AND_TAIL
     return Measurement(
         container_mib=mib,
         mounted_bytes=volume,
@@ -110,6 +111,8 @@ class MeasurementTests(unittest.TestCase):
         stored = measurement(1024, 17_879_040).as_record().to_json()
         self.assertNotIn("metadata_bytes", stored)
         self.assertNotIn("vc_header", stored)
+        self.assertNotIn("tail_bytes", stored)
+        self.assertNotIn("volume_bytes", stored)
         self.assertEqual(stored["container_mib"], 1024)
         self.assertEqual(stored["filesystem"], "NTFS")
 
@@ -150,7 +153,7 @@ class Fixture(unittest.TestCase):
 class MeasureTests(Fixture):
     def test_one_step_gives_the_volume_facts(self):
         result = measure(self.vc, self.workdir, Step(1))
-        self.assertEqual(result.mounted_bytes, MIB - VC_HEADER_BYTES)
+        self.assertEqual(result.mounted_bytes, MIB - HEADERS_AND_TAIL)
         self.assertEqual(result.cluster_bytes, 4096)
         self.assertEqual(result.filesystem, "NTFS")
 

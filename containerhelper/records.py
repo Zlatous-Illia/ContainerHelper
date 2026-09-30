@@ -1,7 +1,8 @@
 """Measurement records: schema, checks, JSON store.
 
 Schema rule: only measured values are written to the file. Everything
-computable (VeraCrypt header, NTFS metadata, used space, copy slack) is
+computable (volume size, filesystem tail, NTFS metadata, used space, copy
+slack) is
 computed on read and never saved. In the original manual records the
 contradictions appeared precisely because of duplicated computable fields.
 """
@@ -22,12 +23,13 @@ from .sizes import SUPPORTED_FS
 from .model import (
     DEFAULT_CLUSTER_BYTES,
     MIB,
-    VC_HEADER_BYTES,
+    VC_HEADERS_BYTES,
     CopySlackModel,
     MetadataModel,
     SafetyModel,
     ceil_div,
     round_up,
+    volume_of,
 )
 
 SCHEMA_VERSION = 5
@@ -116,16 +118,35 @@ class Record:
         return self.container_mib * MIB
 
     @property
-    def vc_header(self) -> int | None:
+    def volume_bytes(self) -> int:
+        """The volume size: the container without the VeraCrypt headers.
+
+        Not the measured capacity: that one is smaller by the filesystem tail
+        (`tail_bytes`). This is the X axis of the metadata model and the key
+        a calibration point is found by.
+        """
+        return volume_of(self.container_bytes)
+
+    @property
+    def tail_bytes(self) -> int | None:
+        """What the filesystem holds back from its own capacity: one cluster on NTFS."""
         if self.mounted_bytes is None:
             return None
-        return self.container_bytes - self.mounted_bytes
+        return self.volume_bytes - self.mounted_bytes
 
     @property
     def metadata_bytes(self) -> int | None:
+        """Everything the empty volume does not give to files, the tail included.
+
+        Counted from the volume size rather than from the measured capacity:
+        what the capacity leaves out differs between filesystems — FAT does
+        not count its tables into it — and the volume size is the same for
+        all of them. The measured capacity is still required: without it
+        nothing checks that the container size was entered right.
+        """
         if self.mounted_bytes is None or self.empty_free_bytes is None:
             return None
-        return self.mounted_bytes - self.empty_free_bytes
+        return self.volume_bytes - self.empty_free_bytes
 
     @property
     def consumed_bytes(self) -> int | None:
@@ -170,10 +191,11 @@ class Record:
     def minimum_mib(self) -> int | None:
         """The smallest container this data would still have fitted into.
 
-        The used space on the volume is `mounted_bytes - left_bytes`, and it
-        already includes everything: NTFS metadata, the cluster-rounded data
-        and copy slack. Add the VeraCrypt header and round up to MiB — and you
-        get the Container init that would have been just enough.
+        The used space on the volume is `volume_bytes - left_bytes`, and it
+        already includes everything: NTFS metadata with the filesystem tail,
+        the cluster-rounded data and copy slack. Add the VeraCrypt headers and
+        round up to MiB — and you get the Container init that would have been
+        just enough.
 
         The estimate is slightly high: a smaller container would give a
         smaller volume, and with it less metadata. The error goes towards
@@ -183,7 +205,7 @@ class Record:
         """
         if self.mounted_bytes is None or self.left_bytes is None:
             return None
-        return ceil_div(self.mounted_bytes - self.left_bytes + VC_HEADER_BYTES, MIB)
+        return ceil_div(self.volume_bytes - self.left_bytes + VC_HEADERS_BYTES, MIB)
 
     @property
     def miss_mib(self) -> int | None:
@@ -289,24 +311,42 @@ def validate(record: Record) -> list[Issue]:
     mounted = record.mounted_bytes
     free = record.empty_free_bytes
 
-    if mounted is not None:
-        header = record.container_bytes - mounted
-        if header <= 0:
+    # The tail is checked only on NTFS: the other filesystems do not reach
+    # the calibration at all (the "filesystem" check below), and what their
+    # tail should be is not measured yet. And only with the 4 KiB cluster:
+    # the metadata model is taken on it alone, and that the tail is one
+    # cluster is measured, not assumed, only for it.
+    is_ntfs = not record.filesystem or record.filesystem.upper() == SUPPORTED_FS
+    cluster = record.cluster_bytes or DEFAULT_CLUSTER_BYTES
+    tail = record.tail_bytes
+    if tail is not None:
+        if tail < 0:
             issues.append(
                 Issue(
-                    "header",
-                    f"Размер тома ({mounted}) не меньше размера контейнера "
-                    f"({record.container_bytes}): заголовок VeraCrypt получается "
-                    f"отрицательным.",
+                    "tail_negative",
+                    f"Ёмкость тома ({mounted}) больше, чем контейнер без "
+                    f"заголовков VeraCrypt ({record.volume_bytes}). Проверьте "
+                    f"container_mib и mounted_bytes.",
                     SCOPE_METADATA,
                 )
             )
-        elif header != VC_HEADER_BYTES:
+        elif is_ntfs and cluster != DEFAULT_CLUSTER_BYTES:
             issues.append(
                 Issue(
-                    "header_unusual",
-                    f"Заголовок VeraCrypt вышел {header} B вместо ожидаемых "
-                    f"{VC_HEADER_BYTES} B. Проверьте container_mib и mounted_bytes.",
+                    "cluster",
+                    f"Кластер тома {cluster} B, а модель метаданных снята на "
+                    f"кластере {DEFAULT_CLUSTER_BYTES} B. С другим кластером "
+                    f"метаданные другие, и в калибровку такая запись не идёт.",
+                    SCOPE_METADATA,
+                )
+            )
+        elif is_ntfs and tail != cluster:
+            issues.append(
+                Issue(
+                    "tail_unusual",
+                    f"Ёмкость тома меньше контейнера без заголовков VeraCrypt "
+                    f"на {tail} B, а NTFS оставляет себе ровно один кластер, "
+                    f"{cluster} B. Проверьте container_mib и mounted_bytes.",
                     SCOPE_METADATA,
                 )
             )
@@ -321,8 +361,8 @@ def validate(record: Record) -> list[Issue]:
                 )
             )
         else:
-            ntfs = mounted - free
-            ceiling = max(NTFS_MAX_FLOOR, int(mounted * NTFS_MAX_SHARE))
+            ntfs = record.volume_bytes - free
+            ceiling = max(NTFS_MAX_FLOOR, int(record.volume_bytes * NTFS_MAX_SHARE))
             if not (NTFS_MIN_BYTES <= ntfs <= ceiling):
                 issues.append(
                     Issue(
@@ -416,14 +456,25 @@ def is_usable(record: Record, scope: str = SCOPE_BOTH) -> bool:
     return not any(issue.affects(scope) for issue in validate(record))
 
 
+def gives_metadata_point(record: Record) -> bool:
+    """Whether the record puts a point on the metadata curve.
+
+    Also what decides whether it covers a size: a record that does not reach
+    the curve must not push the factory point at that size off it either.
+    The key is the volume size, the same for every filesystem and cluster, so
+    an exFAT or an 8 KiB record lands on a factory size — and, kept out of
+    the model by its own issue, would leave the curve one node short.
+    """
+    return record.metadata_bytes is not None and is_usable(record, SCOPE_METADATA)
+
+
 def metadata_points(records: Iterable[Record]) -> list[tuple[int, int]]:
     """Points (volume size → NTFS metadata) for calibrating MetadataModel."""
-    points = []
-    for record in records:
-        overhead = record.metadata_bytes
-        if overhead is not None and is_usable(record, SCOPE_METADATA):
-            points.append((record.mounted_bytes, overhead))
-    return points
+    return [
+        (record.volume_bytes, record.metadata_bytes)
+        for record in records
+        if gives_metadata_point(record)
+    ]
 
 
 def slack_samples(records: Iterable[Record]) -> list[tuple[int, int]]:
@@ -464,7 +515,7 @@ def build_safety(
     """
     checks = metadata_cross_check(records)
     deviations = [
-        (check.record.mounted_bytes, check.deviation, check.record.id)
+        (check.record.volume_bytes, check.deviation, check.record.id)
         for check in checks
         if check.record.mounted_bytes
     ]
@@ -513,7 +564,7 @@ def metadata_cross_check(records: Sequence[Record]) -> list[Check]:
             Check(
                 record=record,
                 measured=measured,
-                predicted=model.overhead(record.mounted_bytes),
+                predicted=model.overhead(record.volume_bytes),
                 calibrated=model.calibrated,
             )
         )
@@ -740,9 +791,9 @@ class Store:
         # The own measurements file outranks the arrived one: if the user has
         # already taken a point on this volume, the old copy from the records
         # file does not supersede it.
-        covered = {record.mounted_bytes for record in points}
+        covered = {record.volume_bytes for record in points}
         points.extend(
-            record for record in legacy if record.mounted_bytes not in covered
+            record for record in legacy if record.volume_bytes not in covered
         )
 
         store = cls(
@@ -785,14 +836,15 @@ class Store:
         any foreign one.
         """
         own = [record for record in self.calibration if not record.disabled]
-        covered = {record.mounted_bytes for record in own if record.mounted_bytes}
-        covered.update(
-            record.mounted_bytes for record in self.records if record.mounted_bytes
-        )
+        covered = {
+            record.volume_bytes
+            for record in [*own, *self.records]
+            if gives_metadata_point(record)
+        }
 
         filled = list(own)
         for point in factory_data().points:
-            if point.mounted_bytes in covered:
+            if point.volume_bytes in covered:
                 continue
             filled.append(
                 Record(
@@ -846,7 +898,7 @@ class Store:
 
         Superseding is separate: a calibration point replaces the point on
         the same volume, a copy-slack measurement replaces the measurement of
-        the same file set. A shared key by `mounted_bytes` would knock out an
+        the same file set. A shared key by `volume_bytes` would knock out an
         NTFS point with a copy-slack measurement taken at the same volume
         size, and vice versa — silently, because both records look equally
         legitimate.
@@ -856,7 +908,7 @@ class Store:
                 item
                 for item in self.calibration
                 if not item.is_calibration_point
-                or item.mounted_bytes != record.mounted_bytes
+                or item.volume_bytes != record.volume_bytes
             ]
         else:
             key = slack_key(record)
@@ -877,12 +929,12 @@ class Store:
         collection took the foreign numbers.
         """
         own = {
-            record.mounted_bytes
+            record.volume_bytes
             for record in [*self.records, *self.calibration]
-            if record.mounted_bytes and not record.disabled
+            if gives_metadata_point(record) and not record.disabled
         }
-        volumes = {point.mounted_bytes for point in factory_data().points}
-        volumes.update(sample.mounted_bytes for sample in factory_data().samples)
+        volumes = {point.volume_bytes for point in factory_data().points}
+        volumes.update(sample.volume_bytes for sample in factory_data().samples)
         return {volume for volume in volumes if volume not in own}
 
     def models(self) -> tuple[MetadataModel, CopySlackModel]:

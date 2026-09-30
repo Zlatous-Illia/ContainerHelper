@@ -10,7 +10,13 @@ check that validation catches this but still takes the point for the NTFS
 model from it.
 """
 
+from containerhelper.model import DEFAULT_CLUSTER_BYTES, VC_HEADERS_BYTES
 from containerhelper.records import Record
+
+#: Container minus volume capacity on NTFS with a 4 KiB cluster: the VeraCrypt
+#: headers plus the one-cluster filesystem tail. The 266 240 B measured on all
+#: three records below; tests build a realistic capacity with it.
+HEADERS_AND_TAIL = VC_HEADERS_BYTES + DEFAULT_CLUSTER_BYTES
 
 CACHE_1 = Record(
     id="Cache 1",
@@ -47,11 +53,13 @@ CACHE_4 = Record(
 
 ALL = [CACHE_1, CACHE_2, CACHE_4]
 
-#: NTFS metadata, derived as mounted - empty_free.
+#: NTFS metadata, derived as volume - empty_free: what Explorer showed as
+#: capacity minus free space, plus the one-cluster filesystem tail the
+#: capacity leaves out.
 EXPECTED_NTFS = {
-    "Cache 1": 40_316_928,
-    "Cache 2": 36_573_184,
-    "Cache 4": 34_074_624,
+    "Cache 1": 40_316_928 + DEFAULT_CLUSTER_BYTES,
+    "Cache 2": 36_573_184 + DEFAULT_CLUSTER_BYTES,
+    "Cache 4": 34_074_624 + DEFAULT_CLUSTER_BYTES,
 }
 
 #: Copy slack, derived as (empty_free - left) - alloc(file).

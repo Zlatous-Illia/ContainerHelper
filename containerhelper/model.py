@@ -12,14 +12,27 @@ from typing import Iterable, Sequence
 
 MIB = 1024 * 1024
 
-#: VeraCrypt header. Measured on three containers, matched to the byte:
-#: container_bytes - mounted_bytes == 266240 for 8050, 10475 and 11130 MiB.
-VC_HEADER_BYTES = 266_240
+#: VeraCrypt headers: 128 KiB at the start of the container (the header and
+#: the hidden volume's header) and their 128 KiB backup at the end. The
+#: volume size is the container minus exactly this, whatever the filesystem.
+#:
+#: The container never matched the volume capacity by this alone: on three
+#: containers, 8050, 10475 and 11130 MiB, `container_bytes - mounted_bytes`
+#: came out 266 240 B to the byte — 4096 B more. Those 4096 B are the
+#: filesystem's, not VeraCrypt's: NTFS with a 4 KiB cluster reports a
+#: capacity one cluster short of its volume. They used to be counted into a
+#: single header constant, which held only as long as every volume was NTFS
+#: with that one cluster size; now they are the filesystem tail
+#: (`Record.tail_bytes`) and go into the metadata, where the filesystem's
+#: other overhead lies.
+VC_HEADERS_BYTES = 262_144
 
-#: Default NTFS metadata model: 19 MiB + 0.17 % of the volume size.
+#: Default NTFS metadata model: 19 MiB + 4 KiB + 0.17 % of the volume size.
 #: The largest underestimate on the three original records (Cache 1, 2 and 4)
-#: is 554 330 B (0.53 MiB), on Cache 1.
-DEFAULT_NTFS_BASE = 19 * MIB
+#: is 554 330 B (0.53 MiB), on Cache 1. The 19 MiB were fitted while the
+#: filesystem tail was still counted into the header; the 4 KiB is that tail,
+#: moved into the metadata along with it, so that the model does not lose it.
+DEFAULT_NTFS_BASE = 19 * MIB + 4096
 DEFAULT_NTFS_RATE = 0.0017
 
 #: Copy slack when there are no measurements at all — neither own nor
@@ -62,7 +75,10 @@ def round_up(value: int, unit: int) -> int:
 
 
 class MetadataModel:
-    """NTFS metadata as a function of the mounted volume size.
+    """NTFS metadata as a function of the volume size (`volume_of`).
+
+    The metadata here includes the filesystem tail: it is what the empty
+    volume does not give to files, `volume - empty free space`.
 
     Fewer than two points — the default affine model. Two or more —
     piecewise-linear interpolation over the measured points, and outside the
@@ -352,6 +368,17 @@ class Solution:
     slack_unverified: bool
 
 
+def volume_of(container_bytes: int) -> int:
+    """Volume size of a container: everything VeraCrypt leaves to the filesystem.
+
+    Computed, not measured. The measured capacity (`mounted_bytes`) is smaller
+    by the filesystem tail, and the tail differs between filesystems and
+    cluster sizes; the volume size does not. That is why it is the X axis of
+    the metadata model and the key of a calibration point.
+    """
+    return container_bytes - VC_HEADERS_BYTES
+
+
 def solve_container_mib(
     payload: Payload,
     ntfs: MetadataModel | None = None,
@@ -369,7 +396,7 @@ def solve_container_mib(
     slack = slack or CopySlackModel()
 
     slack_bytes = slack.slack(payload.file_count)
-    fixed = payload.alloc_bytes + VC_HEADER_BYTES + slack_bytes + safety_bytes
+    fixed = payload.alloc_bytes + VC_HEADERS_BYTES + slack_bytes + safety_bytes
 
     volume_guess = payload.alloc_bytes
     container_mib = 0
@@ -378,13 +405,13 @@ def solve_container_mib(
     for _ in range(max_iterations):
         metadata_bytes = ntfs.overhead(volume_guess)
         container_mib = ceil_div(fixed + metadata_bytes, MIB)
-        next_volume = container_mib * MIB - VC_HEADER_BYTES
+        next_volume = volume_of(container_mib * MIB)
         if next_volume == volume_guess:
             break
         volume_guess = next_volume
 
     container_bytes = container_mib * MIB
-    volume_bytes = container_bytes - VC_HEADER_BYTES
+    volume_bytes = volume_of(container_bytes)
     metadata_bytes = ntfs.overhead(volume_bytes)
 
     return Solution(
@@ -394,7 +421,7 @@ def solve_container_mib(
         payload_logical=payload.logical_bytes,
         payload_alloc=payload.alloc_bytes,
         cluster_tail=payload.cluster_tail,
-        vc_header=VC_HEADER_BYTES,
+        vc_header=VC_HEADERS_BYTES,
         metadata_bytes=metadata_bytes,
         copy_slack=slack_bytes,
         safety_bytes=safety_bytes,

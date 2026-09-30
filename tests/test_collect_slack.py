@@ -35,10 +35,10 @@ from containerhelper.factory import factory_data
 from containerhelper.fileset import KIB, FileSet, Group
 from containerhelper.model import (
     MIB,
-    VC_HEADER_BYTES,
     CopySlackModel,
     MetadataModel,
     solve_container_mib,
+    volume_of,
 )
 from containerhelper.veracrypt import VeraCrypt, VeraCryptError, install_at
 
@@ -228,7 +228,7 @@ class ProgressShareTests(unittest.TestCase):
 
     def test_a_calibrated_model_sharpens_the_estimate(self):
         """Space is estimated by the very model the collection calibrates."""
-        volume = 2048 * MIB - VC_HEADER_BYTES
+        volume = volume_of(2048 * MIB)
         model = MetadataModel([(volume, 3 * MIB), (2 * volume, 4 * MIB)])
         self.assertLess(required_bytes(Step(2048), model), required_bytes(Step(2048)))
 

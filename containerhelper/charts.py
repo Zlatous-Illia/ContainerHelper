@@ -13,11 +13,11 @@ from .factory import factory_data
 from .formatting import fmt_both, fmt_bytes, plural, size_label
 from .model import (
     MIB,
-    VC_HEADER_BYTES,
     CopySlackModel,
     MetadataModel,
     Payload,
     Solution,
+    volume_of,
 )
 from .plot import (
     AXIS_BYTES,
@@ -39,6 +39,7 @@ from .plot import (
 )
 from .records import (
     Record,
+    gives_metadata_point,
     metadata_cross_check,
     metadata_points,
     slack_cross_check,
@@ -92,16 +93,16 @@ def uncovered(store, sizes: Sequence[int]) -> list[int]:
     there is no factory one at that size either.
     """
     own = {
-        record.mounted_bytes
+        record.volume_bytes
         for record in store.calibration_points()
-        if record.mounted_bytes and not record.disabled
+        if gives_metadata_point(record) and not record.disabled
     }
     factory = factory_data().by_volume()
     return [
         size_mib
         for size_mib in sizes
-        if (size_mib * MIB - VC_HEADER_BYTES) not in own
-        and (size_mib * MIB - VC_HEADER_BYTES) not in factory
+        if volume_of(size_mib * MIB) not in own
+        and volume_of(size_mib * MIB) not in factory
     ]
 
 
@@ -126,10 +127,10 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
         if overhead is None or not record.mounted_bytes:
             continue
         point = Point(
-            float(record.mounted_bytes),
+            float(record.volume_bytes),
             float(overhead),
             f"{record.id}\n"
-            f"Том: {fmt_both(record.mounted_bytes)}\n"
+            f"Том: {fmt_both(record.volume_bytes)}\n"
             f"Метаданные: {fmt_both(overhead)}",
             key=record.id,
         )
@@ -181,7 +182,7 @@ def ntfs_residuals(store) -> Chart:
         for check in metadata_cross_check(store.all_for_model())
         if check.record.mounted_bytes
     ]
-    volumes = [check.record.mounted_bytes for check in checks]
+    volumes = [check.record.volume_bytes for check in checks]
     # The outermost points are a special case: without them the model has
     # nothing to draw a straight line between, and it is forced to extrapolate
     # with the baseline slope. The miss there is hundreds of times larger and
@@ -197,16 +198,16 @@ def ntfs_residuals(store) -> Chart:
     for check in checks:
         record = check.record
         point = Point(
-            float(record.mounted_bytes),
+            float(record.volume_bytes),
             float(check.deviation),
             f"{record.id}\n"
-            f"Том: {fmt_both(record.mounted_bytes)}\n"
+            f"Том: {fmt_both(record.volume_bytes)}\n"
             f"Измерено: {fmt_both(check.measured)}\n"
             f"Модель без этой точки: {fmt_both(check.predicted)}\n"
             f"Промах: {fmt_both(check.deviation)}",
             key=record.id,
         )
-        if record.mounted_bytes in edges:
+        if record.volume_bytes in edges:
             edge.append(point)
         else:
             (under if check.deviation > 0 else over).append(point)
@@ -256,13 +257,13 @@ def ntfs_share(store) -> Chart:
         overhead = record.metadata_bytes
         if overhead is None or not record.mounted_bytes:
             continue
-        share = overhead / record.mounted_bytes * 100.0
+        share = overhead / record.volume_bytes * 100.0
         point = Point(
-            float(record.mounted_bytes),
+            float(record.volume_bytes),
             share,
             (
                 f"{record.id}\n"
-                f"Том: {fmt_both(record.mounted_bytes)}\n"
+                f"Том: {fmt_both(record.volume_bytes)}\n"
                 f"Метаданные: {fmt_both(overhead)}\n"
                 f"Доля тома: {share:.3f} %"
             ).replace(".", ","),

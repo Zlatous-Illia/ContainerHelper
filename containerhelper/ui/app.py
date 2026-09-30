@@ -434,14 +434,14 @@ class MainWindow(QMainWindow):
         """Disable or restore the calibration point on this volume.
 
         Only the point: copy-slack measurements lie in the same list, and a
-        shared pass over mounted_bytes would touch them too. The sizes should
+        shared pass over volume_bytes would touch them too. The sizes should
         not coincide — the container for a file set is moved off the
         recommended sizes on purpose — but there is no reason to rely on that
         when checking the property is enough.
         """
         store = self.records_tab.store
         for index, record in enumerate(store.calibration):
-            if record.is_calibration_point and record.mounted_bytes == volume_bytes:
+            if record.is_calibration_point and record.volume_bytes == volume_bytes:
                 store.calibration[index] = replace(record, disabled=disabled)
         self.records_tab.save_store()
 

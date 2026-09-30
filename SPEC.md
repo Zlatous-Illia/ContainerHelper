@@ -47,17 +47,48 @@ The quantities a container is made of:
 
 | Component | Behavior | Source |
 |---|---|---|
-| VeraCrypt header | constant 266 240 B | measured, matched to the byte on 3 containers |
-| NTFS metadata | `ntfs_base + ntfs_rate × V` | calibrated from records |
+| VeraCrypt headers | constant 262 144 B | VeraCrypt's volume format; see below |
+| NTFS metadata | `ntfs_base + ntfs_rate × V`, the filesystem tail included | calibrated from records |
 | Payload | `Σ ceil(size_i / cluster) × cluster` | computed |
 | Copy slack | `slack_base + slack_per_file × n` | calibrated from records |
 | Safety margin | chosen for the size and the file count | see "Safety margin" |
 
+### VeraCrypt headers and the filesystem tail
+
+The volume size is computed, not measured: `V = container_bytes − 262 144`.
+The 262 144 B are VeraCrypt's own — 128 KiB at the start of the container (the
+header and the hidden volume's header) and their 128 KiB backup at the end —
+and they are the same whatever filesystem the volume gets.
+
+The measured volume capacity (`mounted_bytes`) is smaller than `V` by the
+**filesystem tail**. NTFS with a 4 KiB cluster keeps exactly one cluster back:
+on three containers, 8050, 10475 and 11130 MiB, `container − capacity` came out
+266 240 B to the byte, and twenty-two sizes of the first automatic run agreed.
+The tail counts as metadata — it is space the empty volume does not give to
+files — so the metadata is `V − empty free space`, not `capacity − empty free
+space`.
+
+For a long time the tail sat inside a single header constant of 266 240 B.
+That held only while every volume was NTFS with a 4 KiB cluster, and it held
+the wrong things together. Other filesystems measure their capacity
+differently — FAT does not count its tables into it — so metadata derived from
+the capacity would not compare between them, while `V` does. And on another
+cluster size the "header" came out unusual, and that alone, not a deliberate
+rule, kept such records out of the calibration. The split changes no answer on
+NTFS with a 4 KiB cluster: both axes of every calibration point grow by the
+same 4096 B, the interpolation does not move, and the frozen solver table
+(`tests/test_solver_golden.py`) holds every container size and safety margin.
+
+That the tail is one cluster for other NTFS cluster sizes as well is expected
+(327 680 B `container − capacity` at 64 KiB) but not measured yet.
+
 ### NTFS metadata
 
-**By default** (fewer than two records): `NTFS = 19 MiB + 0.17 % × V`, where `V`
-is the size of the mounted volume. The largest underestimate on the three
-original records (Cache 1, 2 and 4) is 554 330 B (0.53 MiB), on Cache 1.
+**By default** (fewer than two records): `NTFS = 19 MiB + 4 KiB + 0.17 % × V`,
+where `V` is the volume size. The largest underestimate on the three original
+records (Cache 1, 2 and 4) is 554 330 B (0.53 MiB), on Cache 1. The 19 MiB were
+fitted while the filesystem tail was counted in the header; the 4 KiB is that
+tail, moved with it.
 
 **Calibrated** (records ≥ 2): piecewise-linear interpolation over the measured
 points `(V → NTFS)`, sorted by `V`. This form needs no statistics and correctly
@@ -237,8 +268,8 @@ Iteratively; three iterations are enough — `NTFS` changes slowly:
 ```
 F_alloc = Σ ceil(size_i / cluster) * cluster
 slack   = slack_base + slack_per_file * n
-C = ceil((F_alloc + 266240 + NTFS(estimate) + slack + safety) / 1048576)
-repeat: V = C * 1048576 - 266240;  NTFS = model(V);  recompute C
+C = ceil((F_alloc + 262144 + NTFS(estimate) + slack + safety) / 1048576)
+repeat: V = C * 1048576 - 262144;  NTFS = model(V);  recompute C
 ```
 
 Check of the default model on the existing records (the true minimum is taken
@@ -301,12 +332,13 @@ and never written to the file:
 
 ```
 container_bytes     = container_mib * 1048576
-vc_header           = container_bytes - mounted_bytes
-metadata_bytes          = mounted_bytes - empty_free_bytes
+volume_bytes        = container_bytes - 262144
+tail_bytes          = volume_bytes - mounted_bytes
+metadata_bytes      = volume_bytes - empty_free_bytes
 consumed_bytes      = empty_free_bytes - left_bytes
 payload_alloc       = file_alloc_bytes, otherwise ceil(file_bytes / cluster_bytes) * cluster_bytes
 copy_slack_measured = consumed_bytes - payload_alloc
-minimum_mib         = ceil((mounted_bytes - left_bytes + 266240) / 1048576)
+minimum_mib         = ceil((volume_bytes - left_bytes + 262144) / 1048576)
 miss_mib            = predicted_mib - minimum_mib
 model_miss_mib      = miss_mib - predicted_safety_mib
 ```
@@ -390,8 +422,8 @@ field is added, by the general rule — what is computable is not stored.
 Consequences, each of which would otherwise break silently:
 
 - **superseding is separate.** A new point replaces the point at the same
-  `mounted_bytes`, a new copy-slack measurement replaces the measurement **of
-  the same set**. A common key on `mounted_bytes` would knock out an NTFS point
+  `volume_bytes`, a new copy-slack measurement replaces the measurement **of
+  the same set**. A common key on `volume_bytes` would knock out an NTFS point
   with a copy-slack measurement taken at the same volume size, and vice versa;
 - **the key of a copy-slack measurement is the set, not the file count.** Two
   sets with `n = 1` were made different in size on purpose, to compare them
@@ -442,9 +474,10 @@ be checked in only one way: write down next to the record what the calculation
 promised, and compare it with what came out on a real volume.
 
 **The minimum sufficient container** is derived from the record's
-measurements. The space taken on the volume is `mounted_bytes - left_bytes`,
-and it already includes everything: NTFS metadata, cluster-rounded data and
-copy slack. Add the VeraCrypt header and round up to MiB — that gives the
+measurements. The space taken on the volume is `volume_bytes - left_bytes`,
+and it already includes everything: NTFS metadata with the filesystem tail,
+cluster-rounded data and copy slack. Add the VeraCrypt headers and round up to
+MiB — that gives the
 `Container init` that would have been just enough.
 
 The estimate is slightly high: a smaller container would give a smaller volume,
@@ -495,12 +528,17 @@ will give a meaningless miss in one column, and that is all.
 
 Each check catches a real class of error:
 
-1. `container_mib > 0`, and `container_mib * 1048576 > mounted_bytes` —
-   otherwise the header is negative. A header other than 266 240 B is flagged
-   too, for the metadata model only (scope `metadata`).
+1. `container_mib > 0`, and `mounted_bytes <= volume_bytes` — otherwise the
+   filesystem tail is negative. On NTFS (or an unread filesystem) two more,
+   for the metadata model only (scope `metadata`): a cluster other than
+   4 KiB, because the metadata model is taken on 4 KiB alone; and, with
+   4 KiB, a tail other than exactly one cluster — a typo in `container_mib`
+   or `mounted_bytes` gives itself away here. An unread cluster (0) counts
+   as 4 KiB. On other filesystems the tail is not checked: check 8 keeps them
+   out anyway, and their tail is not measured yet.
 2. `empty_free_bytes < mounted_bytes`.
-3. `mounted_bytes - empty_free_bytes` from 1 MiB up to the larger of 128 MiB
-   and 2 % of `mounted_bytes` — a rough filter for typos that drop or add
+3. `volume_bytes - empty_free_bytes` from 1 MiB up to the larger of 128 MiB
+   and 2 % of `volume_bytes` — a rough filter for typos that drop or add
    digits. The ceiling grows with the volume: on a terabyte the metadata is
    136 MiB (factory point), past any fixed 128 MiB, and a fixed ceiling would
    raise false alarms.
@@ -1041,8 +1079,9 @@ name: otherwise terabyte files would pile up silently.
 **What the first real run showed** (31 August 2026, Windows 10 Pro 19045,
 portable VeraCrypt 1.26.24): twenty-two sizes from 512 MiB to 1 TiB were
 measured in 3 minutes 10 seconds, and **all twenty-two matched the manual
-measurements to the byte**. The header came out at exactly 266 240 B at every
-size.
+measurements to the byte**. `container − capacity` came out at exactly
+266 240 B at every size — the 262 144 B of VeraCrypt headers and the one-cluster
+NTFS tail.
 
 Two conclusions follow. Automatic collection gives exactly the same numbers as
 a hand does — there is no more need to check it separately. And "several
@@ -1209,7 +1248,7 @@ The required space is computed by the very metadata model that the collection
 calibrates:
 
 ```
-dynamic + quick:         266240 + ntfs(V) + cluster-rounded data + space margin
+dynamic + quick:         262144 + ntfs(V) + cluster-rounded data + space margin
 normal or full:          whole container_bytes + space margin
 space margin:            max(64 MiB, 5 %)
 ```
@@ -1527,7 +1566,7 @@ differently and is much smaller, FAT32's differently in a third way; all
 calibration records were taken on NTFS. VeraCrypt itself also offers "None"
 («нет») as the filesystem — a choice in VeraCrypt's format options, not in
 this program. With it there is no volume at all, and the model is not needed:
-the container equals the data plus the header.
+the container equals the data plus the headers.
 
 That is why the filesystem is read from the volume at measurement time and
 shown in the dialog. Not NTFS — a warning and the eighth check: the record is

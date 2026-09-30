@@ -11,7 +11,7 @@ from pathlib import Path
 from containerhelper import charts
 from containerhelper.charts import forecast_misses
 from containerhelper.factory import factory_data
-from containerhelper.model import MIB, Payload, solve_container_mib
+from containerhelper.model import MIB, VC_HEADERS_BYTES, Payload, solve_container_mib
 from containerhelper.plot import (
     KIND_BARS,
     KIND_DOTS,
@@ -24,7 +24,7 @@ from containerhelper.plot import (
 )
 from containerhelper.records import Record, Store
 
-from .reference import CACHE_1, CACHE_4
+from .reference import CACHE_1, CACHE_4, HEADERS_AND_TAIL
 
 
 def empty_store() -> Store:
@@ -351,7 +351,7 @@ class UncoveredTests(unittest.TestCase):
         self.assertIn("и ещё", note)
 
     def test_an_own_measurement_covers_the_size(self):
-        volume = self.ODD_MIB * MIB - 266_240
+        volume = self.ODD_MIB * MIB - HEADERS_AND_TAIL
         store = Store(
             path=Path("нет"),
             calibration=[
@@ -408,7 +408,10 @@ class ShareTests(unittest.TestCase):
         chart = charts.ntfs_share(self.store())
         mine = next(s for s in chart.series if s.name == "свои замеры")
         small = min(mine.points, key=lambda point: point.x)
-        self.assertAlmostEqual(small.y, 10 / 64 * 100, places=6)
+        volume = 64 * MIB - VC_HEADERS_BYTES
+        self.assertAlmostEqual(
+            small.y, (volume - 54 * MIB) / volume * 100, places=6
+        )
 
     def test_the_small_volume_stands_far_above_the_big_one(self):
         chart = charts.ntfs_share(self.store())

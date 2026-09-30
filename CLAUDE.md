@@ -159,7 +159,7 @@ measurements are in the "Charts" section of SPEC.
 - **Only integers in the calculation path.** Float is allowed only as a model
   coefficient and is immediately rounded up through `ceil_div`. A float that
   leaks into a byte counter is a defect, not a style nitpick.
-- **Computed values are not stored.** `metadata_bytes`, `vc_header`,
+- **Computed values are not stored.** `metadata_bytes`, `tail_bytes`,
   `copy_slack_measured` are properties, not JSON fields. It was precisely the
   duplication of computed fields that corrupted the original hand-written
   records (in them NTFS is written as `36 573` instead of `36 573 184`).
@@ -224,6 +224,14 @@ measurements are in the "Charts" section of SPEC.
   what the parsing does not understand. Previously `parse_bytes` silently
   returned `None`, the field kept the garbage, and Container init turned into
   a dash.
+- **The metadata model's X axis is the volume size, not the capacity.**
+  `volume_bytes = container − VC_HEADERS_BYTES` is computed; `mounted_bytes` is
+  measured and smaller by the filesystem tail, which counts as metadata. Every
+  key that matches a measurement to a size — superseding, `factory_volumes`,
+  the coverage table, the Use factory signal — goes by `volume_bytes`: a key by
+  capacity on one side and by volume on the other matches nothing, and the
+  button silently does nothing. `mounted_bytes` stays a guard ("was the volume
+  measured at all") and feeds the tail check.
 - **Own supersedes factory**, not "the larger of the two" as in
   `MetadataModel._dedupe`: factory data was taken on another machine. A
   disabled own measurement (`disabled`) is not deleted — the numbers stay in
@@ -389,7 +397,9 @@ space, an underestimate costs data that did not fit.
 ## What the tests don't reach
 
 The suite runs headless on synthetic data. These need a person, VeraCrypt and
-a mounted volume: the header constant 266 240 B, reading a real volume,
+a mounted volume: the VeraCrypt headers 262 144 B and the one-cluster NTFS
+tail (measured only at 4 KiB; 327 680 B `container − capacity` is expected at
+64 KiB), reading a real volume,
 whether the prediction hits reality, the layout and readability of the window.
 
 The copy-slack collection was run on a live machine twice: the first time

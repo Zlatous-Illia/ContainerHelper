@@ -3,9 +3,9 @@
 Stage A of the volume-profile work touches the core: the header constant
 splits into the VeraCrypt headers and the filesystem tail, the metadata model
 takes a profile, and the X axis of the calibration points changes from the
-measured volume size to the computed one. On NTFS with a 4 KiB cluster none of
-that may move the answer by a byte, and this file is what says so: the tables
-below were taken before the first of those changes.
+measured volume capacity to the computed volume size. On NTFS with a 4 KiB
+cluster none of that may move the answer by a byte, and this file is what says
+so: the tables were taken before the first of those changes.
 
 Two model sets, because they fail differently. FACTORY is the path the
 Calculation tab walks on the first recalculation after startup — the models an
@@ -13,41 +13,41 @@ empty store builds from the factory data, the safety margin advised for that
 very size, then the solve with it. The first one, not any one: the tab seeds
 its probe with the spin box's current value, so a later recalculation can start
 from a different margin. DEFAULT is the uncalibrated affine model
-`19 MiB + 0.17 % of the volume`, where a changed definition of the volume size
-shows up directly.
+`19 MiB + 4 KiB + 0.17 % of the volume`, where a changed definition of the
+volume size shows up directly.
 
 The metadata is frozen beside the container size on purpose: a drift of a few
 bytes in the model hides inside the rounding to whole mebibytes. A drift in
-VC_HEADER_BYTES itself is not caught here and does not need to be — the
+VC_HEADERS_BYTES itself is not caught here and does not need to be — the
 reference records pin it to the byte
 (`test_model.DerivedValueTests.test_veracrypt_header_is_constant_across_records`).
 The copy slack moves with neither, and is frozen for its own sake: it pins the
 factory slack calibration, not the solver.
 
-What Stage A may do to these tables was measured beforehand on a simulation of
-the planned change — the header keeps the 262 144 B of VeraCrypt headers, the
-4096 B tail moves into the metadata, so both axes of every calibration point
-grow by the tail. The real change may well land differently; these are what to
-compare it against, not a promise:
+What Stage A2 did to these tables — the header kept the 262 144 B of VeraCrypt
+headers, the 4096 B filesystem tail moved into the metadata, and both axes of
+every calibration point grew by the tail — and why each change is the
+migration and not a regression:
 
-* FACTORY — the metadata column grows by exactly 4096 B, on every row. That is
-  the tail changing which column it is counted in, not the model moving. The
-  container size, the safety margin and the copy slack hold everywhere except
-  one row: at 1587 MiB in ten thousand files the advised margin is 4 194 820 B
-  today, 516 B above a mebibyte boundary, and the shifted query point brings it
-  back to exactly 4 MiB — the margin drops from 5 MiB to 4 and the container
-  with it. The megabyte is lost to the rounding of the advice, not to the
-  metadata.
-* DEFAULT — the metadata grows by 7 B, `ceil(0.0017 × 4096)`, because the same
-  affine model is now asked about a volume 4096 B larger; on one row the
-  rounding gives 6 B. This is the divergence the plan requires to be either
-  compensated or recorded here with its reason. And on a terabyte of payload in
-  ten thousand files the 4096 B taken out of the header crosses a mebibyte
-  boundary, and the container again comes out 1 MiB smaller.
+* Container size, safety margin and copy slack: unchanged on every row of both
+  tables.
+* FACTORY metadata: exactly +4096 B on every row. That is the tail changing
+  which column it is counted in, not the model moving: shifting both axes of
+  every point by the same amount leaves the interpolation, its bound and the
+  leave-one-out misses where they were.
+* DEFAULT metadata: +4103 B, and +4102 B on two rows. 4096 B of it is the tail,
+  added to the default model's base, because the 19 MiB were fitted while the
+  tail sat in the header; the other 7 B are `ceil(0.0017 × 4096)`, the same
+  affine model asked about a volume 4096 B larger (6 B on the two rows where
+  the rounding falls the other way). Left in rather than compensated: it is an
+  overestimate, the safe side, and it crossed no mebibyte boundary.
 
-Both of those last drops are underestimates against today's answer, and both
-are covered by the safety margin rather than by the model — which is what makes
-them worth a second look at Stage A rather than a shrug.
+A simulation made before A2 predicted two 1 MiB drops — one where the advised
+margin sat 516 B above a mebibyte boundary (1587 MiB in ten thousand files),
+one in the default model on a terabyte. Neither happened. The second is what
+the 4 KiB in the default base prevents; the first the real change does not
+reproduce, and why the simulation gave it was not traced — the simulation is
+gone, and the real answer is the one above.
 
 Anything beyond that is a regression, not the migration.
 
@@ -85,84 +85,84 @@ COUNTS = (1, 100, 10_000)
 
 #: size MiB, file count → container MiB, safety MiB, metadata B, copy slack B.
 FACTORY = (
-    (1, 1, 23, 7, 14_816_366, 10_590),
-    (1, 100, 23, 7, 14_816_366, 145_824),
-    (1, 10_000, 74, 7, 14_907_278, 13_669_224),
-    (64, 1, 86, 7, 14_928_669, 10_590),
-    (64, 100, 86, 7, 14_928_669, 145_824),
-    (64, 10_000, 111, 5, 14_934_016, 13_669_224),
-    (512, 1, 534, 5, 17_223_095, 10_590),
-    (512, 100, 534, 5, 17_223_095, 145_824),
-    (512, 10_000, 582, 5, 17_293_312, 13_669_224),
-    (1_024, 1, 1_047, 5, 17_930_928, 10_590),
-    (1_024, 100, 1_047, 5, 17_930_928, 145_824),
-    (1_024, 10_000, 1_091, 5, 18_030_192, 13_669_224),
-    (1_513, 1, 1_536, 4, 19_034_112, 10_590),
-    (1_513, 100, 1_537, 5, 19_035_496, 145_824),
-    (1_513, 10_000, 1_560, 5, 19_067_323, 13_669_224),
-    (1_587, 1, 1_610, 4, 19_136_512, 10_590),
-    (1_587, 100, 1_611, 5, 19_137_850, 145_824),
-    (1_587, 10_000, 1_639, 5, 19_175_294, 13_669_224),
-    (4_096, 1, 4_125, 5, 24_610_609, 10_590),
-    (4_096, 100, 4_125, 5, 24_610_609, 145_824),
-    (4_096, 10_000, 4_144, 5, 24_635_968, 13_669_224),
-    (8_192, 1, 8_231, 5, 34_363_584, 10_590),
-    (8_192, 100, 8_231, 5, 34_363_584, 145_824),
-    (8_192, 10_000, 8_255, 5, 34_420_416, 13_669_224),
-    (16_384, 1, 16_441, 5, 53_759_296, 10_590),
-    (16_384, 100, 16_442, 5, 53_761_152, 145_824),
-    (16_384, 10_000, 16_476, 5, 53_824_256, 13_669_224),
-    (65_536, 1, 65_637, 5, 99_490_976, 10_590),
-    (65_536, 100, 65_637, 5, 99_490_976, 145_824),
-    (65_536, 10_000, 65_661, 5, 99_491_744, 13_669_224),
-    (262_144, 1, 262_251, 4, 106_701_215, 10_590),
-    (262_144, 100, 262_252, 5, 106_701_257, 145_824),
-    (262_144, 10_000, 262_268, 4, 106_701_932, 13_669_224),
-    (1_048_576, 1, 1_048_720, 7, 142_768_820, 10_590),
-    (1_048_576, 100, 1_048_720, 7, 142_768_820, 145_824),
-    (1_048_576, 10_000, 1_048_751, 7, 142_824_080, 13_669_224),
+    (1, 1, 23, 7, 14_820_462, 10_590),
+    (1, 100, 23, 7, 14_820_462, 145_824),
+    (1, 10_000, 74, 7, 14_911_374, 13_669_224),
+    (64, 1, 86, 7, 14_932_765, 10_590),
+    (64, 100, 86, 7, 14_932_765, 145_824),
+    (64, 10_000, 111, 5, 14_938_112, 13_669_224),
+    (512, 1, 534, 5, 17_227_191, 10_590),
+    (512, 100, 534, 5, 17_227_191, 145_824),
+    (512, 10_000, 582, 5, 17_297_408, 13_669_224),
+    (1_024, 1, 1_047, 5, 17_935_024, 10_590),
+    (1_024, 100, 1_047, 5, 17_935_024, 145_824),
+    (1_024, 10_000, 1_091, 5, 18_034_288, 13_669_224),
+    (1_513, 1, 1_536, 4, 19_038_208, 10_590),
+    (1_513, 100, 1_537, 5, 19_039_592, 145_824),
+    (1_513, 10_000, 1_560, 5, 19_071_419, 13_669_224),
+    (1_587, 1, 1_610, 4, 19_140_608, 10_590),
+    (1_587, 100, 1_611, 5, 19_141_946, 145_824),
+    (1_587, 10_000, 1_639, 5, 19_179_390, 13_669_224),
+    (4_096, 1, 4_125, 5, 24_614_705, 10_590),
+    (4_096, 100, 4_125, 5, 24_614_705, 145_824),
+    (4_096, 10_000, 4_144, 5, 24_640_064, 13_669_224),
+    (8_192, 1, 8_231, 5, 34_367_680, 10_590),
+    (8_192, 100, 8_231, 5, 34_367_680, 145_824),
+    (8_192, 10_000, 8_255, 5, 34_424_512, 13_669_224),
+    (16_384, 1, 16_441, 5, 53_763_392, 10_590),
+    (16_384, 100, 16_442, 5, 53_765_248, 145_824),
+    (16_384, 10_000, 16_476, 5, 53_828_352, 13_669_224),
+    (65_536, 1, 65_637, 5, 99_495_072, 10_590),
+    (65_536, 100, 65_637, 5, 99_495_072, 145_824),
+    (65_536, 10_000, 65_661, 5, 99_495_840, 13_669_224),
+    (262_144, 1, 262_251, 4, 106_705_311, 10_590),
+    (262_144, 100, 262_252, 5, 106_705_353, 145_824),
+    (262_144, 10_000, 262_268, 4, 106_706_028, 13_669_224),
+    (1_048_576, 1, 1_048_720, 7, 142_772_916, 10_590),
+    (1_048_576, 100, 1_048_720, 7, 142_772_916, 145_824),
+    (1_048_576, 10_000, 1_048_751, 7, 142_828_176, 13_669_224),
 )
 
 #: size MiB, file count → container MiB, metadata B, copy slack B.
 #: No safety column: without calibration there is nothing to advise from, and
 #: the default 4 MiB is what goes in.
 DEFAULT = (
-    (1, 1, 25, 19_967_056, 198_144),
-    (1, 100, 25, 19_967_056, 350_208),
-    (1, 10_000, 78, 20_061_533, 15_556_608),
-    (64, 1, 88, 20_079_359, 198_144),
-    (64, 100, 88, 20_079_359, 350_208),
-    (64, 10_000, 117, 20_131_054, 15_556_608),
-    (512, 1, 537, 20_879_737, 198_144),
-    (512, 100, 537, 20_879_737, 350_208),
-    (512, 10_000, 586, 20_967_083, 15_556_608),
-    (1_024, 1, 1_050, 21_794_200, 198_144),
-    (1_024, 100, 1_050, 21_794_200, 350_208),
-    (1_024, 10_000, 1_095, 21_874_416, 15_556_608),
-    (1_513, 1, 1_540, 22_667_664, 198_144),
-    (1_513, 100, 1_540, 22_667_664, 350_208),
-    (1_513, 10_000, 1_565, 22_712_228, 15_556_608),
-    (1_587, 1, 1_614, 22_799_575, 198_144),
-    (1_587, 100, 1_614, 22_799_575, 350_208),
-    (1_587, 10_000, 1_643, 22_851_270, 15_556_608),
-    (4_096, 1, 4_127, 27_279_196, 198_144),
-    (4_096, 100, 4_127, 27_279_196, 350_208),
-    (4_096, 10_000, 4_147, 27_314_848, 15_556_608),
-    (8_192, 1, 8_230, 34_593_119, 198_144),
-    (8_192, 100, 8_230, 34_593_119, 350_208),
-    (8_192, 10_000, 8_256, 34_639_466, 15_556_608),
-    (16_384, 1, 16_436, 49_220_964, 198_144),
-    (16_384, 100, 16_436, 49_220_964, 350_208),
-    (16_384, 10_000, 16_473, 49_286_919, 15_556_608),
-    (65_536, 1, 65_672, 136_988_033, 198_144),
-    (65_536, 100, 65_672, 136_988_033, 350_208),
-    (65_536, 10_000, 65_697, 137_032_598, 15_556_608),
-    (262_144, 1, 262_614, 488_052_746, 198_144),
-    (262_144, 100, 262_615, 488_054_528, 350_208),
-    (262_144, 10_000, 262_634, 488_088_398, 15_556_608),
-    (1_048_576, 1, 1_050_386, 1_892_318_727, 198_144),
-    (1_048_576, 100, 1_050_386, 1_892_318_727, 350_208),
-    (1_048_576, 10_000, 1_050_418, 1_892_375_770, 15_556_608),
+    (1, 1, 25, 19_971_159, 198_144),
+    (1, 100, 25, 19_971_159, 350_208),
+    (1, 10_000, 78, 20_065_636, 15_556_608),
+    (64, 1, 88, 20_083_462, 198_144),
+    (64, 100, 88, 20_083_462, 350_208),
+    (64, 10_000, 117, 20_135_157, 15_556_608),
+    (512, 1, 537, 20_883_840, 198_144),
+    (512, 100, 537, 20_883_840, 350_208),
+    (512, 10_000, 586, 20_971_186, 15_556_608),
+    (1_024, 1, 1_050, 21_798_303, 198_144),
+    (1_024, 100, 1_050, 21_798_303, 350_208),
+    (1_024, 10_000, 1_095, 21_878_519, 15_556_608),
+    (1_513, 1, 1_540, 22_671_767, 198_144),
+    (1_513, 100, 1_540, 22_671_767, 350_208),
+    (1_513, 10_000, 1_565, 22_716_331, 15_556_608),
+    (1_587, 1, 1_614, 22_803_678, 198_144),
+    (1_587, 100, 1_614, 22_803_678, 350_208),
+    (1_587, 10_000, 1_643, 22_855_372, 15_556_608),
+    (4_096, 1, 4_127, 27_283_299, 198_144),
+    (4_096, 100, 4_127, 27_283_299, 350_208),
+    (4_096, 10_000, 4_147, 27_318_951, 15_556_608),
+    (8_192, 1, 8_230, 34_597_222, 198_144),
+    (8_192, 100, 8_230, 34_597_222, 350_208),
+    (8_192, 10_000, 8_256, 34_643_569, 15_556_608),
+    (16_384, 1, 16_436, 49_225_067, 198_144),
+    (16_384, 100, 16_436, 49_225_067, 350_208),
+    (16_384, 10_000, 16_473, 49_291_022, 15_556_608),
+    (65_536, 1, 65_672, 136_992_136, 198_144),
+    (65_536, 100, 65_672, 136_992_136, 350_208),
+    (65_536, 10_000, 65_697, 137_036_701, 15_556_608),
+    (262_144, 1, 262_614, 488_056_849, 198_144),
+    (262_144, 100, 262_615, 488_058_631, 350_208),
+    (262_144, 10_000, 262_634, 488_092_500, 15_556_608),
+    (1_048_576, 1, 1_050_386, 1_892_322_830, 198_144),
+    (1_048_576, 100, 1_050_386, 1_892_322_830, 350_208),
+    (1_048_576, 10_000, 1_050_418, 1_892_379_873, 15_556_608),
 )
 
 

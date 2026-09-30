@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from containerhelper.factory import FactorySample, factory_data
-from containerhelper.model import MIB, VC_HEADER_BYTES
+from containerhelper.model import MIB, VC_HEADERS_BYTES
 from containerhelper.records import (
     Record,
     Store,
@@ -21,6 +21,7 @@ from containerhelper.records import (
 )
 
 from tests import reference
+from tests.reference import HEADERS_AND_TAIL
 
 
 def copied(**changes) -> Record:
@@ -28,8 +29,8 @@ def copied(**changes) -> Record:
     base = Record(
         id="Проба",
         container_mib=1024,
-        mounted_bytes=1024 * MIB - VC_HEADER_BYTES,
-        empty_free_bytes=1024 * MIB - VC_HEADER_BYTES - 18 * MIB,
+        mounted_bytes=1024 * MIB - HEADERS_AND_TAIL,
+        empty_free_bytes=1024 * MIB - HEADERS_AND_TAIL - 18 * MIB,
         file_bytes=900 * MIB,
         file_count=10,
         file_alloc_bytes=900 * MIB,
@@ -57,9 +58,9 @@ class MinimumTests(unittest.TestCase):
 
     def test_it_is_the_occupied_space_plus_the_header(self):
         record = copied()
-        occupied = record.mounted_bytes - record.left_bytes
+        occupied = record.volume_bytes - record.left_bytes
         self.assertEqual(
-            record.minimum_mib, -(-(occupied + VC_HEADER_BYTES) // MIB)
+            record.minimum_mib, -(-(occupied + VC_HEADERS_BYTES) // MIB)
         )
 
     def test_without_a_leftover_there_is_nothing_to_derive_it_from(self):
@@ -69,7 +70,7 @@ class MinimumTests(unittest.TestCase):
         point = Record(
             id="Калибровка",
             container_mib=1024,
-            mounted_bytes=1024 * MIB - VC_HEADER_BYTES,
+            mounted_bytes=1024 * MIB - HEADERS_AND_TAIL,
             empty_free_bytes=1000 * MIB,
         )
         self.assertIsNone(point.minimum_mib)
@@ -81,8 +82,8 @@ class MinimumTests(unittest.TestCase):
         than shown. The metric errs towards alarm, and that is the right side.
         """
         record = copied()
-        occupied = record.mounted_bytes - record.left_bytes
-        self.assertGreaterEqual(record.minimum_mib * MIB, occupied)
+        occupied = record.volume_bytes - record.left_bytes
+        self.assertGreaterEqual(record.minimum_mib * MIB, occupied + VC_HEADERS_BYTES)
 
 
 class MissTests(unittest.TestCase):
@@ -197,7 +198,7 @@ class SlackStorageTests(unittest.TestCase):
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.path = Path(self._dir.name) / "records.json"
-        self.volume = 1024 * MIB - VC_HEADER_BYTES
+        self.volume = 1024 * MIB - HEADERS_AND_TAIL
         self.point = Record(
             id="Калибровка 1 GiB",
             container_mib=1024,
@@ -272,7 +273,7 @@ class SlackStorageTests(unittest.TestCase):
         """The empty volume is measured before the files: a free NTFS point."""
         store = self.store(self.sample)
         ntfs, slack = store.models()
-        self.assertIn(self.sample.mounted_bytes, dict(ntfs.points))
+        self.assertIn(self.sample.volume_bytes, dict(ntfs.points))
         self.assertIn(
             (self.sample.file_count, self.sample.copy_slack_measured),
             slack_samples(store.all_for_model()),
@@ -290,7 +291,7 @@ class FactorySlackTests(unittest.TestCase):
     """Factory copy-slack measurements, modelled on the factory points."""
 
     def sample(self, count=500) -> FactorySample:
-        volume = 1024 * MIB - VC_HEADER_BYTES
+        volume = 1024 * MIB - HEADERS_AND_TAIL
         return FactorySample(
             fileset="small-500",
             title="500 файлов по 1 KiB",

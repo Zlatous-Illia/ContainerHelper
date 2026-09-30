@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 _app = QApplication.instance() or QApplication([])
 
 from containerhelper.factory import factory_data, factory_volume  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.model import MIB  # noqa: E402
 from containerhelper.paths import (  # noqa: E402
     CALIBRATION_NAME,
     DATA_ARGUMENT,
@@ -31,6 +31,7 @@ from containerhelper.paths import (  # noqa: E402
     settings_path,
 )
 from containerhelper.records import Record, Store  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.ui.app import (  # noqa: E402
     ACTIVE_TAB_KEY,
     TAB_CALC,
@@ -100,9 +101,9 @@ class FactoryDataTests(unittest.TestCase):
 
     def test_volume_matches_the_container(self):
         point = factory_data().points[0]
-        self.assertEqual(factory_volume(point.container_mib), point.mounted_bytes)
+        self.assertEqual(factory_volume(point.container_mib), point.volume_bytes)
         self.assertEqual(
-            point.mounted_bytes, point.container_mib * MIB - VC_HEADER_BYTES
+            point.mounted_bytes, point.container_mib * MIB - HEADERS_AND_TAIL
         )
 
     def test_every_factory_size_is_offered_in_the_table(self):

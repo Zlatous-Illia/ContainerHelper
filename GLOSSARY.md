@@ -19,9 +19,11 @@ its English term.
 | container | «контейнер» | The file VeraCrypt creates. |
 | `Container init` | «Container init» | The size in MiB typed into VeraCrypt. Kept verbatim. |
 | volume | «том» | The filesystem inside a mounted container. |
-| volume capacity | «ёмкость тома» | What the mounted volume reports (`mounted_bytes`). |
+| volume size | «размер тома» | The container minus the VeraCrypt headers (`volume_bytes`, `volume_of`). Computed; the X axis of the metadata model. |
+| volume capacity | «ёмкость тома» | What the mounted volume reports (`mounted_bytes`). Smaller than the volume size by the filesystem tail. |
+| filesystem tail | «хвост файловой системы» | Volume size minus volume capacity (`tail_bytes`); one cluster on NTFS. Counted as metadata. |
 | empty free space | «свободное место на пустом томе» | `empty_free_bytes`. |
-| VeraCrypt header | «заголовок VeraCrypt» | `VC_HEADER_BYTES`. |
+| VeraCrypt headers | «заголовки VeraCrypt», «заголовок VeraCrypt» | `VC_HEADERS_BYTES`, 262 144 B: the headers and their backups. |
 | filesystem metadata; NTFS metadata | «метаданные ФС»; «метаданные NTFS» | What the filesystem keeps for itself on an empty volume. |
 | payload | «полезные данные» | The data itself. *Cluster-rounded payload*: `payload_alloc`. |
 | cluster tail | «кластерный хвост» | `cluster_tail`. |

@@ -152,8 +152,8 @@ class RecordDialogTests(unittest.TestCase):
 
     def test_shows_derived_values(self):
         dialog = RecordDialog(reference.CACHE_1)
-        self.assertIn("266 240", dialog.header_label.text())
-        self.assertIn("40 316 928", dialog.ntfs_label.text())
+        self.assertIn("262 144", dialog.header_label.text())
+        self.assertIn("40 321 024", dialog.ntfs_label.text())
         self.assertIn("143 360", dialog.slack_label.text())
 
     def test_reports_the_impossible_left_space(self):

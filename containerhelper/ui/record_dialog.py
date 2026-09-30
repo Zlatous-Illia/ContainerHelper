@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DASH, fmt_both, fmt_bytes, parse_bytes
-from ..model import DEFAULT_CLUSTER_BYTES, Payload
+from ..model import DEFAULT_CLUSTER_BYTES, VC_HEADERS_BYTES, Payload
 
 #: Input limits. Bytes — up to a petabyte with digit-group separators;
 #: MiB — up to a terabyte container; cluster — up to 65536; files — up to
@@ -172,14 +172,16 @@ class RecordDialog(QDialog):
 
         self.mounted_edit = self._number_field(form, "Ёмкость тома, B:")
         self.mounted_edit.setToolTip(
-            "Сколько показывает смонтированный том. От него зависят "
-            "метаданные NTFS, по нему же замер привязан к размеру.\n"
+            "Сколько показывает смонтированный том: контейнер без заголовков "
+            "VeraCrypt и без одного кластера, который NTFS оставляет себе. "
+            "По этой разнице видна опечатка в размере контейнера.\n"
             "Снимается кнопкой «Измерить том»."
         )
         self.free_edit = self._number_field(form, "Свободно на пустом, B:")
         self.free_edit.setToolTip(
             "Свободное место сразу после форматирования, до копирования. "
-            "Ёмкость минус это число и есть метаданные NTFS."
+            "Размер тома (контейнер без заголовков VeraCrypt) минус это "
+            "число и есть метаданные NTFS."
         )
         self.file_edit = self._number_field(form, "Размер данных, B:")
         self.file_edit.setToolTip(
@@ -546,7 +548,12 @@ class RecordDialog(QDialog):
     def _refresh(self) -> None:
         record = self.build_record()
         self.payload_button.setEnabled(self._payload_provider is not None)
-        self.header_label.setText(fmt_both(record.vc_header))
+        # The headers are a constant, and the row is shown only once there
+        # is a capacity to compare them with: whether it matches is said by
+        # the tail check among the issues below.
+        self.header_label.setText(
+            fmt_both(VC_HEADERS_BYTES if record.mounted_bytes is not None else None)
+        )
         self.ntfs_label.setText(fmt_both(record.metadata_bytes))
         self.consumed_label.setText(fmt_both(record.consumed_bytes))
         self.slack_label.setText(fmt_both(record.copy_slack_measured))

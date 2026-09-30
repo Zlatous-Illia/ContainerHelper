@@ -22,9 +22,10 @@ from containerhelper.factory import factory_data  # noqa: E402
 from containerhelper.model import (  # noqa: E402
     FACTORY_MARGIN_BYTES,
     MIB,
-    VC_HEADER_BYTES,
+    volume_of,
 )
 from containerhelper.paths import CALIBRATION_NAME  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.records import (  # noqa: E402
     SCHEMA_VERSION,
     SCOPE_METADATA,
@@ -45,12 +46,12 @@ from containerhelper.ui.record_dialog import (  # noqa: E402
 
 
 def point(mib, ntfs=17_879_040, **extra):
-    volume = mib * MIB - VC_HEADER_BYTES
+    """An empty-volume measurement whose metadata comes out exactly `ntfs`."""
     return Record(
         id=f"Точка {mib}",
         container_mib=mib,
-        mounted_bytes=volume,
-        empty_free_bytes=volume - ntfs,
+        mounted_bytes=mib * MIB - HEADERS_AND_TAIL,
+        empty_free_bytes=volume_of(mib * MIB) - ntfs,
         **extra,
     )
 
@@ -274,7 +275,7 @@ class FactoryOverrideTests(unittest.TestCase):
         self._dir.cleanup()
 
     def overhead_at(self, store):
-        return dict(store.models()[0].points)[self.factory.mounted_bytes]
+        return dict(store.models()[0].points)[self.factory.volume_bytes]
 
     def factory_count(self):
         """All factory records: the points plus the copy-slack measurements.
@@ -300,6 +301,31 @@ class FactoryOverrideTests(unittest.TestCase):
     def test_disabling_brings_the_factory_value_back(self):
         store = Store(path=self.path, calibration=[replace(self.mine, disabled=True)])
         self.assertEqual(self.overhead_at(store), self.factory.metadata_bytes)
+
+    def test_a_record_kept_out_of_the_model_does_not_cover_the_size(self):
+        """Keyed by the volume size, it lands on the factory size anyway.
+
+        Kept out by its own issue and still covering the size, it would take
+        the factory point off the curve with it: a node lost without a word.
+        """
+        foreign = (
+            replace(
+                self.mine,
+                cluster_bytes=8192,
+                mounted_bytes=self.factory.volume_bytes - 8192,
+            ),
+            replace(self.mine, filesystem="exFAT"),
+        )
+        for record in foreign:
+            for store in (
+                Store(path=self.path, records=[record]),
+                Store(path=self.path, calibration=[record]),
+            ):
+                with self.subTest(record=record.filesystem or record.cluster_bytes):
+                    self.assertEqual(
+                        self.overhead_at(store), self.factory.metadata_bytes
+                    )
+                    self.assertIn(self.factory.volume_bytes, store.factory_volumes())
 
     def test_disabled_point_stays_in_the_file(self):
         """Resetting to factory values loses nothing."""

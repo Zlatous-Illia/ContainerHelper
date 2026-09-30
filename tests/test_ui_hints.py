@@ -18,7 +18,8 @@ QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.formatting import UNIT_GIB  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.model import MIB, DEFAULT_CLUSTER_BYTES  # noqa: E402
+from containerhelper.model import volume_of as model_volume_of  # noqa: E402
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.measure_dialog import MeasureDialog  # noqa: E402
@@ -30,7 +31,7 @@ SIZES_GIB = (1, 2, 4, 8, 16, 32, 100)
 
 
 def volume_of(gib: int) -> int:
-    return gib * 1024 * MIB - VC_HEADER_BYTES
+    return model_volume_of(gib * 1024 * MIB)
 
 
 def seeded(path: Path) -> None:
@@ -40,7 +41,7 @@ def seeded(path: Path) -> None:
             Record(
                 id=f"Своя {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=volume_of(gib),
+                mounted_bytes=volume_of(gib) - DEFAULT_CLUSTER_BYTES,
                 empty_free_bytes=volume_of(gib) - 20 * MIB,
             )
             for gib in SIZES_GIB
@@ -64,7 +65,7 @@ class WindowFixture(unittest.TestCase):
     def disabled_at(self, gib: int):
         volume = volume_of(gib)
         for record in self.window.records_tab.store.calibration:
-            if record.mounted_bytes == volume:
+            if record.volume_bytes == volume:
                 return record.disabled
         return None
 
@@ -118,7 +119,7 @@ class BigVolumeSignalTests(WindowFixture):
     def test_the_switch_reaches_the_file(self):
         self.toggle(32, True)
         again = Store.load(self.path)
-        stored = [r for r in again.calibration if r.mounted_bytes == volume_of(32)]
+        stored = [r for r in again.calibration if r.volume_bytes == volume_of(32)]
         self.assertTrue(stored[0].disabled)
 
 
