@@ -8,11 +8,9 @@ cluster none of that may move the answer by a byte, and this file is what says
 so: the tables were taken before the first of those changes.
 
 Two model sets, because they fail differently. FACTORY is the path the
-Calculation tab walks on the first recalculation after startup — the models an
-empty store builds from the factory data, the safety margin advised for that
-very size, then the solve with it. The first one, not any one: the tab seeds
-its probe with the spin box's current value, so a later recalculation can start
-from a different margin. DEFAULT is the uncalibrated affine model
+Calculation tab walks on an untouched store — the models an empty store builds
+from the factory data, the safety margin fitted to that very size
+(`fit_safety`), then the solve with it. DEFAULT is the uncalibrated affine model
 `19 MiB + 4 KiB + 0.17 % of the volume`, where a changed definition of the
 volume size shows up directly.
 
@@ -49,6 +47,13 @@ the 4 KiB in the default base prevents; the first the real change does not
 reproduce, and why the simulation gave it was not traced — the simulation is
 gone, and the real answer is the one above.
 
+Stage A5 replaced the one-step advice with `fit_safety`, which repeats it until
+the advice repeats and takes the largest advice met. No row moved. The row
+(512, 10 000) is the one it was written for: the advice there alternates
+between 5 and 4 MiB, and the table had frozen the phase a fresh start happened
+to land on — 5 MiB, 582 MiB. The fit takes that same phase, now on every
+recalculation rather than only on the first.
+
 Anything beyond that is a regression, not the migration.
 
 The tables are generated, not written by hand. Regenerate them only
@@ -67,6 +72,7 @@ from containerhelper.model import (
     CopySlackModel,
     MetadataModel,
     Payload,
+    fit_safety,
     round_up,
     solve_container_mib,
 )
@@ -187,9 +193,8 @@ def factory_rows() -> list[tuple[int, ...]]:
 
     The store is empty and its files are never read: `calibration_records`
     fills it from the factory data by itself, which is exactly the state a
-    fresh copy of the program starts in. The safety margin is advised the way
-    `CalcTab._advise_safety` does it — solve once with the default, advise for
-    that volume size, solve again.
+    fresh copy of the program starts in. The safety margin is fitted by the
+    same `fit_safety` the tab calls.
 
     The path is deliberately one that cannot exist, and the emptiness is
     asserted rather than assumed: `Store` does not read anything in its
@@ -204,10 +209,7 @@ def factory_rows() -> list[tuple[int, ...]]:
     for size_mib in SIZES_MIB:
         for count in COUNTS:
             payload = payload_of(size_mib, count)
-            probe = solve_container_mib(
-                payload, ntfs=ntfs, slack=slack, safety_bytes=DEFAULT_SAFETY_BYTES
-            )
-            advice = safety.advise(probe.volume_bytes, payload.file_count)
+            advice = fit_safety(payload, ntfs, slack, safety)
             solution = solve_container_mib(
                 payload,
                 ntfs=ntfs,

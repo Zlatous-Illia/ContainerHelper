@@ -244,11 +244,16 @@ class CopySlackModel:
         per_file: int = DEFAULT_SLACK_PER_FILE,
         sample_count: int = 0,
         file_counts: tuple[int, ...] = (),
+        per_file_fitted: bool = False,
     ) -> None:
         self.base = base
         self.per_file = per_file
         self.sample_count = sample_count
         self.file_counts = file_counts
+        #: The per-file slack came from the measurements, not the default.
+        #: Two different n are not enough for that: a slope that came out
+        #: zero or negative leaves the default in place.
+        self.per_file_fitted = per_file_fitted
 
     @property
     def calibrated(self) -> bool:
@@ -277,10 +282,12 @@ class CopySlackModel:
 
         counts = [n for n, _ in usable]
         per_file = DEFAULT_SLACK_PER_FILE
+        fitted = False
         if len(set(counts)) >= 2:
             slope = cls._least_squares_slope(usable)
             if slope > 0:
                 per_file = math.ceil(slope)
+                fitted = True
 
         base = max(value - per_file * n for n, value in usable)
         return cls(
@@ -288,6 +295,7 @@ class CopySlackModel:
             per_file=per_file,
             sample_count=len(usable),
             file_counts=tuple(counts),
+            per_file_fitted=fitted,
         )
 
     @staticmethod
@@ -711,3 +719,81 @@ class SafetyModel:
             slack_reason=slack_reason,
             basis=tuple(dict.fromkeys(ntfs_names + slack_names)),
         )
+
+
+def fit_safety(
+    payload: Payload,
+    ntfs: MetadataModel,
+    slack: CopySlackModel,
+    safety: SafetyModel,
+    seed_bytes: int = DEFAULT_SAFETY_BYTES,
+    max_rounds: int = 8,
+) -> SafetyAdvice:
+    """The safety margin advised for the volume that this margin itself gives.
+
+    The advice depends on the volume size, and the volume on the margin, so
+    the two are solved together: solve with a margin, advise for that volume,
+    solve again with the advice, until the advice repeats. The seed is fixed,
+    not whatever the Calculation tab's field holds: seeded with the field, the
+    answer depended on the previous calculation, and at 547 MiB in 10 000 files
+    it walked 582 ↔ 581 MiB on every recalculation of one and the same input.
+
+    The advice does not always settle on one value: there it alternates
+    between 5 and 4 MiB — the volume a 4 MiB margin gives is advised 5 MiB,
+    the volume a 5 MiB margin gives is advised 4. The largest advice met is
+    taken. Every advice met was also tried, so the volume it gives is advised
+    no more than itself — the margin is enough at the very size it produces.
+    Underestimate is the only dangerous side, and a megabyte too much is its
+    price.
+
+    The one exception is `max_rounds`: reached, it leaves the last advice
+    untried. It is a guard against a loop, not a working limit — over 4134
+    inputs from 1 MiB to 1 TiB on the factory calibration no input needed
+    more than three rounds.
+    """
+    advised: dict[int, SafetyAdvice] = {}
+    safety_bytes = seed_bytes
+    while safety_bytes not in advised and len(advised) < max_rounds:
+        probe = solve_container_mib(
+            payload, ntfs=ntfs, slack=slack, safety_bytes=safety_bytes
+        )
+        advice = safety.advise(probe.volume_bytes, payload.file_count)
+        advised[safety_bytes] = advice
+        safety_bytes = advice.total_bytes
+    return max(advised.values(), key=lambda advice: advice.total_bytes)
+
+
+def solve_raw_container_mib(
+    payload: Payload, safety_bytes: int = MIN_SAFETY_BYTES
+) -> Solution:
+    """The container for a volume without a filesystem (VeraCrypt's "None").
+
+    There is no filesystem to spend anything: no metadata, no copy slack, no
+    clusters — the data lies on the volume byte for byte, so its logical size
+    is what counts. The container is the data plus the VeraCrypt headers plus
+    the safety margin. The margin is the floor, not the advice: there is no
+    model here whose miss it would cover, and the floor is what guards the rest
+    of the calculation too. A larger margin is taken as given, a smaller one
+    is raised to the floor — the Calculation tab's field goes down to zero.
+    """
+    safety_bytes = max(safety_bytes, MIN_SAFETY_BYTES)
+    container_mib = ceil_div(
+        payload.logical_bytes + VC_HEADERS_BYTES + safety_bytes, MIB
+    )
+    container_bytes = container_mib * MIB
+    volume_bytes = volume_of(container_bytes)
+    return Solution(
+        container_mib=container_mib,
+        container_bytes=container_bytes,
+        volume_bytes=volume_bytes,
+        payload_logical=payload.logical_bytes,
+        payload_alloc=payload.logical_bytes,
+        cluster_tail=0,
+        vc_header=VC_HEADERS_BYTES,
+        metadata_bytes=0,
+        copy_slack=0,
+        safety_bytes=safety_bytes,
+        predicted_left_bytes=volume_bytes - payload.logical_bytes,
+        ntfs_extrapolated=False,
+        slack_unverified=False,
+    )

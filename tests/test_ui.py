@@ -10,7 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
+from containerhelper.model import MIB, CopySlackModel, MetadataModel  # noqa: E402
+from containerhelper.records import Store  # noqa: E402
 from containerhelper.ui.calc_tab import CalcTab  # noqa: E402
 from tests import reference  # noqa: E402
 
@@ -149,6 +150,29 @@ class FieldValidationTests(unittest.TestCase):
     def test_the_cluster_field_is_numeric_too(self):
         self.assertIsNotNone(self.tab.cluster_combo.validator())
         self.assertEqual(self.typed(self.tab.cluster_combo.lineEdit(), "40x96"), "4096")
+
+
+class AutoSafetyTests(unittest.TestCase):
+    def test_one_input_gives_one_answer(self):
+        """547 MiB in 10 000 files, on the factory calibration.
+
+        The advice there alternates between 5 and 4 MiB. Seeded with the
+        field, which holds the previous answer, the tab showed 5 and 4 MiB in
+        turn, and Container init moved with it on every recalculation.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(path=Path(folder) / "none.json")
+            models, safety = store.models(), store.safety()
+        tab = CalcTab(lambda: models, lambda: safety)
+        tab.size_edit.setText(str(547 * MIB))
+        tab.count_spin.setValue(10_000)
+        tab._on_manual_edit()
+        answers = set()
+        for _ in range(3):
+            tab.recalculate()
+            answers.add((tab.result_label.text(), tab.safety_spin.value()))
+        self.assertEqual(len(answers), 1, answers)
+        self.assertEqual(tab.safety_spin.value(), 5)
 
 
 if __name__ == "__main__":

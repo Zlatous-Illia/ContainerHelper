@@ -13,8 +13,13 @@ from containerhelper.model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     MIN_SAFETY_BYTES,
+    CopySlackModel,
     MetadataModel,
+    Payload,
+    SafetyAdvice,
     SafetyModel,
+    fit_safety,
+    solve_container_mib,
 )
 from containerhelper.model import volume_of as model_volume_of
 from containerhelper.records import Record, build_safety
@@ -224,6 +229,61 @@ class FallbackTests(unittest.TestCase):
     def test_a_folder_does_not(self):
         advice = SafetyModel().advise(10 * GIB, 5000)
         self.assertEqual(advice.slack_bytes, DEFAULT_SAFETY_BYTES)
+
+
+class _Alternating:
+    """Advises 5 MiB for a volume up to the edge and 4 MiB above it.
+
+    With the edge at the volume a 4 MiB margin gives, that is the cycle found
+    at 547 MiB in 10 000 files: the volume a 4 MiB margin gives is advised
+    5 MiB, and the one a 5 MiB margin gives, a mebibyte further, 4 MiB.
+    """
+
+    def __init__(self, edge: int) -> None:
+        self.edge = edge
+
+    def advise(self, volume_bytes: int, file_count: int = 1) -> SafetyAdvice:
+        total = 5 * MIB if volume_bytes <= self.edge else 4 * MIB
+        return SafetyAdvice(total, total, 0, "", "")
+
+
+class FitTests(unittest.TestCase):
+    """`fit_safety`: the advice solved together with the volume it gives."""
+
+    def setUp(self):
+        self.payload = Payload(512 * MIB, 512 * MIB, 10_000)
+        self.ntfs, self.slack = MetadataModel(), CopySlackModel()
+        edge = self.solve(4 * MIB).volume_bytes
+        self.safety = _Alternating(edge)
+        self.assertGreater(self.solve(5 * MIB).volume_bytes, edge)
+
+    def solve(self, safety_bytes: int):
+        return solve_container_mib(
+            self.payload, ntfs=self.ntfs, slack=self.slack, safety_bytes=safety_bytes
+        )
+
+    def fit(self, **kwargs) -> SafetyAdvice:
+        return fit_safety(self.payload, self.ntfs, self.slack, self.safety, **kwargs)
+
+    def test_a_cycle_takes_the_larger_advice(self):
+        self.assertEqual(self.fit().total_bytes, 5 * MIB)
+
+    def test_the_answer_does_not_depend_on_the_seed(self):
+        """The seed used to be the field, that is, the previous answer."""
+        for seed_mib in (1, 4, 5, 7):
+            with self.subTest(seed_mib=seed_mib):
+                self.assertEqual(
+                    self.fit(seed_bytes=seed_mib * MIB).total_bytes, 5 * MIB
+                )
+
+    def test_the_margin_covers_the_volume_it_gives(self):
+        margin = self.fit().total_bytes
+        volume = self.solve(margin).volume_bytes
+        self.assertLessEqual(self.safety.advise(volume).total_bytes, margin)
+
+    def test_a_settled_advice_is_taken_as_is(self):
+        self.safety = _Alternating(0)
+        self.assertEqual(self.fit().total_bytes, 4 * MIB)
 
 
 if __name__ == "__main__":

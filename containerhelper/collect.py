@@ -36,6 +36,7 @@ from .model import (
     MetadataModel,
     SafetyModel,
     ceil_div,
+    fit_safety,
     solve_container_mib,
     volume_of,
 )
@@ -344,11 +345,8 @@ def slack_step(
     """A step for one file set: what the calculation predicts, what to create.
 
     The prediction is computed exactly as on the Calculation tab, including
-    the choice of safety margin: otherwise the prediction check would check a
-    different value from the one the program shows the user. The safety
-    advice depends on the volume size, and the volume on the safety margin, so
-    we first solve with the default, then refine; a second pass is not needed,
-    the safety margin moves the volume by single MiB.
+    the choice of safety margin (`fit_safety`): otherwise the prediction check
+    would check a different value from the one the program shows the user.
 
     The container is created larger than the prediction by a cushion — see
     SLACK_CUSHION_MIB. And by one more megabyte if the size coincided with one
@@ -363,10 +361,7 @@ def slack_step(
     safety_bytes = DEFAULT_SAFETY_BYTES
     safety_mib = ceil_div(safety_bytes, MIB)
     if safety is not None:
-        probe = solve_container_mib(
-            payload, ntfs=ntfs, slack=slack, safety_bytes=safety_bytes
-        )
-        advice = safety.advise(probe.volume_bytes, payload.file_count)
+        advice = fit_safety(payload, ntfs, slack, safety)
         safety_bytes, safety_mib = advice.total_bytes, advice.total_mib
 
     predicted = solve_container_mib(

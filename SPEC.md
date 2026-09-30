@@ -184,6 +184,20 @@ underestimate across all records goes there — deliberately cautious.
 The total is rounded up to whole MiB and never goes below 1 MiB: the free-space
 measurement itself is slightly noisy.
 
+The advice depends on the volume, and the volume on the margin, so the two
+are solved together (`fit_safety`): solve with a margin, advise for that
+volume, solve again with the advice, until an advice repeats. The seed is a
+fixed 4 MiB, not the field. Seeded with the field — the previous answer — one
+input got two answers in turn: at 547 MiB in 10 000 files the volume a 4 MiB
+margin gives is advised 5 MiB and the volume a 5 MiB margin gives 4 MiB, and
+Container init walked 582 ↔ 581 on every recalculation. Where the advice
+alternates like that, the largest advice met is taken. Every advice met has
+also been tried, so the volume it gives is advised no more than itself: the
+margin is enough at the very size it produces. A cap of eight rounds guards
+against a loop; over 4134 inputs from 1 MiB to 1 TiB none needed more than
+three. The collection's prediction for a file set is fitted
+the same way.
+
 The Auto toggle on the Calculation tab turns auto-selection on; with it
 off, the safety margin is set by hand, as before. With auto-selection on, the
 field on the Model tab only shows the result.
@@ -434,6 +448,23 @@ measurement is exactly what the exFAT calibration will be built from.
 The volume picker names the profile when it is not NTFS with 4 KiB: the
 measurement goes into that profile, and the calculation does not use it yet.
 Before, it said such a measurement would not go into the calibration at all.
+
+**A profile calculates on its own measurements or refuses**
+(`solve_for_profile`). The models' defaults — `19 MiB + 4 KiB + 0.17 %` of
+the volume, 192 KiB plus 1536 B per file — are NTFS with 4 KiB; on another
+profile they are not a cautious guess but a guess about another filesystem
+(exFAT with a 1 MiB cluster spends a whole cluster on a directory where the
+default budgets 192 KiB). So a profile without two metadata points, or
+without a per-file copy slack fitted from its own measurements, gets a refusal
+that names what is missing (`Uncalibrated`, with the scopes `metadata` and
+`slack`), not a number: a number wrong for this filesystem looks exactly like
+a right one. The fit takes two different file counts and a positive slope
+across them; with one count, or a flat slope, the per-file slack would be the
+NTFS default again. The payload must be rounded to the profile's cluster:
+rounded to 4 KiB and solved on 32 KiB it would lose up to 28 KiB per file. NTFS with 4 KiB never refuses — the factory data
+calibrates it. The volume without a filesystem (`NO_FILESYSTEM`, see
+"Filesystem and cluster size") needs no calibration at all. The choice of
+profile is not in the window yet; the refusal is there for when it is.
 
 **A calibration point** is not marked by a separate field; the flag is derived:
 a record without `file_bytes` and without `left_bytes` is an empty-volume
@@ -1607,14 +1638,23 @@ container would not hold the data. That is why the parameter stays.
 `$LogFile`, `$Bitmap` are NTFS structures. exFAT's overhead is organised
 differently and is much smaller, FAT32's differently in a third way; all
 calibration records were taken on NTFS. VeraCrypt itself also offers "None"
-(«нет») as the filesystem — a choice in VeraCrypt's format options, not in
-this program. With it there is no volume at all, and the model is not needed:
-the container equals the data plus the headers.
+(«нет») as the filesystem. With it there is no filesystem on the volume, and
+no model is needed (`solve_raw_container_mib`):
+
+```
+C = ceil((F + 262144 + safety) / 1048576)
+```
+
+`F` is the logical size, not the cluster-rounded one: without a filesystem
+there are no clusters, and the data lies on the volume byte for byte. The
+safety margin is the floor, `MIN_SAFETY_BYTES`: there is no model whose miss
+it would cover, and the floor is kept because it guards the rest of the
+calculation too. A larger margin set by hand is taken, a smaller one is
+raised to the floor.
 
 That is why the filesystem is read from the volume at measurement time and
-shown in the dialog. Not NTFS — a warning and the eighth check: the record is
-flagged and does not go into the metadata calibration. A measurement on exFAT
-cannot quietly spoil the model.
+named in the dialog. A measurement on exFAT goes into the exFAT profile (see
+"The volume profile") and cannot quietly spoil the NTFS model.
 
 ## Tooltips
 

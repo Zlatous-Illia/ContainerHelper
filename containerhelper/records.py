@@ -26,9 +26,13 @@ from .model import (
     VC_HEADERS_BYTES,
     CopySlackModel,
     MetadataModel,
+    Payload,
     SafetyModel,
+    Solution,
     ceil_div,
     round_up,
+    solve_container_mib,
+    solve_raw_container_mib,
     volume_of,
 )
 
@@ -86,6 +90,12 @@ class VolumeProfile:
 #: The profile every measurement so far was taken on, and the one the
 #: program calculates for until the profile can be chosen.
 DEFAULT_PROFILE = VolumeProfile(SUPPORTED_FS, DEFAULT_CLUSTER_BYTES)
+
+#: A volume VeraCrypt leaves without a filesystem (`/filesystem None`). Named
+#: the way VeraCrypt names it. Nothing is measured for it and nothing needs to
+#: be: without a filesystem there is neither metadata nor copy slack, and the
+#: container is the data plus the headers (`solve_raw_container_mib`).
+NO_FILESYSTEM = VolumeProfile("None", 0)
 
 
 def filesystem_name(raw: str) -> str:
@@ -560,6 +570,79 @@ def build_models(
     return (
         MetadataModel(metadata_points(records, profile)),
         CopySlackModel.calibrate(slack_samples(records, profile)),
+    )
+
+
+def missing_calibration(
+    ntfs: MetadataModel, slack: CopySlackModel
+) -> tuple[str, ...]:
+    """Which of the two models has nothing of its own profile to stand on.
+
+    An uncalibrated model is not empty: it falls back to the defaults, and
+    the defaults are NTFS with 4 KiB — `19 MiB + 4 KiB + 0.17 %` of the
+    volume and 1536 B per file. On another profile they are not a cautious guess but a
+    guess about another filesystem: exFAT with a 1 MiB cluster spends a whole
+    cluster on a directory where the NTFS default budgets 192 KiB. So a
+    profile calculates only on its own measurements, and this says what is
+    missing: the metadata needs two points, the copy slack a per-file slope
+    fitted from its own measurements. That takes two different file counts,
+    and a positive slope across them: with one count, or with a slope that
+    came out flat, the per-file slack would again be the NTFS default.
+
+    Scopes, not sentences: the words belong to the window, and the scopes
+    are the ones `Issue` already uses.
+    """
+    missing = []
+    if not ntfs.calibrated:
+        missing.append(SCOPE_METADATA)
+    if not slack.per_file_fitted:
+        missing.append(SCOPE_SLACK)
+    return tuple(missing)
+
+
+class Uncalibrated(ValueError):
+    """The profile has too few measurements of its own to calculate on."""
+
+    def __init__(self, profile: VolumeProfile, missing: tuple[str, ...]) -> None:
+        super().__init__(f"{profile}: nothing measured for {', '.join(missing)}")
+        self.profile = profile
+        self.missing = missing
+
+
+def solve_for_profile(
+    payload: Payload,
+    profile: VolumeProfile,
+    ntfs: MetadataModel,
+    slack: CopySlackModel,
+    safety_bytes: int,
+) -> Solution:
+    """Solve for the container on the given profile, or refuse.
+
+    The models must be the profile's own (`Store.models(profile)`). A volume
+    without a filesystem needs none of them, whatever cluster is attached to
+    it. Any other profile without its own calibration raises `Uncalibrated`
+    rather than borrowing the NTFS defaults: a number that is wrong for this
+    filesystem looks exactly like a right one, and a refusal with a reason is
+    the only answer that cannot be taken for a result.
+
+    The payload must be rounded to the profile's cluster. Rounded to 4 KiB
+    and solved on exFAT with 32 KiB, it loses up to 28 KiB per file — an
+    underestimate that the models, calibrated on the right cluster, cannot
+    see. A mismatch is a programming error, not a state of the data, so it
+    raises `ValueError`.
+    """
+    if profile.filesystem == NO_FILESYSTEM.filesystem:
+        return solve_raw_container_mib(payload, safety_bytes)
+    if profile.cluster_bytes and payload.cluster_bytes != profile.cluster_bytes:
+        raise ValueError(
+            f"payload rounded to {payload.cluster_bytes} B, "
+            f"profile {profile} has {profile.cluster_bytes} B"
+        )
+    missing = missing_calibration(ntfs, slack)
+    if missing:
+        raise Uncalibrated(profile, missing)
+    return solve_container_mib(
+        payload, ntfs=ntfs, slack=slack, safety_bytes=safety_bytes
     )
 
 

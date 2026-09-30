@@ -282,6 +282,14 @@ measurements are in the "Charts" section of SPEC.
   `slack_step` adds a megabyte if it hits a row of the coverage table:
   otherwise the Use factory button in that row would disable the copy-slack
   measurement as well.
+- **The safety fit is seeded with a constant, not with the field**
+  (`fit_safety`). The field holds the previous answer, and seeded with it the
+  advice took turns: 582 and 581 MiB for one and the same input. The fit
+  repeats until an advice repeats and takes the largest one met — the only
+  choice whose volume is advised no more than itself.
+- **A profile other than NTFS 4 KiB calculates on its own measurements or
+  refuses** (`solve_for_profile` → `Uncalibrated`). The models' defaults are
+  NTFS 4 KiB numbers; on exFAT they would be a confident wrong answer.
 - **The calculation's prediction is stored, not recomputed.** `predicted_mib`
   and `predicted_safety_mib` are the only exception to "computed values are not
   stored", and a deliberate one: the models change with every measurement, and

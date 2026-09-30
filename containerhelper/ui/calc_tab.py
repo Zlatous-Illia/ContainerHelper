@@ -35,6 +35,7 @@ from ..model import (
     SafetyAdvice,
     SafetyModel,
     Solution,
+    fit_safety,
     round_up,
     solve_container_mib,
 )
@@ -842,19 +843,13 @@ class CalcTab(QWidget):
     def _advise_safety(self, payload: Payload, ntfs, slack) -> None:
         """Fit the safety margin to this calculation and put it in the field.
 
-        The advice depends on the volume size, and the volume on the safety
-        margin, so first we solve with what is set now, then refine. A second
-        pass is not needed: the safety margin shifts the volume by single
-        megabytes, and the advice is computed over a segment between
-        measurements gigabytes wide.
+        `fit_safety` starts from a fixed seed, not from the field: the field
+        holds the previous calculation's answer, and seeding with it gave one
+        input two answers in turn.
         """
         if self._safety is None or not self.auto_safety.isChecked():
             return
-        probe = solve_container_mib(
-            payload, ntfs=ntfs, slack=slack,
-            safety_bytes=self.safety_spin.value() * MIB,
-        )
-        self._advice = self._safety().advise(probe.volume_bytes, payload.file_count)
+        self._advice = fit_safety(payload, ntfs, slack, self._safety())
         # Directly, without set_safety_mib: that one restarts recalculate, and
         # we have already been called from inside it.
         if self.safety_spin.value() != self._advice.total_mib:
