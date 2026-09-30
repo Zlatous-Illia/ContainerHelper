@@ -12,6 +12,8 @@ import os
 import sys
 from pathlib import Path
 
+from .i18n import tr
+
 #: Name of the subfolder next to the executable. The folder root stays clean:
 #: .bak and .tmp files do not get underfoot.
 DATA_DIR_NAME = "data"
@@ -121,17 +123,19 @@ def resolve_data_dir(argv: list[str] | None = None) -> tuple[Path | None, str]:
     if chosen is not None:
         if is_writable(chosen):
             return chosen, DATA_ARGUMENT
-        raise DataDirError(f"Каталог из {DATA_ARGUMENT} недоступен на запись: {chosen}")
+        raise DataDirError(
+            tr("paths.argument.unwritable", argument=DATA_ARGUMENT, path=chosen)
+        )
 
     beside = default_data_dir()
     if is_writable(beside):
-        return beside, "рядом с программой"
+        return beside, tr("paths.origin.beside")
 
     remembered = remembered_data_dir()
     if remembered is not None and is_writable(remembered):
-        return remembered, "выбран ранее"
+        return remembered, tr("paths.origin.remembered")
 
-    return None, "папка программы недоступна на запись"
+    return None, tr("paths.origin.unwritable")
 
 
 def records_path(data_dir: Path) -> Path:

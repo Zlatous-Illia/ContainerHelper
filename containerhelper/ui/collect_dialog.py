@@ -50,6 +50,7 @@ from ..collect import (
 from ..elevation import is_admin, relaunch_as_admin
 from ..fileset import FileSet
 from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit, plural
+from ..i18n import tr
 from ..model import MIB, CopySlackModel, MetadataModel, SafetyModel
 from ..paths import is_writable
 from .table import scrollable, wrapped
@@ -482,7 +483,7 @@ class CollectDialog(QDialog):
         #: cut off exactly at the most important part — at «уже есть».
         self.fileset_notes: dict[str, QLabel] = {}
         for item in self._filesets:
-            check = QCheckBox(item.title)
+            check = QCheckBox(tr(item.title))
             check.setChecked(item.key not in self._slack_covered)
             check.toggled.connect(self._refresh_scope)
             layout.addWidget(check)
@@ -920,7 +921,7 @@ class CollectDialog(QDialog):
     def _on_step_progress(self, index: int, progress: Progress) -> None:
         self._index = index
         self._advance(index, progress.share)
-        self._set_phase(progress.phase, progress.detail)
+        self._set_phase(tr(progress.phase), progress.detail)
         self._show_progress()
 
     def _set_phase(self, phase: str, detail: str = "") -> None:

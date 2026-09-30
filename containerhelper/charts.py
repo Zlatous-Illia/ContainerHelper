@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .formatting import fmt_both, fmt_bytes, plural, size_label
+from .formatting import fmt_both, fmt_bytes, size_label
+from .i18n import tr, tr_n
 from .model import (
     MIB,
     CopySlackModel,
@@ -130,9 +131,12 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
         point = Point(
             float(record.volume_bytes),
             float(overhead),
-            f"{record.id}\n"
-            f"Том: {fmt_both(record.volume_bytes)}\n"
-            f"Метаданные: {fmt_both(overhead)}",
+            tr(
+                "charts.ntfs_curve.tip",
+                id=record.id,
+                volume=fmt_both(record.volume_bytes),
+                metadata=fmt_both(overhead),
+            ),
             key=record.id,
         )
         (mine if _is_own(record, own) else factory).append(point)
@@ -143,28 +147,25 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
         hi = max(point[0] for point in model.points)
         curve = [Point(x, float(model.overhead(int(x)))) for x in _geometric(lo, hi)]
 
-    note = (
-        "Модель ведёт прямую между соседними замерами, а зависимость прямой не "
-        "является: $LogFile меняется ступенями."
-    )
+    note = tr("charts.ntfs_curve.note")
     holes = uncovered(store, sizes)
     if holes:
         names = ", ".join(size_label(size) for size in holes[:UNCOVERED_SHOWN])
         if len(holes) > UNCOVERED_SHOWN:
-            names += f" и ещё {len(holes) - UNCOVERED_SHOWN}"
-        note += (
-            f" Не покрыто замерами: {len(holes)} "
-            f"{plural(len(holes), 'размер', 'размера', 'размеров')} — {names}; "
-            f"там прямая идёт через пустое место."
-        )
+            names = tr(
+                "charts.ntfs_curve.more",
+                names=names,
+                n=len(holes) - UNCOVERED_SHOWN,
+            )
+        note += " " + tr_n("charts.ntfs_curve.uncovered", len(holes), names=names)
     return Chart(
-        "Метаданные NTFS от размера тома",
-        Axis("Размер тома", AXIS_BYTES, log=True),
-        Axis("Метаданные NTFS", AXIS_BYTES),
+        tr("charts.ntfs_curve.title"),
+        Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
+        Axis(tr("charts.ntfs_curve.y"), AXIS_BYTES),
         (
-            Series("модель", tuple(curve), KIND_LINE, tone=2),
-            Series("свои замеры", tuple(mine), KIND_DOTS, tone=0),
-            Series("заводские", tuple(factory), KIND_DOTS, tone=1),
+            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
+            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
+            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
         ),
         note=note,
     )
@@ -201,11 +202,14 @@ def ntfs_residuals(store) -> Chart:
         point = Point(
             float(record.volume_bytes),
             float(check.deviation),
-            f"{record.id}\n"
-            f"Том: {fmt_both(record.volume_bytes)}\n"
-            f"Измерено: {fmt_both(check.measured)}\n"
-            f"Модель без этой точки: {fmt_both(check.predicted)}\n"
-            f"Промах: {fmt_both(check.deviation)}",
+            tr(
+                "charts.ntfs_residuals.tip",
+                id=record.id,
+                volume=fmt_both(record.volume_bytes),
+                measured=fmt_both(check.measured),
+                predicted=fmt_both(check.predicted),
+                miss=fmt_both(check.deviation),
+            ),
             key=record.id,
         )
         if record.volume_bytes in edges:
@@ -214,23 +218,24 @@ def ntfs_residuals(store) -> Chart:
             (under if check.deviation > 0 else over).append(point)
 
     return Chart(
-        "Промах модели NTFS, проверка исключением",
-        Axis("Размер тома", AXIS_BYTES, log=True),
-        Axis("Измерено минус модель", AXIS_BYTES),
+        tr("charts.ntfs_residuals.title"),
+        Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
+        Axis(tr("charts.axis.residual"), AXIS_BYTES),
         (
             # As stems, not bare dots: zero here is the model itself, and the
             # stem from it to the dot shows which way and how far the miss
             # goes, without making the eye measure the distance to the line.
-            Series("модель занизила", tuple(under), KIND_STEMS, tone=1),
-            Series("модель завысила", tuple(over), KIND_STEMS, tone=0),
-            Series("край диапазона", tuple(edge), KIND_STEMS, tone=3, visible=False),
+            Series(tr("charts.series.under"), tuple(under), KIND_STEMS, tone=1),
+            Series(tr("charts.series.over"), tuple(over), KIND_STEMS, tone=0),
+            Series(
+                tr("charts.ntfs_residuals.edge"),
+                tuple(edge),
+                KIND_STEMS,
+                tone=3,
+                visible=False,
+            ),
         ),
-        note=(
-            "Ноль — это сама модель. Вверх — занижение, единственная опасная "
-            "сторона: столько не хватило бы контейнеру. Крайние замеры "
-            "спрятаны — без них модель экстраполирует, и промах там на порядки "
-            "больше; вернуть их можно щелчком по легенде."
-        ),
+        note=tr("charts.ntfs_residuals.note"),
         zero_line=True,
     )
 
@@ -262,11 +267,12 @@ def ntfs_share(store) -> Chart:
         point = Point(
             float(record.volume_bytes),
             share,
-            (
-                f"{record.id}\n"
-                f"Том: {fmt_both(record.volume_bytes)}\n"
-                f"Метаданные: {fmt_both(overhead)}\n"
-                f"Доля тома: {share:.3f} %"
+            tr(
+                "charts.ntfs_share.tip",
+                id=record.id,
+                volume=fmt_both(record.volume_bytes),
+                metadata=fmt_both(overhead),
+                share=f"{share:.3f}",
             ),
             key=record.id,
         )
@@ -281,22 +287,19 @@ def ntfs_share(store) -> Chart:
         ]
 
     return Chart(
-        "Доля тома под метаданными",
-        Axis("Размер тома", AXIS_BYTES, log=True),
+        tr("charts.ntfs_share.title"),
+        Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
         # Logarithmic vertically too: the share spans three orders of
         # magnitude — from 0.013 % on a terabyte volume to 16 % at sixty-four
         # megabytes — and on a linear axis everything except the smallest
         # volumes lies in one line near zero.
-        Axis("Доля тома, %", AXIS_PLAIN, log=True),
+        Axis(tr("charts.ntfs_share.y"), AXIS_PLAIN, log=True),
         (
-            Series("модель", tuple(curve), KIND_LINE, tone=2),
-            Series("свои замеры", tuple(mine), KIND_DOTS, tone=0),
-            Series("заводские", tuple(factory), KIND_DOTS, tone=1),
+            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
+            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
+            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
         ),
-        note=(
-            "Сколько тома уходит не на данные. Соседний график наклонов — про "
-            "другое: там скорость роста на участке, а не уровень."
-        ),
+        note=tr("charts.ntfs_share.note"),
     )
 
 
@@ -312,10 +315,12 @@ def ntfs_slopes(store) -> Chart:
     steps: list[Point] = []
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         slope = (y1 - y0) / (x1 - x0) * 100.0
-        tip = (
-            f"{size_label(int(x0 // MIB))} → {size_label(int(x1 // MIB))}\n"
-            f"Наклон: {slope:.3f} % от размера тома\n"
-            f"Прирост: {fmt_both(y1 - y0)}"
+        tip = tr(
+            "charts.ntfs_slopes.tip",
+            start=size_label(int(x0 // MIB)),
+            end=size_label(int(x1 // MIB)),
+            slope=f"{slope:.3f}",
+            growth=fmt_both(y1 - y0),
         )
         steps.append(Point(float(x0), slope, tip))
     if steps:
@@ -324,14 +329,11 @@ def ntfs_slopes(store) -> Chart:
         steps.append(Point(float(points[-1][0]), steps[-1].y, steps[-1].tip))
 
     return Chart(
-        "Наклон отрезков модели NTFS",
-        Axis("Размер тома", AXIS_BYTES, log=True),
-        Axis("Наклон, % от размера тома", AXIS_PLAIN),
-        (Series("отрезки", tuple(steps), KIND_STEPS, tone=3),),
-        note=(
-            "Ровная ступень — участок, где метаданные растут пропорционально "
-            "тому. Скачок — порог, на котором сменился размер $LogFile."
-        ),
+        tr("charts.ntfs_slopes.title"),
+        Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
+        Axis(tr("charts.ntfs_slopes.y"), AXIS_PLAIN),
+        (Series(tr("charts.ntfs_slopes.series"), tuple(steps), KIND_STEPS, tone=3),),
+        note=tr("charts.ntfs_slopes.note"),
         zero_line=True,
     )
 
@@ -354,10 +356,13 @@ def slack_curve(store) -> Chart:
         point = Point(
             float(record.file_count),
             float(measured),
-            f"{record.id}\n"
-            f"Файлов: {fmt_bytes(record.file_count)}\n"
-            f"Измеренный запас: {fmt_both(measured)}\n"
-            f"На файл: {fmt_bytes(measured // max(record.file_count, 1))} B",
+            tr(
+                "charts.slack_curve.tip",
+                id=record.id,
+                files=fmt_bytes(record.file_count),
+                measured=fmt_both(measured),
+                per_file=fmt_bytes(measured // max(record.file_count, 1)),
+            ),
             key=record.id,
         )
         (mine if _is_own(record, own) else factory).append(point)
@@ -369,18 +374,18 @@ def slack_curve(store) -> Chart:
             curve.append(Point(n, float(model.slack(int(round(n))))))
 
     per_file = (
-        f"Наклон: {fmt_bytes(model.per_file)} B на файл."
+        tr("charts.slack_curve.slope", per_file=fmt_bytes(model.per_file))
         if model.per_file_calibrated
-        else "Наклон не измерен: для него нужны замеры при двух разных n."
+        else tr("charts.slack_curve.no_slope")
     )
     return Chart(
-        "Запас на копирование от числа файлов",
-        Axis("Файлов", AXIS_COUNT, log=True),
-        Axis("Измеренный запас", AXIS_BYTES),
+        tr("charts.slack_curve.title"),
+        Axis(tr("charts.axis.files"), AXIS_COUNT, log=True),
+        Axis(tr("charts.slack_curve.y"), AXIS_BYTES),
         (
-            Series("модель", tuple(curve), KIND_LINE, tone=2),
-            Series("свои замеры", tuple(mine), KIND_DOTS, tone=0),
-            Series("заводские", tuple(factory), KIND_DOTS, tone=1),
+            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
+            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
+            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
         ),
         note=per_file,
     )
@@ -395,23 +400,26 @@ def slack_residuals(store) -> Chart:
         point = Point(
             float(record.file_count or 1),
             float(check.deviation),
-            f"{record.id}\n"
-            f"Измерено: {fmt_both(check.measured)}\n"
-            f"Модель без этого замера: {fmt_both(check.predicted)}\n"
-            f"Промах: {fmt_both(check.deviation)}",
+            tr(
+                "charts.slack_residuals.tip",
+                id=record.id,
+                measured=fmt_both(check.measured),
+                predicted=fmt_both(check.predicted),
+                miss=fmt_both(check.deviation),
+            ),
             key=record.id,
         )
         (under if check.deviation > 0 else over).append(point)
 
     return Chart(
-        "Промах модели запаса, проверка исключением",
-        Axis("Файлов", AXIS_COUNT, log=True),
-        Axis("Измерено минус модель", AXIS_BYTES),
+        tr("charts.slack_residuals.title"),
+        Axis(tr("charts.axis.files"), AXIS_COUNT, log=True),
+        Axis(tr("charts.axis.residual"), AXIS_BYTES),
         (
-            Series("модель занизила", tuple(under), KIND_STEMS, tone=1),
-            Series("модель завысила", tuple(over), KIND_STEMS, tone=0),
+            Series(tr("charts.series.under"), tuple(under), KIND_STEMS, tone=1),
+            Series(tr("charts.series.over"), tuple(over), KIND_STEMS, tone=0),
         ),
-        note="Ноль — сама модель. Вверх — занижение.",
+        note=tr("charts.slack_residuals.note"),
         zero_line=True,
     )
 
@@ -439,11 +447,14 @@ def forecast_misses(store) -> Chart:
             Point(
                 float(index),
                 float(miss),
-                f"{record.id}\n"
-                f"Обещано: {record.predicted_mib} MiB\n"
-                f"Хватило бы: {record.minimum_mib} MiB\n"
-                f"Перезаклад: {miss} MiB\n"
-                f"В том числе страховка: {record.predicted_safety_mib or 0} MiB",
+                tr(
+                    "charts.forecast.tip",
+                    id=record.id,
+                    predicted=record.predicted_mib,
+                    minimum=record.minimum_mib,
+                    miss=miss,
+                    safety=record.predicted_safety_mib or 0,
+                ),
                 key=record.id,
             )
         )
@@ -452,30 +463,28 @@ def forecast_misses(store) -> Chart:
                 Point(
                     float(index),
                     float(model_miss),
-                    f"{record.id}\nПромах без страховки: {model_miss} MiB",
+                    tr("charts.forecast.bare_tip", id=record.id, miss=model_miss),
                     key=record.id,
                 )
             )
 
     short = sum(1 for point in bare if point.y < 0)
     note = (
-        "Всё выше нуля — перезаклад. Точка ниже нуля означает, что данные не "
-        "влезли бы без страховки."
+        tr("charts.forecast.note")
         if not short
-        else f"Ниже нуля: {short} {plural(short, 'запись', 'записи', 'записей')} — "
-        "там расчёт спасла только страховка."
+        else tr_n("charts.forecast.short", short)
     )
     return Chart(
-        "Промах прогноза по записям",
-        Axis("Запись", AXIS_PLAIN),
-        Axis("Обещано минус необходимо", AXIS_MIB),
+        tr("charts.forecast.title"),
+        Axis(tr("charts.forecast.x"), AXIS_PLAIN),
+        Axis(tr("charts.forecast.y"), AXIS_MIB),
         (
-            Series("перезаклад", tuple(misses), KIND_BARS, tone=0),
+            Series(tr("charts.forecast.misses"), tuple(misses), KIND_BARS, tone=0),
             # As dots, not bars: a bar over a bar reads as "part of a whole",
             # and this is a separate value of the same miss, taken from a
             # different place. Below zero the dot stands alone, and the
             # caption under the chart spells out what it means.
-            Series("без страховки", tuple(bare), KIND_DOTS, tone=1),
+            Series(tr("charts.forecast.bare"), tuple(bare), KIND_DOTS, tone=1),
         ),
         note=note,
         zero_line=True,
@@ -496,25 +505,27 @@ def container_breakdown(solution: Solution) -> Chart:
     """
     rounding = max(solution.predicted_left_bytes - solution.safety_bytes, 0)
     parts = (
-        ("Полезные данные (по кластерам)", solution.payload_alloc),
-        ("Заголовок VeraCrypt", solution.vc_header),
-        ("Метаданные NTFS", solution.metadata_bytes),
-        ("Запас на копирование", solution.copy_slack),
-        ("Страховочный запас", solution.safety_bytes),
-        ("Округление до целых MiB", rounding),
+        ("charts.breakdown.payload", solution.payload_alloc),
+        ("charts.breakdown.header", solution.vc_header),
+        ("charts.breakdown.metadata", solution.metadata_bytes),
+        ("charts.breakdown.copy_slack", solution.copy_slack),
+        ("charts.breakdown.safety", solution.safety_bytes),
+        ("charts.breakdown.rounding", rounding),
     )
     points = tuple(
-        Point(0.0, float(value), f"{name}: {fmt_both(value)}") for name, value in parts
+        Point(
+            0.0,
+            float(value),
+            tr("charts.breakdown.tip", part=tr(name), value=fmt_both(value)),
+        )
+        for name, value in parts
     )
     return Chart(
-        f"Контейнер {solution.container_mib} MiB — из чего он сложен",
+        tr("charts.breakdown.title", container=solution.container_mib),
         Axis(""),
         Axis(""),
-        (Series("слагаемые", points, KIND_STACK),),
-        note=(
-            f"Из них кластерный хвост: {fmt_both(solution.cluster_tail)} — "
-            "доплата за округление каждого файла вверх до кластера."
-        ),
+        (Series(tr("charts.breakdown.series"), points, KIND_STACK),),
+        note=tr("charts.breakdown.note", tail=fmt_both(solution.cluster_tail)),
         layout=LAYOUT_STACK,
     )
 
@@ -536,10 +547,11 @@ def cluster_tail(
     for cluster in choices:
         alloc = Payload.for_files(sizes, cluster).alloc_bytes
         tail = alloc - logical
-        tip = (
-            f"Кластер {fmt_bytes(cluster)} B\n"
-            f"Займут: {fmt_both(alloc)}\n"
-            f"Хвост: {fmt_both(tail)}"
+        tip = tr(
+            "charts.cluster_tail.tip",
+            cluster=fmt_bytes(cluster),
+            alloc=fmt_both(alloc),
+            tail=fmt_both(tail),
         )
         point = Point(float(cluster), float(alloc), tip, key=cluster)
         points.append(point)
@@ -548,25 +560,28 @@ def cluster_tail(
 
     flat = (
         tuple(
-            Point(float(cluster), float(logical), f"Логический размер: {fmt_both(logical)}")
+            Point(
+                float(cluster),
+                float(logical),
+                tr("charts.cluster_tail.logical_tip", logical=fmt_both(logical)),
+            )
             for cluster in choices
         )
         if choices
         else ()
     )
     return Chart(
-        "Занятое место от размера кластера",
-        Axis("Размер кластера", AXIS_BYTES, log=True),
-        Axis("Займут на томе", AXIS_BYTES),
+        tr("charts.cluster_tail.title"),
+        Axis(tr("charts.cluster_tail.x"), AXIS_BYTES, log=True),
+        Axis(tr("charts.cluster_tail.y"), AXIS_BYTES),
         (
-            Series("по кластерам", tuple(points), KIND_LINE_DOTS, tone=0),
-            Series("логический размер", flat, KIND_LINE, tone=4),
-            Series("выбрано сейчас", tuple(chosen), KIND_DOTS, tone=1),
+            Series(
+                tr("charts.cluster_tail.alloc"), tuple(points), KIND_LINE_DOTS, tone=0
+            ),
+            Series(tr("charts.cluster_tail.logical"), flat, KIND_LINE, tone=4),
+            Series(tr("charts.cluster_tail.chosen"), tuple(chosen), KIND_DOTS, tone=1),
         ),
-        note=(
-            f"Файлов: {fmt_bytes(len(sizes))}. Расстояние между линиями — "
-            "кластерный хвост, доплата за округление каждого файла."
-        ),
+        note=tr("charts.cluster_tail.note", files=fmt_bytes(len(sizes))),
     )
 
 

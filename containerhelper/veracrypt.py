@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from .formatting import plural
+from .i18n import tr, tr_n
 from .sizes import (
     IS_WINDOWS,
     cluster_size,
@@ -158,7 +158,11 @@ class Install:
     @property
     def title(self) -> str:
         if self.version:
-            return f"{self.directory} (версия {self.version})"
+            return tr(
+                "veracrypt.install.title",
+                directory=self.directory,
+                version=self.version,
+            )
         return str(self.directory)
 
     @property
@@ -230,22 +234,24 @@ def missing_report(directory: str | os.PathLike[str]) -> str:
     if path.is_file():
         path = path.parent
     if not path.is_dir():
-        return f"Папки {path} нет."
+        return tr("veracrypt.missing.folder", path=path)
 
     lacking = [
-        title
-        for title, names in (
-            ("создания контейнеров", FORMAT_NAMES),
-            ("монтирования", MOUNT_NAMES),
+        tr(key)
+        for key, names in (
+            ("veracrypt.missing.format", FORMAT_NAMES),
+            ("veracrypt.missing.mount", MOUNT_NAMES),
         )
         if _first_existing(path, names) is None
     ]
     if not lacking:
         return ""
-    return (
-        f"В папке {path} нет бинарника для {' и '.join(lacking)}. "
-        f"Нужны «{FORMAT_NAMES[0]}» и «{MOUNT_NAMES[0]}»; у портативной "
-        f"сборки те же имена с суффиксом архитектуры."
+    return tr(
+        "veracrypt.missing.binary",
+        path=path,
+        lacking=tr("veracrypt.missing.joiner").join(lacking),
+        format_name=FORMAT_NAMES[0],
+        mount_name=MOUNT_NAMES[0],
     )
 
 
@@ -432,28 +438,13 @@ def version_notice(install: Install) -> tuple[bool, str]:
     """
     number = install.number
     if not number:
-        return True, (
-            "Версию VeraCrypt прочитать не удалось. Том будем снимать старым "
-            "ключом /dismount — его понимают все версии."
-        )
+        return True, tr("veracrypt.version.unreadable")
     if number < MINIMUM_VERSION:
-        return False, (
-            f"VeraCrypt {install.version} слишком старая: ключи /nosizecheck и "
-            f"/quick появились в 1.24. Без первого контейнер на терабайт "
-            f"откажется создаваться, если терабайта свободного нет. "
-            f"Нужна 1.24 или новее."
-        )
+        return False, tr("veracrypt.version.too_old", version=install.version)
     if number < QUIET_CREATE_SINCE:
-        return True, (
-            f"VeraCrypt {install.version}: до 1.25.4 ключ /silent не убирал "
-            f"окно ожидания при создании NTFS-контейнера. Сбор пойдёт, но "
-            f"окно будет выскакивать на каждый контейнер."
-        )
+        return True, tr("veracrypt.version.noisy_create", version=install.version)
     if number < UNMOUNT_SINCE:
-        return True, (
-            f"VeraCrypt {install.version}: снимать том будем ключом /dismount "
-            f"— /unmount появился только в 1.26.20."
-        )
+        return True, tr("veracrypt.version.dismount", version=install.version)
     return True, ""
 
 
@@ -470,10 +461,16 @@ def run_command(command: Sequence[str], timeout: int) -> int:
         completed = subprocess.run(list(command), **options)  # type: ignore[arg-type]
     except subprocess.TimeoutExpired as exc:
         raise VeraCryptError(
-            f"{Path(command[0]).name} не ответил за {timeout} с и был снят."
+            tr(
+                "veracrypt.run.timeout",
+                program=Path(command[0]).name,
+                timeout=timeout,
+            )
         ) from exc
     except OSError as exc:
-        raise VeraCryptError(f"Не удалось запустить {command[0]}: {exc}") from exc
+        raise VeraCryptError(
+            tr("veracrypt.run.failed", program=command[0], error=exc)
+        ) from exc
     return completed.returncode
 
 
@@ -521,14 +518,16 @@ class VeraCrypt:
         actual = path.stat().st_size if path.exists() else None
         if actual is None:
             raise VeraCryptError(
-                f"Контейнер {path.name} не создан (код возврата {code}). "
-                f"Чаще всего это отказ в правах: форматирование NTFS требует "
-                f"администратора, а в тихом режиме VeraCrypt об этом молчит."
+                tr("veracrypt.create.missing", name=path.name, code=code)
             )
         if actual != size_bytes:
             raise VeraCryptError(
-                f"Контейнер {path.name} вышел {actual} B вместо {size_bytes} B. "
-                f"Замер с такого контейнера встал бы не в свою строку."
+                tr(
+                    "veracrypt.create.size",
+                    name=path.name,
+                    actual=actual,
+                    expected=size_bytes,
+                )
             )
 
     def mount(self, path: Path, letter: str) -> None:
@@ -538,10 +537,11 @@ class VeraCrypt:
         self._await_letter(
             letter,
             present=True,
-            message=(
-                f"Том {letter}: не поднялся за {LETTER_TIMEOUT:g} с "
-                f"(код возврата {code}). Проверьте, что драйвер VeraCrypt "
-                f"установлен и запущен."
+            message=tr(
+                "veracrypt.mount.timeout",
+                letter=letter,
+                timeout=f"{LETTER_TIMEOUT:g}",
+                code=code,
             ),
         )
 
@@ -577,10 +577,7 @@ class VeraCrypt:
             if self._letter_gone(letter, UNMOUNT_GRACE):
                 return
         raise VeraCryptError(
-            f"Том {letter}: не размонтировался за {UNMOUNT_ATTEMPTS} "
-            f"{plural(UNMOUNT_ATTEMPTS, 'попытку', 'попытки', 'попыток')} "
-            f"(последний код возврата {code}). Пока он поднят, файл "
-            f"контейнера удалить нельзя."
+            tr_n("veracrypt.unmount.failed", UNMOUNT_ATTEMPTS, letter=letter, code=code)
         )
 
     def unmount_quietly(self, letter: str) -> bool:
@@ -606,7 +603,7 @@ class VeraCrypt:
         for letter in LETTERS:
             if f"{letter}:" not in taken:
                 return letter
-        raise VeraCryptError("Свободных букв дисков не осталось.")
+        raise VeraCryptError(tr("veracrypt.letters.none"))
 
     def _taken(self) -> set[str]:
         return {item.upper().rstrip("\\/") for item in self.volumes.drives()}

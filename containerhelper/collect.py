@@ -27,6 +27,7 @@ from typing import Callable, Sequence
 
 from .fileset import PAYLOAD_DIR, FileSet, generate
 from .formatting import UNIT_AUTO, fmt_both, fmt_with_unit, size_label
+from .i18n import tr
 from .model import (
     DEFAULT_CLUSTER_BYTES,
     DEFAULT_SAFETY_BYTES,
@@ -120,14 +121,14 @@ class Stopped(Exception):
 # the progress bar, and a person needs to see what exactly the program has
 # been standing on for the third minute.
 
-PHASE_CREATE = "создание контейнера"
-PHASE_MOUNT = "монтирование"
-PHASE_EMPTY = "замер пустого тома"
-PHASE_WRITE = "запись файлов"
-PHASE_VERIFY = "сверка содержимого"
-PHASE_REMOUNT = "перемонтирование"
-PHASE_LEFT = "замер остатка"
-PHASE_CLEANUP = "уборка"
+PHASE_CREATE = "collect.phase.create"
+PHASE_MOUNT = "collect.phase.mount"
+PHASE_EMPTY = "collect.phase.empty"
+PHASE_WRITE = "collect.phase.write"
+PHASE_VERIFY = "collect.phase.verify"
+PHASE_REMOUNT = "collect.phase.remount"
+PHASE_LEFT = "collect.phase.left"
+PHASE_CLEANUP = "collect.phase.cleanup"
 
 
 @dataclass(frozen=True)
@@ -156,13 +157,17 @@ class Progress:
         """
         if self.phase != PHASE_WRITE or not self.files_total:
             return ""
-        text = f"файлов {self.files_done} из {self.files_total}"
-        if self.bytes_total:
-            text += (
-                f", {fmt_with_unit(self.bytes_done, UNIT_AUTO)}"
-                f" из {fmt_with_unit(self.bytes_total, UNIT_AUTO)}"
+        if not self.bytes_total:
+            return tr(
+                "collect.progress.files", done=self.files_done, total=self.files_total
             )
-        return text
+        return tr(
+            "collect.progress.files_bytes",
+            done=self.files_done,
+            total=self.files_total,
+            bytes_done=fmt_with_unit(self.bytes_done, UNIT_AUTO),
+            bytes_total=fmt_with_unit(self.bytes_total, UNIT_AUTO),
+        )
 
     @property
     def share(self) -> float:
@@ -204,13 +209,19 @@ class Step:
     @property
     def title(self) -> str:
         if self.fileset is not None:
-            return f"{self.fileset.title} — контейнер {size_label(self.container_mib)}"
+            return tr(
+                "collect.step.fileset",
+                fileset=tr(self.fileset.title),
+                size=size_label(self.container_mib),
+            )
         method = (
-            "динамический, быстрое форматирование"
+            tr("collect.step.dynamic")
             if self.dynamic and self.quick
-            else "обычный, полное форматирование"
+            else tr("collect.step.normal")
         )
-        return f"{size_label(self.container_mib)} — {method}"
+        return tr(
+            "collect.step.empty", size=size_label(self.container_mib), method=method
+        )
 
     def payload_bytes(self, cluster_bytes: int = DEFAULT_CLUSTER_BYTES) -> int:
         return 0 if self.fileset is None else self.fileset.alloc_bytes(cluster_bytes)
@@ -232,6 +243,7 @@ class Measurement:
     cluster_bytes: int
     filesystem: str
     fileset: str = ""
+    #: A catalog key, as FileSet.title.
     fileset_title: str = ""
     file_bytes: int | None = None
     file_count: int | None = None
@@ -257,9 +269,9 @@ class Measurement:
         What is computable is not written, same as everywhere else.
         """
         title = (
-            f"Запас {self.fileset_title}"
+            tr("collect.record.slack", fileset=tr(self.fileset_title))
             if self.fileset
-            else f"Калибровка {size_label(self.container_mib)}"
+            else tr("collect.record.point", size=size_label(self.container_mib))
         )
         return Record(
             id=title,
@@ -487,13 +499,11 @@ def self_check_verdict(fast: Measurement, slow: Measurement) -> str:
     difference = abs(fast.metadata_bytes - slow.metadata_bytes)
     if difference <= SELF_CHECK_TOLERANCE:
         return ""
-    return (
-        f"Самопроверка не сошлась: динамический контейнер с быстрым "
-        f"форматированием дал {fast.metadata_bytes} B метаданных, обычный с полным "
-        f"— {slow.metadata_bytes} B, разница {difference} B. На этой машине "
-        f"динамические контейнеры меряются иначе, и гнать по ним остальные "
-        f"размеры нельзя: числа получились бы не про те контейнеры, которые "
-        f"будут созданы на самом деле."
+    return tr(
+        "collect.self_check.mismatch",
+        fast=fast.metadata_bytes,
+        slow=slow.metadata_bytes,
+        difference=difference,
     )
 
 
@@ -572,9 +582,13 @@ def _measure_slack(
     # halfway.
     if payload.alloc_bytes >= empty.empty_free_bytes:
         raise VeraCryptError(
-            f"Набор «{fileset.title}» занимает {fmt_both(payload.alloc_bytes)} "
-            f"при кластере {cluster} B, а на томе свободно "
-            f"{fmt_both(empty.empty_free_bytes)}. Замер не начат."
+            tr(
+                "collect.error.set_too_big",
+                fileset=tr(fileset.title),
+                alloc=fmt_both(payload.alloc_bytes),
+                cluster=cluster,
+                free=fmt_both(empty.empty_free_bytes),
+            )
         )
 
     root = Path(veracrypt.volumes.root(letter)) / PAYLOAD_DIR
@@ -607,9 +621,12 @@ def _measure_slack(
     scan = scan_paths([root], cluster)
     if scan.file_count != payload.file_count:
         raise VeraCryptError(
-            f"На томе оказалось файлов {scan.file_count}, а набор «"
-            f"{fileset.title}» состоит из {payload.file_count}. Замер "
-            f"негоден."
+            tr(
+                "collect.error.file_count",
+                found=scan.file_count,
+                fileset=tr(fileset.title),
+                expected=payload.file_count,
+            )
         )
 
     say(PHASE_REMOUNT)
@@ -698,8 +715,7 @@ class Collector:
             raise Stopped()
         if self.free_bytes() < SPACE_FLOOR_BYTES:
             raise OutOfSpace(
-                f"На диске осталось меньше {fmt_both(SPACE_FLOOR_BYTES)} — "
-                f"запись остановлена, чтобы не порвать том на середине."
+                tr("collect.error.disk_floor", floor=fmt_both(SPACE_FLOOR_BYTES))
             )
 
     def run_step(self, step: Step) -> StepResult:
@@ -708,9 +724,8 @@ class Collector:
         if free < need:
             return StepResult(
                 step,
-                error=(
-                    f"не хватает места: нужно {fmt_both(need)}, свободно "
-                    f"{fmt_both(free)}"
+                error=tr(
+                    "collect.error.no_space", need=fmt_both(need), free=fmt_both(free)
                 ),
                 skipped=True,
                 required_bytes=need,
@@ -724,7 +739,7 @@ class Collector:
         except Stopped:
             # Cancellation is not a step failure: there is simply no
             # measurement, and the container is already cleaned up in finally.
-            return StepResult(step, error="остановлено по требованию")
+            return StepResult(step, error=tr("collect.error.stopped"))
         except (VeraCryptError, OSError) as exc:
             # OSError goes here too: the volume may vanish from under our feet
             # between mounting and reading, and that is a failure of the step,

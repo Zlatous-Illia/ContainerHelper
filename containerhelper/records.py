@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .factory import FactoryPoint, FactorySample, factory_data
+from .fileset import FILE_SETS
+from .i18n import tr
 from .paths import CALIBRATION_NAME
 from .sizes import SUPPORTED_FS
 from .model import (
@@ -383,7 +385,7 @@ def validate(record: Record) -> list[Issue]:
     issues: list[Issue] = []
 
     if record.container_mib <= 0:
-        issues.append(Issue("container_mib", "Размер контейнера должен быть больше нуля."))
+        issues.append(Issue("container_mib", tr("records.issue.container_mib")))
 
     mounted = record.mounted_bytes
     free = record.empty_free_bytes
@@ -401,9 +403,11 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "tail_negative",
-                    f"Ёмкость тома ({mounted}) больше, чем контейнер без "
-                    f"заголовков VeraCrypt ({record.volume_bytes}). Проверьте "
-                    f"container_mib и mounted_bytes.",
+                    tr(
+                        "records.issue.tail_negative",
+                        mounted=mounted,
+                        volume=record.volume_bytes,
+                    ),
                     SCOPE_METADATA,
                 )
             )
@@ -411,10 +415,11 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "tail_unusual",
-                    f"Ёмкость тома меньше контейнера без заголовков VeraCrypt "
-                    f"на {tail} B, а NTFS оставляет себе ровно один кластер, "
-                    f"{DEFAULT_CLUSTER_BYTES} B. Проверьте container_mib и "
-                    f"mounted_bytes.",
+                    tr(
+                        "records.issue.tail_unusual",
+                        tail=tail,
+                        cluster=DEFAULT_CLUSTER_BYTES,
+                    ),
                     SCOPE_METADATA,
                 )
             )
@@ -424,8 +429,7 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "free_ge_mounted",
-                    f"Свободное место на пустом томе ({free}) не меньше его "
-                    f"ёмкости ({mounted}).",
+                    tr("records.issue.free_ge_mounted", free=free, mounted=mounted),
                 )
             )
         elif is_measured:
@@ -435,9 +439,12 @@ def validate(record: Record) -> list[Issue]:
                 issues.append(
                     Issue(
                         "ntfs_range",
-                        f"Метаданные NTFS вышли {ntfs} B — вне правдоподобного "
-                        f"диапазона {NTFS_MIN_BYTES}..{ceiling} B. Похоже на "
-                        f"потерю или лишние разряды.",
+                        tr(
+                            "records.issue.ntfs_range",
+                            ntfs=ntfs,
+                            low=NTFS_MIN_BYTES,
+                            high=ceiling,
+                        ),
                         SCOPE_METADATA,
                     )
                 )
@@ -448,9 +455,7 @@ def validate(record: Record) -> list[Issue]:
         issues.append(
             Issue(
                 "consumed_lt_file",
-                f"Занято на томе {consumed} B, а сам файл занимает {alloc} B. "
-                f"Занятое не может быть меньше файла — ошибка в одном из полей "
-                f"empty_free_bytes / left_bytes / file_bytes.",
+                tr("records.issue.consumed_lt_file", consumed=consumed, alloc=alloc),
                 SCOPE_SLACK,
             )
         )
@@ -461,9 +466,11 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "alloc_lt_logical",
-                    f"Данные по кластерам ({alloc_measured}) меньше их логического "
-                    f"размера ({record.file_bytes}). Округление вверх не может "
-                    f"уменьшить объём.",
+                    tr(
+                        "records.issue.alloc_lt_logical",
+                        alloc=alloc_measured,
+                        logical=record.file_bytes,
+                    ),
                     SCOPE_SLACK,
                 )
             )
@@ -471,8 +478,11 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "alloc_not_aligned",
-                    f"Данные по кластерам ({alloc_measured}) не кратны размеру "
-                    f"кластера ({record.cluster_bytes}).",
+                    tr(
+                        "records.issue.alloc_not_aligned",
+                        alloc=alloc_measured,
+                        cluster=record.cluster_bytes,
+                    ),
                     SCOPE_SLACK,
                 )
             )
@@ -482,7 +492,7 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "file_count",
-                    "Количество файлов должно быть не меньше 1.",
+                    tr("records.issue.file_count"),
                     SCOPE_SLACK,
                 )
             )
@@ -490,8 +500,11 @@ def validate(record: Record) -> list[Issue]:
             issues.append(
                 Issue(
                     "file_count_gt_bytes",
-                    f"Файлов ({record.file_count}) больше, чем байт "
-                    f"({record.file_bytes}).",
+                    tr(
+                        "records.issue.file_count_gt_bytes",
+                        count=record.file_count,
+                        bytes=record.file_bytes,
+                    ),
                     SCOPE_SLACK,
                 )
             )
@@ -785,9 +798,13 @@ def factory_slack_record(sample: FactorySample) -> Record:
     so it is also an NTFS point. That is by design — the measurement was
     taken on a real volume, and throwing away its metadata would be wasteful.
     """
-    title = sample.title or sample.fileset
+    # The file's title is Russian data; a known file set speaks the current
+    # language instead.
+    titles = {item.key: item.title for item in FILE_SETS}
+    known = titles.get(sample.fileset)
+    title = tr(known) if known else sample.title or sample.fileset
     return Record(
-        id=f"Заводской запас {title}".strip(),
+        id=tr("records.factory_slack.id", title=title).strip(),
         created="",
         container_mib=sample.container_mib,
         cluster_bytes=sample.cluster_bytes,
@@ -871,17 +888,21 @@ def _read_json(path: Path) -> dict[str, Any]:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise StoreError(
-            f"Файл {path} повреждён и не читается как JSON: {exc}. "
-            f"Резервная копия: {path.with_suffix(path.suffix + '.bak')}"
+            tr(
+                "records.error.corrupt",
+                path=path,
+                error=exc,
+                backup=path.with_suffix(path.suffix + ".bak"),
+            )
         ) from exc
     except OSError as exc:
-        raise StoreError(f"Не удалось прочитать {path}: {exc}") from exc
+        raise StoreError(tr("records.error.read", path=path, error=exc)) from exc
 
     version = raw.get("schema")
     if version not in SUPPORTED_SCHEMAS:
         supported = ", ".join(str(item) for item in SUPPORTED_SCHEMAS)
         raise StoreError(
-            f"Версия схемы {version!r} не поддерживается, ожидается одна из: {supported}."
+            tr("records.error.schema", version=repr(version), supported=supported)
         )
     return raw
 
@@ -897,7 +918,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, path)
     except OSError as exc:
-        raise StoreError(f"Не удалось записать {path}: {exc}") from exc
+        raise StoreError(tr("records.error.write", path=path, error=exc)) from exc
 
 
 @dataclass
@@ -1031,7 +1052,7 @@ class Store:
                 continue
             filled.append(
                 Record(
-                    id=f"Заводская {point.container_mib} MiB",
+                    id=tr("records.factory_point.id", mib=point.container_mib),
                     created="",
                     container_mib=point.container_mib,
                     cluster_bytes=point.cluster_bytes,

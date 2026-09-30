@@ -10,6 +10,8 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+from .i18n import tr
+
 MIB = 1024 * 1024
 
 #: VeraCrypt headers: 128 KiB at the start of the container (the header and
@@ -553,15 +555,14 @@ class SafetyModel:
         if not self.ntfs.calibrated:
             return (
                 self.default_bytes,
-                "модель NTFS не откалибрована — значение по умолчанию",
+                tr("model.safety.ntfs.uncalibrated"),
                 (),
             )
 
         if self.ntfs.is_extrapolation(volume_bytes):
             return (
                 max(self.extrapolation_bytes, self.default_bytes),
-                "размер вне измеренного диапазона — осторожная оценка по всем "
-                "записям сразу",
+                tr("model.safety.ntfs.extrapolation"),
                 (),
             )
 
@@ -586,15 +587,15 @@ class SafetyModel:
         names = tuple(name for _, _, name in neighbours)
         value = max(bound, scaled)
         if not value:
-            reason = "модель здесь не занижает: замер рядом, хорда идёт сверху"
+            reason = tr("model.safety.ntfs.exact")
         elif scaled > bound:
-            reason = "промах на записях похожего размера, приведённый к этому отрезку"
+            reason = tr("model.safety.ntfs.neighbours")
         else:
-            reason = "изгиб кривой между соседними замерами"
+            reason = tr("model.safety.ntfs.bend")
 
         if self._leans_on_factory(volume_bytes):
             value += self.factory_margin
-            reason += "; отрезок держится на заводских замерах"
+            reason += tr("model.safety.ntfs.factory")
         return value, reason, names
 
     def _leans_on_factory(self, volume_bytes: int) -> bool:
@@ -683,13 +684,12 @@ class SafetyModel:
         if file_count <= 1:
             return (
                 self.floor,
-                "один файл: постоянная часть запаса измерена, риск мал",
+                tr("model.safety.slack.one_file"),
                 (),
             )
         return (
             self.default_bytes,
-            f"нет замера с похожим числом файлов, а их {file_count} — "
-            "значение по умолчанию",
+            tr("model.safety.slack.default", count=file_count),
             (),
         )
 
@@ -703,7 +703,7 @@ class SafetyModel:
             return self._fallback_slack(file_count)
         return (
             max(self._worst(neighbours), 0),
-            "промах на замерах с похожим числом файлов",
+            tr("model.safety.slack.neighbours"),
             tuple(name for _, _, name in neighbours),
         )
 

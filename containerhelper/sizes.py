@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .i18n import tr
 from .model import DEFAULT_CLUSTER_BYTES, Payload
 
 IS_WINDOWS = sys.platform == "win32"
@@ -191,15 +192,16 @@ def unique_roots(paths: Iterable[str | os.PathLike[str]]) -> list[str]:
 
 def _scan_one(target: Path) -> SourceStat:
     if not target.exists():
-        return SourceStat(str(target), False, [], 0, [f"Путь не найден: {target}"])
+        return SourceStat(
+            str(target), False, [], 0, [tr("sizes.path.missing", path=target)]
+        )
 
     if target.is_file():
         try:
             size = target.stat().st_size
         except OSError as exc:
-            return SourceStat(
-                str(target), False, [], 0, [f"Нет доступа к {target}: {exc}"]
-            )
+            error = tr("sizes.path.denied", path=target, error=exc)
+            return SourceStat(str(target), False, [], 0, [error])
         return SourceStat(str(target), False, [size])
 
     sizes: list[int] = []
@@ -213,7 +215,7 @@ def _walk(directory: Path, sizes: list[int], errors: list[str]) -> int:
     try:
         entries = list(os.scandir(directory))
     except OSError as exc:
-        errors.append(f"Нет доступа к {directory}: {exc}")
+        errors.append(tr("sizes.path.denied", path=directory, error=exc))
         return 0
 
     dirs = 0
@@ -226,7 +228,7 @@ def _walk(directory: Path, sizes: list[int], errors: list[str]) -> int:
             elif entry.is_file():
                 sizes.append(entry.stat().st_size)
         except OSError as exc:
-            errors.append(f"Нет доступа к {entry.path}: {exc}")
+            errors.append(tr("sizes.path.denied", path=entry.path, error=exc))
     return dirs
 
 
@@ -332,7 +334,9 @@ def scan_volume(
         entries = list(os.scandir(root))
     except OSError as exc:
         return VolumeScan(
-            Payload.for_files((), cluster_bytes), [], [f"Нет доступа к {root}: {exc}"]
+            Payload.for_files((), cluster_bytes),
+            [],
+            [tr("sizes.path.denied", path=root, error=exc)],
         )
 
     for entry in entries:
@@ -347,7 +351,7 @@ def scan_volume(
             elif entry.is_file():
                 sizes.append(entry.stat().st_size)
         except OSError as exc:
-            errors.append(f"Нет доступа к {entry.path}: {exc}")
+            errors.append(tr("sizes.path.denied", path=entry.path, error=exc))
 
     return VolumeScan(Payload.for_files(sizes, cluster_bytes), service, errors)
 

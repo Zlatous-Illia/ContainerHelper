@@ -83,6 +83,7 @@ class FileSet:
     """File set: what it consists of and how much space it will take."""
 
     key: str
+    #: A catalog key, shown through `tr()`: the sets are built at import.
     title: str
     groups: tuple[Group, ...]
 
@@ -123,17 +124,17 @@ class FileSet:
 #: "slack depends only on n" is wrong, and that must be learned explicitly,
 #: not suspected.
 FILE_SETS = (
-    FileSet("one", "Один файл 64 MiB", (Group(1, 64 * MIB),)),
-    FileSet("fifty", "50 файлов по 10 MiB", (Group(50, 10 * MIB),)),
-    FileSet("small-500", "500 файлов по 1 KiB", (Group(500, SMALL_FILE),)),
-    FileSet("small-5000", "5 000 файлов по 1 KiB", (Group(5000, SMALL_FILE),)),
-    FileSet("small-10000", "10 000 файлов по 1 KiB", (Group(10000, SMALL_FILE),)),
+    FileSet("one", "fileset.one.title", (Group(1, 64 * MIB),)),
+    FileSet("fifty", "fileset.fifty.title", (Group(50, 10 * MIB),)),
+    FileSet("small-500", "fileset.small_500.title", (Group(500, SMALL_FILE),)),
+    FileSet("small-5000", "fileset.small_5000.title", (Group(5000, SMALL_FILE),)),
+    FileSet("small-10000", "fileset.small_10000.title", (Group(10000, SMALL_FILE),)),
     FileSet(
         "mixed",
-        "500 × 1 KiB + 50 × 10 MiB + 1 × 1 GiB",
+        "fileset.mixed.title",
         (Group(500, SMALL_FILE), Group(50, 10 * MIB), Group(1, GIB)),
     ),
-    FileSet("huge", "Один файл 4 GiB", (Group(1, 4 * GIB),)),
+    FileSet("huge", "fileset.huge.title", (Group(1, 4 * GIB),)),
 )
 
 
