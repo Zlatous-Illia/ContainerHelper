@@ -296,6 +296,32 @@ class CoverageTableTests(unittest.TestCase):
         self.assertTrue(all(item.disabled for item in store.calibration_points()))
         self.assertFalse(any(item.disabled for item in store.slack_measurements()))
 
+    def test_disabling_stays_within_the_profile(self):
+        """The table shows one profile; an exFAT point is another curve's node."""
+        point = Record(
+            id="Калибровка 1 GiB",
+            container_mib=1024,
+            mounted_bytes=VOLUME,
+            empty_free_bytes=VOLUME - 18 * MIB,
+        )
+        foreign = replace(point, id="exFAT", filesystem="exFAT", cluster_bytes=32 * KIB)
+        self.put(point, foreign, slack_record(filesystem="exFAT", cluster_bytes=32 * KIB))
+        store = self.window.records_tab.store
+        self.assertEqual(self.window.covered_sizes(), [1024])
+        self.assertEqual(self.window.covered_filesets(), [])
+
+        self.window._set_point_disabled(point.volume_bytes, True)
+        self.assertEqual(
+            {item.id: item.disabled for item in store.calibration_points()},
+            {"Калибровка 1 GiB": True, "exFAT": False},
+        )
+        self.window._set_point_disabled(point.volume_bytes, False)
+        self.window._disable_all_points()
+        self.assertEqual(
+            {item.id: item.disabled for item in store.calibration_points()},
+            {"Калибровка 1 GiB": True, "exFAT": False},
+        )
+
     def test_the_window_hands_the_dialog_the_sets_and_what_is_covered(self):
         self.put(slack_record())
         dialog = self.window.build_collect_dialog()

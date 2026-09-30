@@ -32,6 +32,7 @@ from ..paths import (
     settings_path,
 )
 from ..paths import remember_data_dir
+from ..records import DEFAULT_PROFILE, Record, profile_of
 from .calc_tab import CLUSTER_CHOICES, CalcTab
 from .calibration_tab import RECOMMENDED_MIB, CalibrationTab
 from .chart_window import (
@@ -115,6 +116,11 @@ TAB_TIPS = {
         "Править тут нечего, это диагностика."
     ),
 }
+
+
+def _is_profile_point(record: Record) -> bool:
+    """An empty-volume measurement of the profile the Calibration tab shows."""
+    return record.is_calibration_point and profile_of(record) == DEFAULT_PROFILE
 
 
 class MainWindow(QMainWindow):
@@ -361,7 +367,9 @@ class MainWindow(QMainWindow):
         return [
             record.container_mib
             for record in self.records_tab.store.calibration_points()
-            if not record.disabled and record.mounted_bytes
+            if not record.disabled
+            and record.mounted_bytes
+            and profile_of(record) == DEFAULT_PROFILE
         ]
 
     def covered_filesets(self) -> list[str]:
@@ -384,6 +392,7 @@ class MainWindow(QMainWindow):
                 if record.fileset
                 and not record.disabled
                 and record.copy_slack_measured is not None
+                and profile_of(record) == DEFAULT_PROFILE
             }
         )
 
@@ -437,11 +446,13 @@ class MainWindow(QMainWindow):
         shared pass over volume_bytes would touch them too. The sizes should
         not coincide — the container for a file set is moved off the
         recommended sizes on purpose — but there is no reason to rely on that
-        when checking the property is enough.
+        when checking the property is enough. And only the profile's point:
+        the table shows one profile, and an exFAT point on the same volume is
+        another curve's node.
         """
         store = self.records_tab.store
         for index, record in enumerate(store.calibration):
-            if record.is_calibration_point and record.volume_bytes == volume_bytes:
+            if _is_profile_point(record) and record.volume_bytes == volume_bytes:
                 store.calibration[index] = replace(record, disabled=disabled)
         self.records_tab.save_store()
 
@@ -456,7 +467,7 @@ class MainWindow(QMainWindow):
         live = [
             record
             for record in store.calibration
-            if record.is_calibration_point and not record.disabled
+            if _is_profile_point(record) and not record.disabled
         ]
         if not live:
             return
@@ -469,7 +480,7 @@ class MainWindow(QMainWindow):
         ):
             return
         store.calibration = [
-            replace(record, disabled=True) if record.is_calibration_point else record
+            replace(record, disabled=True) if _is_profile_point(record) else record
             for record in store.calibration
         ]
         self.records_tab.save_store()

@@ -54,7 +54,7 @@ its English term.
 | underestimate; overestimate | «занижение»; «перезаклад» | Underestimate is the only dangerous side. |
 | prediction | «обещание расчёта», «прогноз» | `predicted_mib`: what the calculation promised when the record was made. |
 | miss | «промах» | Prediction minus the exact minimum. Positive is overestimate. |
-| volume profile | «профиль тома» | Filesystem plus cluster size. Planned. |
+| volume profile | «профиль тома» | Filesystem plus cluster size (`VolumeProfile`, `profile_of`): what a measurement calibrates. |
 | advice | «совет» | The computed safety margin (`advice`). |
 | auto-selection | «автоподбор», «подбор» | Of the safety margin, and of the display unit under Auto. |
 | calculation path | «расчётный путь» | Where only integers are allowed. |

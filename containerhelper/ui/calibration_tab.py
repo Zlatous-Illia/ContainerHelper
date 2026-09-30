@@ -36,7 +36,7 @@ from ..formatting import (
     unit_suffix,
 )
 from ..model import MIB, VC_HEADERS_BYTES, volume_of
-from ..records import Record, forecast, gives_metadata_point
+from ..records import Record, factory_points, forecast, gives_metadata_point
 from .chart_window import CHART_NTFS
 from .table import (
     fit_columns,
@@ -241,10 +241,11 @@ class CalibrationTab(QWidget):
         layout.addWidget(text)
 
         data = factory_data()
-        if data.points:
+        count = len(factory_points())
+        if count:
             origin = QLabel(
-                f"<b>Заводские замеры:</b> {len(data.points)} "
-                f"{plural(len(data.points), 'точка', 'точки', 'точек')}, "
+                f"<b>Заводские замеры:</b> {count} "
+                f"{plural(count, 'точка', 'точки', 'точек')}, "
                 f"{data.source}. {data.note}"
             )
             origin.setWordWrap(True)
@@ -403,7 +404,7 @@ class CalibrationTab(QWidget):
             for record in self._points()
             if gives_metadata_point(record)
         }
-        factory = factory_data().by_volume()
+        factory = {point.volume_bytes: point for point in factory_points()}
 
         self.table.setRowCount(len(RECOMMENDED_MIB))
         counts = {"own": 0, "factory": 0, "missing": 0}

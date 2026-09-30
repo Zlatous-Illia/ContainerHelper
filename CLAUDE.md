@@ -74,9 +74,10 @@ beyond their cluster-rounded size), `SafetyModel` (the safety margin),
 container size and vice versa).
 
 **`records.py`** — the store (`Store`, atomic write, a single `.bak`), JSON
-schema version 5, plausibility checks (`validate` → `Issue` with the scope
+schema version 6, plausibility checks (`validate` → `Issue` with the scope
 `metadata`/`slack`) and turning records into calibration points
-(`metadata_points`, `slack_samples`, `metadata_cross_check`). There are two
+(`metadata_points`, `slack_samples`, `metadata_cross_check`) of one volume
+profile (`VolumeProfile`: filesystem plus cluster size). There are two
 files: `Records.json` holds the copy records, the neighboring
 `Calibration.json` holds the empty-volume measurements. Measurements describe the machine (the Windows
 build and the VeraCrypt version), records describe the data; `Store` owns both
@@ -241,6 +242,15 @@ measurements are in the "Charts" section of SPEC.
   the file count. Not to be confused with `put_calibration`: there an own measurement
   supersedes an own one, and the key for copy slack is different — the file
   set (see below).
+- **Every such key holds within the volume profile** (`profile_of`: the
+  filesystem, with FAT32 as FAT and an unread one as NTFS, plus the cluster,
+  with 0 as 4 KiB on NTFS only). The volume size and the file count are the same on every
+  filesystem, so a key without the profile lets an exFAT measurement
+  supersede, disable or cover an NTFS one — and an exFAT copy-slack
+  measurement pull the NTFS per-file slack down, the dangerous side. Until the
+  profile can be chosen, everything calculates for `DEFAULT_PROFILE`
+  (NTFS, 4 KiB) through default arguments; a new call site that forgets the
+  profile silently gets that one.
 - **The NTFS curve is not convex, and at the bottom it is a staircase.** SPEC
   long said "up to 8 GiB the curve is convex, the chord runs above it and
   cannot underestimate"; a measurement on a 1610 MiB volume landed 202 672 B

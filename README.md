@@ -258,7 +258,7 @@ without it.
 | Module | What it does |
 |---|---|
 | `model.py` | arithmetic: NTFS, copy slack and safety margin models, solving for the size |
-| `records.py` | JSON storage (schema 5), plausibility checks, calibration points |
+| `records.py` | JSON storage (schema 6), plausibility checks, calibration points by volume profile |
 | `sizes.py` | walking the source data and reading mounted volumes |
 | `fileset.py` | file sets for measuring copy slack and generating them on a volume |
 | `factory.py` | factory data from `containerhelper/data/`, read-only |

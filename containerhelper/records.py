@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .factory import FactorySample, factory_data
+from .factory import FactoryPoint, FactorySample, factory_data
 from .paths import CALIBRATION_NAME
 from .sizes import SUPPORTED_FS
 from .model import (
@@ -32,15 +32,16 @@ from .model import (
     volume_of,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 #: Schema 1 did not know file_alloc_bytes, schema 2 did not know filesystem,
 #: schema 3 did not know the calibration key, schema 4 kept that key in one
-#: file with the records. All of them are still read: a missing field means
-#: exactly the old behaviour, and empty-volume measurements move on read first
-#: from records to calibration, and from there to their own file. The new
-#: version is always what gets written.
-SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5)
+#: file with the records, schema 5 left filesystem out when it was not read.
+#: All of them are still read: a missing field means exactly the old
+#: behaviour — a missing filesystem is NTFS — and empty-volume measurements
+#: move on read first from records to calibration, and from there to their
+#: own file. The new version is always what gets written.
+SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5, 6)
 
 #: Plausibility bounds for NTFS metadata. The lower one catches lost digits
 #: (Cache 2 has 36 573 written instead of 36 573 184). The upper one grows
@@ -57,6 +58,67 @@ NTFS_MAX_SHARE = 0.02
 SCOPE_METADATA = "metadata"
 SCOPE_SLACK = "slack"
 SCOPE_BOTH = "both"
+
+
+#: FAT as VeraCrypt names it in its format options. Windows reports the same
+#: volume as FAT32 (or FAT on a small one), and both mean one profile.
+FAT = "FAT"
+EXFAT = "exFAT"
+
+
+@dataclass(frozen=True)
+class VolumeProfile:
+    """What a calibration belongs to: the filesystem and its cluster size.
+
+    Metadata and copy slack are measured for one filesystem with one cluster,
+    and a measurement of another profile says nothing about this one: exFAT
+    spends a fraction of NTFS's bytes per file, and mixed in, its measurement
+    would pull the NTFS copy slack down — the dangerous side. So every model
+    is built from one profile's measurements, and every "the same
+    measurement" — superseding, disabling, covering a size — is decided
+    within a profile.
+    """
+
+    filesystem: str
+    cluster_bytes: int
+
+
+#: The profile every measurement so far was taken on, and the one the
+#: program calculates for until the profile can be chosen.
+DEFAULT_PROFILE = VolumeProfile(SUPPORTED_FS, DEFAULT_CLUSTER_BYTES)
+
+
+def filesystem_name(raw: str) -> str:
+    """The profile's name for the filesystem as the volume reports it.
+
+    Empty is NTFS: the filesystem was not read before schema 3, and every
+    record of that time was taken on NTFS. An unknown name is kept as is —
+    it is a profile of its own, not NTFS.
+    """
+    name = raw.strip()
+    upper = name.upper()
+    if not upper or upper == SUPPORTED_FS:
+        return SUPPORTED_FS
+    if upper in (FAT, "FAT32"):
+        return FAT
+    if upper == EXFAT.upper():
+        return EXFAT
+    return name
+
+
+def profile_of(item: "Record | FactoryPoint | FactorySample") -> VolumeProfile:
+    """The profile a record or a factory measurement was taken on.
+
+    An unread cluster (0) counts as 4 KiB on NTFS, as it does in `validate`:
+    that is NTFS's cluster on every size the program reaches. Elsewhere it
+    stays 0 — exFAT's default depends on the volume size, and a guess would
+    file the record under a profile it was not taken on.
+    """
+    filesystem = filesystem_name(item.filesystem)
+    cluster = item.cluster_bytes
+    if not cluster and filesystem == SUPPORTED_FS:
+        cluster = DEFAULT_CLUSTER_BYTES
+    return VolumeProfile(filesystem, cluster)
 
 
 @dataclass(frozen=True)
@@ -85,8 +147,10 @@ class Record:
     file_alloc_bytes: int | None = None
     left_bytes: int | None = None
     #: Volume filesystem, read at measurement time. Empty means it was not
-    #: read (all records from before the check appeared; by default they
-    #: count as NTFS).
+    #: read: a record typed in by hand, or a volume that did not answer. It
+    #: counts as NTFS and is written out
+    #: as NTFS — explicitly, so that the file says which profile the record
+    #: calibrates.
     filesystem: str = ""
     note: str = ""
     flagged: bool = False
@@ -262,8 +326,7 @@ class Record:
             value = getattr(self, name)
             if value is not None:
                 data[name] = value
-        if self.filesystem:
-            data["filesystem"] = self.filesystem
+        data["filesystem"] = self.filesystem or SUPPORTED_FS
         if self.fileset:
             data["fileset"] = self.fileset
         if self.note:
@@ -287,7 +350,7 @@ class Record:
             file_count=_opt_int(data.get("file_count")),
             file_alloc_bytes=_opt_int(data.get("file_alloc_bytes")),
             left_bytes=_opt_int(data.get("left_bytes")),
-            filesystem=str(data.get("filesystem", "")),
+            filesystem=str(data.get("filesystem") or SUPPORTED_FS),
             note=str(data.get("note", "")),
             flagged=bool(data.get("flagged", False)),
             disabled=bool(data.get("disabled", False)),
@@ -316,7 +379,7 @@ def validate(record: Record) -> list[Issue]:
     # tail should be is not measured yet. And only with the 4 KiB cluster:
     # the metadata model is taken on it alone, and that the tail is one
     # cluster is measured, not assumed, only for it.
-    is_ntfs = not record.filesystem or record.filesystem.upper() == SUPPORTED_FS
+    is_ntfs = filesystem_name(record.filesystem) == SUPPORTED_FS
     cluster = record.cluster_bytes or DEFAULT_CLUSTER_BYTES
     tail = record.tail_bytes
     if tail is not None:
@@ -387,7 +450,7 @@ def validate(record: Record) -> list[Issue]:
             )
         )
 
-    if record.filesystem and record.filesystem.upper() != SUPPORTED_FS:
+    if not is_ntfs:
         issues.append(
             Issue(
                 "filesystem",
@@ -456,51 +519,71 @@ def is_usable(record: Record, scope: str = SCOPE_BOTH) -> bool:
     return not any(issue.affects(scope) for issue in validate(record))
 
 
-def gives_metadata_point(record: Record) -> bool:
-    """Whether the record puts a point on the metadata curve.
+def gives_metadata_point(
+    record: Record, profile: VolumeProfile = DEFAULT_PROFILE
+) -> bool:
+    """Whether the record puts a point on this profile's metadata curve.
 
     Also what decides whether it covers a size: a record that does not reach
     the curve must not push the factory point at that size off it either.
-    The key is the volume size, the same for every filesystem and cluster, so
-    an exFAT or an 8 KiB record lands on a factory size — and, kept out of
-    the model by its own issue, would leave the curve one node short.
+    The volume size alone is the same for every filesystem and cluster, so
+    without the profile an exFAT or an 8 KiB record would land on a factory
+    NTFS size and leave the curve one node short.
     """
-    return record.metadata_bytes is not None and is_usable(record, SCOPE_METADATA)
+    return (
+        profile_of(record) == profile
+        and record.metadata_bytes is not None
+        and is_usable(record, SCOPE_METADATA)
+    )
 
 
-def metadata_points(records: Iterable[Record]) -> list[tuple[int, int]]:
-    """Points (volume size → NTFS metadata) for calibrating MetadataModel."""
+def gives_slack_sample(
+    record: Record, profile: VolumeProfile = DEFAULT_PROFILE
+) -> bool:
+    """Whether the record is a copy-slack measurement of this profile."""
+    return (
+        profile_of(record) == profile
+        and record.copy_slack_measured is not None
+        and is_usable(record, SCOPE_SLACK)
+    )
+
+
+def metadata_points(
+    records: Iterable[Record], profile: VolumeProfile = DEFAULT_PROFILE
+) -> list[tuple[int, int]]:
+    """Points (volume size → metadata) for calibrating MetadataModel."""
     return [
         (record.volume_bytes, record.metadata_bytes)
         for record in records
-        if gives_metadata_point(record)
+        if gives_metadata_point(record, profile)
     ]
 
 
-def slack_samples(records: Iterable[Record]) -> list[tuple[int, int]]:
+def slack_samples(
+    records: Iterable[Record], profile: VolumeProfile = DEFAULT_PROFILE
+) -> list[tuple[int, int]]:
     """Pairs (file count → measured slack) for calibrating CopySlackModel."""
-    samples = []
-    for record in records:
-        measured = record.copy_slack_measured
-        if measured is None or not is_usable(record, SCOPE_SLACK):
-            continue
-        samples.append((record.file_count or 1, measured))
-    return samples
+    return [
+        (record.file_count or 1, record.copy_slack_measured)
+        for record in records
+        if gives_slack_sample(record, profile)
+    ]
 
 
 def build_models(
-    records: Sequence[Record],
+    records: Sequence[Record], profile: VolumeProfile = DEFAULT_PROFILE
 ) -> tuple[MetadataModel, CopySlackModel]:
-    """Build both models from the accumulated records."""
+    """Build both models of the profile from the accumulated records."""
     return (
-        MetadataModel(metadata_points(records)),
-        CopySlackModel.calibrate(slack_samples(records)),
+        MetadataModel(metadata_points(records, profile)),
+        CopySlackModel.calibrate(slack_samples(records, profile)),
     )
 
 
 def build_safety(
     records: Sequence[Record],
     factory_volumes: set[int] | None = None,
+    profile: VolumeProfile = DEFAULT_PROFILE,
 ) -> SafetyModel:
     """Build the safety margin model from the accumulated records.
 
@@ -513,7 +596,7 @@ def build_safety(
     and the largest underestimate over all records goes there — deliberately
     cautious.
     """
-    checks = metadata_cross_check(records)
+    checks = metadata_cross_check(records, profile)
     deviations = [
         (check.record.volume_bytes, check.deviation, check.record.id)
         for check in checks
@@ -521,10 +604,10 @@ def build_safety(
     ]
     slack_deviations = [
         (check.record.file_count or 1, check.deviation, check.record.id)
-        for check in slack_cross_check(records)
+        for check in slack_cross_check(records, profile)
     ]
     return SafetyModel(
-        ntfs=MetadataModel(metadata_points(records)),
+        ntfs=MetadataModel(metadata_points(records, profile)),
         ntfs_deviations=deviations,
         slack_deviations=slack_deviations,
         extrapolation_bytes=worst_shortfall(checks),
@@ -547,23 +630,24 @@ class Check:
         return self.measured - self.predicted
 
 
-def metadata_cross_check(records: Sequence[Record]) -> list[Check]:
-    """Check the NTFS model, leaving the checked record out of calibration.
+def metadata_cross_check(
+    records: Sequence[Record], profile: VolumeProfile = DEFAULT_PROFILE
+) -> list[Check]:
+    """Check the metadata model, leaving the checked record out of calibration.
 
     Without leaving it out the check is meaningless: a piecewise-linear model
     passes exactly through its points, and the deviation would always be zero.
     """
     checks = []
     for index, record in enumerate(records):
-        measured = record.metadata_bytes
-        if measured is None or not is_usable(record, SCOPE_METADATA):
+        if not gives_metadata_point(record, profile):
             continue
         others = [*records[:index], *records[index + 1 :]]
-        model = MetadataModel(metadata_points(others))
+        model = MetadataModel(metadata_points(others, profile))
         checks.append(
             Check(
                 record=record,
-                measured=measured,
+                measured=record.metadata_bytes,
                 predicted=model.overhead(record.volume_bytes),
                 calibrated=model.calibrated,
             )
@@ -571,19 +655,20 @@ def metadata_cross_check(records: Sequence[Record]) -> list[Check]:
     return checks
 
 
-def slack_cross_check(records: Sequence[Record]) -> list[Check]:
+def slack_cross_check(
+    records: Sequence[Record], profile: VolumeProfile = DEFAULT_PROFILE
+) -> list[Check]:
     """The same for copy slack."""
     checks = []
     for index, record in enumerate(records):
-        measured = record.copy_slack_measured
-        if measured is None or not is_usable(record, SCOPE_SLACK):
+        if not gives_slack_sample(record, profile):
             continue
         others = [*records[:index], *records[index + 1 :]]
-        model = CopySlackModel.calibrate(slack_samples(others))
+        model = CopySlackModel.calibrate(slack_samples(others, profile))
         checks.append(
             Check(
                 record=record,
-                measured=measured,
+                measured=record.copy_slack_measured,
                 predicted=model.slack(record.file_count or 1),
                 calibrated=model.calibrated,
             )
@@ -614,6 +699,19 @@ def slack_key(record: Record) -> str:
     return record.fileset or f"n={record.file_count}"
 
 
+def _measurement_key(record: Record) -> tuple[VolumeProfile, bool, int | str]:
+    """What makes two machine measurements the same one.
+
+    A point by its volume, a copy-slack measurement by its file set, both
+    within the profile. Superseding and the move from the old store agree on
+    it: a key by volume alone let an exFAT point, or a copy-slack
+    measurement, silently drop an NTFS point on the same volume.
+    """
+    if record.is_calibration_point:
+        return profile_of(record), True, record.volume_bytes
+    return profile_of(record), False, slack_key(record)
+
+
 def factory_slack_record(sample: FactorySample) -> Record:
     """A factory copy-slack measurement as a record. Same numbers as the file.
 
@@ -633,8 +731,21 @@ def factory_slack_record(sample: FactorySample) -> Record:
         file_count=sample.file_count,
         file_alloc_bytes=sample.file_alloc_bytes,
         left_bytes=sample.left_bytes,
+        filesystem=sample.filesystem,
         fileset=sample.fileset,
     )
+
+
+def factory_points(profile: VolumeProfile = DEFAULT_PROFILE) -> list[FactoryPoint]:
+    """Factory empty-volume measurements of the profile."""
+    return [point for point in factory_data().points if profile_of(point) == profile]
+
+
+def factory_samples(profile: VolumeProfile = DEFAULT_PROFILE) -> list[FactorySample]:
+    """Factory copy-slack measurements of the profile."""
+    return [
+        sample for sample in factory_data().samples if profile_of(sample) == profile
+    ]
 
 
 @dataclass(frozen=True)
@@ -791,9 +902,9 @@ class Store:
         # The own measurements file outranks the arrived one: if the user has
         # already taken a point on this volume, the old copy from the records
         # file does not supersede it.
-        covered = {record.volume_bytes for record in points}
+        covered = {_measurement_key(record) for record in points}
         points.extend(
-            record for record in legacy if record.volume_bytes not in covered
+            record for record in legacy if _measurement_key(record) not in covered
         )
 
         store = cls(
@@ -827,23 +938,29 @@ class Store:
             )
         self.migrated = False
 
-    def calibration_records(self) -> list[Record]:
-        """Points that take part in the model: own enabled ones plus factory.
+    def calibration_records(
+        self, profile: VolumeProfile = DEFAULT_PROFILE
+    ) -> list[Record]:
+        """The profile's points in the model: own enabled ones plus factory.
 
         An own measurement supersedes the factory one at the same volume size.
         Not "the larger of the two", as in MetadataModel._dedupe: the factory value
         was taken on another machine, and a smaller own value is truer than
         any foreign one.
         """
-        own = [record for record in self.calibration if not record.disabled]
+        own = [
+            record
+            for record in self.calibration
+            if not record.disabled and profile_of(record) == profile
+        ]
         covered = {
             record.volume_bytes
             for record in [*own, *self.records]
-            if gives_metadata_point(record)
+            if gives_metadata_point(record, profile)
         }
 
         filled = list(own)
-        for point in factory_data().points:
+        for point in factory_points(profile):
             if point.volume_bytes in covered:
                 continue
             filled.append(
@@ -854,6 +971,7 @@ class Store:
                     cluster_bytes=point.cluster_bytes,
                     mounted_bytes=point.mounted_bytes,
                     empty_free_bytes=point.empty_free_bytes,
+                    filesystem=point.filesystem,
                 )
             )
 
@@ -864,17 +982,22 @@ class Store:
         counts = {
             record.file_count
             for record in [*self.records, *own]
-            if record.file_count and record.copy_slack_measured is not None
+            if record.file_count
+            and record.copy_slack_measured is not None
+            and profile_of(record) == profile
         }
-        for sample in factory_data().samples:
+        for sample in factory_samples(profile):
             if sample.file_count in counts:
                 continue
             filled.append(factory_slack_record(sample))
         return filled
 
-    def all_for_model(self) -> list[Record]:
-        """Everything the model is built on: copy records and points."""
-        return [*self.records, *self.calibration_records()]
+    def all_for_model(self, profile: VolumeProfile = DEFAULT_PROFILE) -> list[Record]:
+        """Everything the profile's model is built on: copy records and points."""
+        return [
+            *(record for record in self.records if profile_of(record) == profile),
+            *self.calibration_records(profile),
+        ]
 
     def calibration_points(self) -> list[Record]:
         """Own empty-volume measurements — what the coverage table shows."""
@@ -901,29 +1024,19 @@ class Store:
         the same file set. A shared key by `volume_bytes` would knock out an
         NTFS point with a copy-slack measurement taken at the same volume
         size, and vice versa — silently, because both records look equally
-        legitimate.
+        legitimate. And both keys hold within the profile: an exFAT point on
+        a volume already measured on NTFS is a second curve's node, not a
+        retake.
         """
-        if record.is_calibration_point:
-            keep = [
-                item
-                for item in self.calibration
-                if not item.is_calibration_point
-                or item.volume_bytes != record.volume_bytes
-            ]
-        else:
-            key = slack_key(record)
-            keep = [
-                item
-                for item in self.calibration
-                if item.is_calibration_point or slack_key(item) != key
-            ]
+        key = _measurement_key(record)
+        keep = [item for item in self.calibration if _measurement_key(item) != key]
         self.calibration = [*keep, record]
 
-    def factory_volumes(self) -> set[int]:
-        """Volume sizes covered only by factory data.
+    def factory_volumes(self, profile: VolumeProfile = DEFAULT_PROFILE) -> set[int]:
+        """The profile's volume sizes covered only by factory data.
 
-        Copy-slack measurements also give an NTFS point — the empty volume is
-        measured before the files are written — so the factory ones among
+        Copy-slack measurements also give a metadata point — the empty volume
+        is measured before the files are written — so the factory ones among
         them count here on a par with the points: a segment whose both ends
         are foreign must get the factory margin regardless of which
         collection took the foreign numbers.
@@ -931,17 +1044,21 @@ class Store:
         own = {
             record.volume_bytes
             for record in [*self.records, *self.calibration]
-            if gives_metadata_point(record) and not record.disabled
+            if gives_metadata_point(record, profile) and not record.disabled
         }
-        volumes = {point.volume_bytes for point in factory_data().points}
-        volumes.update(sample.volume_bytes for sample in factory_data().samples)
+        volumes = {point.volume_bytes for point in factory_points(profile)}
+        volumes.update(sample.volume_bytes for sample in factory_samples(profile))
         return {volume for volume in volumes if volume not in own}
 
-    def models(self) -> tuple[MetadataModel, CopySlackModel]:
-        return build_models(self.all_for_model())
+    def models(
+        self, profile: VolumeProfile = DEFAULT_PROFILE
+    ) -> tuple[MetadataModel, CopySlackModel]:
+        return build_models(self.all_for_model(profile), profile)
 
-    def safety(self) -> SafetyModel:
-        return build_safety(self.all_for_model(), self.factory_volumes())
+    def safety(self, profile: VolumeProfile = DEFAULT_PROFILE) -> SafetyModel:
+        return build_safety(
+            self.all_for_model(profile), self.factory_volumes(profile), profile
+        )
 
     def add(self, record: Record) -> None:
         self.records.append(record)

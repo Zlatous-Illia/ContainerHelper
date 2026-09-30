@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .factory import factory_data
 from .formatting import fmt_both, fmt_bytes, plural, size_label
 from .model import (
     MIB,
@@ -39,6 +38,8 @@ from .plot import (
 )
 from .records import (
     Record,
+    factory_points,
+    factory_samples,
     gives_metadata_point,
     metadata_cross_check,
     metadata_points,
@@ -97,7 +98,7 @@ def uncovered(store, sizes: Sequence[int]) -> list[int]:
         for record in store.calibration_points()
         if gives_metadata_point(record) and not record.disabled
     }
-    factory = factory_data().by_volume()
+    factory = {point.volume_bytes for point in factory_points()}
     return [
         size_mib
         for size_mib in sizes
@@ -584,4 +585,4 @@ def has_factory_slack() -> bool:
 
     If not, there is nothing to draw the second series with.
     """
-    return bool(factory_data().samples)
+    return bool(factory_samples())

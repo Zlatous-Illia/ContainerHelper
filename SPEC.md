@@ -291,7 +291,7 @@ is made.
 ```json
 // Records.json — copy records
 {
-  "schema": 5,
+  "schema": 6,
   "records": [
     {
       "id": "Cache 1",
@@ -303,6 +303,7 @@ is made.
       "file_bytes": 11553254233,
       "file_count": 1,
       "left_bytes": 76668928,
+      "filesystem": "NTFS",
       "note": ""
     }
   ]
@@ -312,7 +313,7 @@ is made.
 ```json
 // Calibration.json — empty-volume measurements
 {
-  "schema": 5,
+  "schema": 6,
   "calibration": [
     {
       "id": "Калибровка 1 GiB",
@@ -371,13 +372,19 @@ copy slack. For a single file the field may be left empty: there the derivation
 from `file_bytes` is exact.
 
 Schema 2 added this field to schema 1, schema 3 added `filesystem`, schema 4
-the top-level `calibration` key, and schema 5 moved this key into a separate
-file. Old files are still read: a missing field means exactly the old behavior,
+the top-level `calibration` key, schema 5 moved this key into a separate
+file, and schema 6 writes `filesystem` always: a record whose filesystem was
+not read — typed in by hand, or older than schema 3 — is written as NTFS, so
+the file itself says which profile each record calibrates. The version goes
+up although a schema 5 reader would parse the file: that reader would also
+feed an exFAT or an 8 KiB copy record into the NTFS copy slack, and a data
+folder saved by this version is not handed back to it. Old files are still read: a missing field means exactly the old behavior,
 and the empty-volume measurements move first from `records` to `calibration`
 (schemas before the fourth), and from there into their own file. The move is
 written right away on open: while the records file holds a second copy, an edit
-of a measurement would go to one file and reading to the other. Schema 5 is
-always written.
+of a measurement would go to one file and reading to the other. A missing
+`filesystem` reads as NTFS: every record from before it was read was taken on
+NTFS. Schema 6 is always written.
 
 **The files are separate because these are different quantities with different
 lifetimes.** Copy records describe the data and move together with it.
@@ -404,6 +411,22 @@ come back on the next read.
 exists and its properties are known exactly: a typo in the cluster would
 distort copy slack and would be caught by nothing.
 
+**The volume profile** — the filesystem plus the cluster size
+(`VolumeProfile`, `profile_of`) — is what a measurement calibrates. Both
+models are built from one profile's measurements, and everything that decides
+"the same measurement" works within a profile: superseding, disabling, a size
+covered by an own point, the factory data that fills in the rest. The name is
+the one VeraCrypt uses: Windows reports FAT32 (or FAT on a small volume), and
+both are the profile FAT; an unread filesystem is NTFS, and an unread cluster
+on NTFS is 4 KiB (on other filesystems the default cluster depends on the
+volume size, and an unread one stays 0). Until the profile can be chosen the
+program calculates for NTFS with 4 KiB, the only profile measured so far; the
+others' measurements stay in the files, but no model, chart or table shows
+them yet. Before schema 6 only the metadata was guarded, by check 1 and
+check 8; a copy record on exFAT or with another cluster went into the NTFS
+copy slack. Mixed in, it pulls the NTFS per-file slack down: exFAT spends a
+fraction of NTFS's bytes per file, and underestimate is the dangerous side.
+
 **A calibration point** is not marked by a separate field; the flag is derived:
 a record without `file_bytes` and without `left_bytes` is an empty-volume
 measurement, nothing was put into the container.
@@ -423,7 +446,8 @@ Consequences, each of which would otherwise break silently:
 
 - **superseding is separate.** A new point replaces the point at the same
   `volume_bytes`, a new copy-slack measurement replaces the measurement **of
-  the same set**. A common key on `volume_bytes` would knock out an NTFS point
+  the same set** — both only within the profile: an exFAT point on a volume
+  already measured on NTFS is another curve's node, not a retake. A common key on `volume_bytes` would knock out an NTFS point
   with a copy-slack measurement taken at the same volume size, and vice versa;
 - **the key of a copy-slack measurement is the set, not the file count.** Two
   sets with `n = 1` were made different in size on purpose, to compare them
@@ -1495,8 +1519,13 @@ They are read through `importlib.resources`, not by a path on disk: in a
 one-file build the resource is unpacked into a temporary directory, and an
 ordinary path does not lead there. Read-only.
 
-**Own always supersedes factory** at the same volume size. Not "the larger of
-the two", as in `MetadataModel._dedupe`: the factory value was taken on another
+Every factory measurement names its `filesystem` next to `cluster_bytes`: the
+two make its profile, and factory data fills in only its own profile. All of
+it is NTFS with 4 KiB so far; a measurement without the field reads as NTFS,
+but the shipped files write it out anyway.
+
+**Own always supersedes factory** at the same volume size of the same profile.
+Not "the larger of the two", as in `MetadataModel._dedupe`: the factory value was taken on another
 machine, and a smaller own value is more accurate than any foreign one.
 
 **A factory margin of 4 MiB on top of the safety margin**, while both ends of
@@ -1519,7 +1548,7 @@ them a factory measurement for the same file count may not exist at all.
 Next to it lies `containerhelper/data/factory_slack.json` — the same thing for
 copy slack. As everywhere, only measured values are stored: the slack itself
 is derived from them. An own measurement supersedes a factory one **by file
-count**, not by volume size: copy slack depends on `n`.
+count** within the profile, not by volume size: copy slack depends on `n`.
 
 A factory copy-slack measurement is a full record, and it gives an NTFS point
 on a par with the others: its empty volume was measured. Its volume therefore

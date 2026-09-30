@@ -28,6 +28,12 @@ FACTORY_FILE = "factory_points.json"
 #: separately.
 FACTORY_SLACK_FILE = "factory_slack.json"
 
+#: What a factory measurement without the `filesystem` field was taken on.
+#: Every one shipped so far is NTFS; the field is written out all the same,
+#: so that a measurement on another filesystem cannot pass for NTFS by
+#: leaving it out.
+FACTORY_FILESYSTEM = "NTFS"
+
 
 @dataclass(frozen=True)
 class FactoryPoint:
@@ -35,6 +41,7 @@ class FactoryPoint:
     cluster_bytes: int
     mounted_bytes: int
     empty_free_bytes: int
+    filesystem: str = FACTORY_FILESYSTEM
 
     @property
     def volume_bytes(self) -> int:
@@ -65,6 +72,7 @@ class FactorySample:
     file_count: int
     file_alloc_bytes: int
     left_bytes: int
+    filesystem: str = FACTORY_FILESYSTEM
 
     @property
     def volume_bytes(self) -> int:
@@ -83,9 +91,6 @@ class FactoryData:
     #: Factory copy-slack measurements. Empty until they have been taken even
     #: once: an empty list is more honest than made-up numbers.
     samples: tuple[FactorySample, ...] = ()
-
-    def by_volume(self) -> dict[int, FactoryPoint]:
-        return {point.volume_bytes: point for point in self.points}
 
 
 def _empty() -> FactoryData:
@@ -132,6 +137,7 @@ def _read_samples(data: dict) -> tuple[FactorySample, ...]:
                 file_count=int(item["file_count"]),
                 file_alloc_bytes=int(item["file_alloc_bytes"]),
                 left_bytes=int(item["left_bytes"]),
+                filesystem=str(item.get("filesystem", FACTORY_FILESYSTEM)),
             )
             for item in data.get("samples", ())
         )
@@ -154,6 +160,7 @@ def factory_data() -> FactoryData:
                 cluster_bytes=int(item.get("cluster_bytes", 4096)),
                 mounted_bytes=int(item["mounted_bytes"]),
                 empty_free_bytes=int(item["empty_free_bytes"]),
+                filesystem=str(item.get("filesystem", FACTORY_FILESYSTEM)),
             )
             for item in data.get("points", ())
         )
