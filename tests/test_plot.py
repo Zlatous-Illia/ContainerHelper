@@ -60,14 +60,14 @@ class TickTests(unittest.TestCase):
         self.assertGreaterEqual(len(texts(axis, *padded(17 * MIB, 143 * MIB))), 5)
 
     def test_a_whole_step_gets_no_trailing_zeros(self):
-        """A "4,00 MiB" on an axis is noise that makes the labels overlap."""
+        """A "4.00 MiB" on an axis is noise that makes the labels overlap."""
         axis = Axis("Метаданные", AXIS_BYTES)
         for text in texts(axis, 0, 20 * MIB):
             with self.subTest(text):
                 self.assertNotIn(",", text.replace(" ", ""))
 
     def test_the_step_follows_the_one_two_five_ladder(self):
-        """Without the 1-2-5 ladder labels read 0,0037 — obvious at once."""
+        """Without the 1-2-5 ladder labels read 0.0037 — obvious at once."""
         axis = Axis("Наклон", AXIS_PLAIN)
         values = [tick.value for tick in ticks(axis, *padded(0.128, 0.324, include_zero=True))]
         self.assertGreaterEqual(len(values), 3)
@@ -298,7 +298,7 @@ class ValueLabelTests(unittest.TestCase):
     """The label under the crosshair uses the same step as the ticks.
 
     Otherwise one and the same spot on the axis is labelled two ways: "4" at
-    the tick and "4,0000001" at the crosshair next to it.
+    the tick and "4.0000001" at the crosshair next to it.
     """
 
     def test_a_log_byte_axis_names_the_power_of_two(self):
@@ -331,7 +331,7 @@ class ValueLabelTests(unittest.TestCase):
 class LogCountTicksTests(unittest.TestCase):
     """Fractional ticks on a logarithmic count axis.
 
-    They went through `fmt_bytes(int(...))`, and "0,01" turned into "0":
+    They went through `fmt_bytes(int(...))`, and "0.01" turned into "0":
     values below one simply never occurred on such an axis until the share of
     the volume came along.
     """
@@ -340,7 +340,7 @@ class LogCountTicksTests(unittest.TestCase):
 
     def test_a_decade_below_one_keeps_its_digits(self):
         labels = [tick.text for tick in ticks(self.axis, 0.01, 20)]
-        self.assertEqual(labels, ["0,01", "0,1", "1", "10"])
+        self.assertEqual(labels, ["0.01", "0.1", "1", "10"])
 
     def test_whole_values_stay_whole(self):
         self.assertEqual(value_label(self.axis, 12.0, 0.01, 20), "12")

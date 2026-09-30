@@ -239,7 +239,7 @@ def ntfs_share(store) -> Chart:
     """What share of the volume the metadata eats.
 
     The curve in bytes answers a different question — "how much of it" — and
-    against a volume in gigabytes the difference between 0,2 % and 0,4 % is
+    against a volume in gigabytes the difference between 0.2 % and 0.4 % is
     the thickness of a line there. And the share is what metadata is judged by
     at a glance: "how much of the volume goes to something other than data".
 
@@ -267,7 +267,7 @@ def ntfs_share(store) -> Chart:
                 f"Том: {fmt_both(record.volume_bytes)}\n"
                 f"Метаданные: {fmt_both(overhead)}\n"
                 f"Доля тома: {share:.3f} %"
-            ).replace(".", ","),
+            ),
             key=record.id,
         )
         (mine if _is_own(record, own) else factory).append(point)
@@ -284,7 +284,7 @@ def ntfs_share(store) -> Chart:
         "Доля тома под метаданными",
         Axis("Размер тома", AXIS_BYTES, log=True),
         # Logarithmic vertically too: the share spans three orders of
-        # magnitude — from 0,013 % on a terabyte volume to 16 % at sixty-four
+        # magnitude — from 0.013 % on a terabyte volume to 16 % at sixty-four
         # megabytes — and on a linear axis everything except the smallest
         # volumes lies in one line near zero.
         Axis("Доля тома, %", AXIS_PLAIN, log=True),
@@ -316,7 +316,7 @@ def ntfs_slopes(store) -> Chart:
             f"{size_label(int(x0 // MIB))} → {size_label(int(x1 // MIB))}\n"
             f"Наклон: {slope:.3f} % от размера тома\n"
             f"Прирост: {fmt_both(y1 - y0)}"
-        ).replace(".", ",")
+        )
         steps.append(Point(float(x0), slope, tip))
     if steps:
         # Close the last step, otherwise it breaks off at the second-to-last

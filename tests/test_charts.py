@@ -160,7 +160,7 @@ class SlopeTests(unittest.TestCase):
         self.assertEqual(len(steps.points), expected)
 
     def test_the_slope_is_a_percentage_of_the_volume(self):
-        """SPEC records them as percentages too: 0,215 %, 0,128 %, 0,324 %."""
+        """SPEC records them as percentages too: 0.215 %, 0.128 %, 0.324 %."""
         chart = charts.ntfs_slopes(empty_store())
         values = [point.y for point in series_named(chart, "отрезки").points]
         self.assertTrue(all(0 <= value < 5 for value in values), values[:5])
@@ -380,7 +380,7 @@ class StemTests(unittest.TestCase):
 class ShareTests(unittest.TestCase):
     """Share of the volume taken by metadata: the same curve in other units.
 
-    In bytes, the difference between 0,2 % and 0,4 % on a terabyte volume is
+    In bytes, the difference between 0.2 % and 0.4 % on a terabyte volume is
     one line thick, yet this is usually how people ask about metadata: "how
     much of the volume will it eat".
     """
@@ -438,7 +438,8 @@ class ShareTests(unittest.TestCase):
         chart = charts.ntfs_share(self.store())
         mine = next(s for s in chart.series if s.name == "свои замеры")
         self.assertIn("Доля тома", mine.points[0].tip)
-        self.assertNotIn(".", mine.points[0].tip.split("Доля тома")[1])
+        # A decimal point, as in the tables — not a comma.
+        self.assertRegex(mine.points[0].tip.split("Доля тома")[1], r"^: \d+\.\d{3} %$")
 
 
 if __name__ == "__main__":

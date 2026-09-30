@@ -1823,7 +1823,7 @@ axis everything except the smallest volumes collapses into one line near zero.
 That is exactly the trouble this chart exists to fix.
 
 It is also why the tick labels had to be fixed: fractional values on a
-logarithmic **count** axis went through `fmt_bytes(int(...))`, and "0,01"
+logarithmic **count** axis went through `fmt_bytes(int(...))`, and "0.01"
 turned into "0". Values below one simply never occurred on such an axis
 before.
 
@@ -1982,7 +1982,7 @@ Two lines from the cursor to the axes and the value on each axis, on a backing.
 The backing is needed: without it the label lies over the ticks and reads as
 one more tick. The value is computed **with the same step as the ticks**
 (`plot.value_label`), otherwise the same place on the axis is labelled two ways
-— "4" at the tick, and "4,0000001" at the crosshair next to it.
+— "4" at the tick, and "4.0000001" at the crosshair next to it.
 
 The point under the cursor is circled with a ring, not filled: under the ring
 you can see which series it belongs to. The tooltip with the full description
@@ -2109,11 +2109,16 @@ Three caveats:
   On a logarithmic one it is impossible: the range there is by definition wider
   than one multiple unit, and half the labels would become "0.001".
 - **Ticks follow the 1-2-5 ladder, and the step taken is the nearest, not the
-  next one up.** Without the ladder the labels come out like 0,0037 and 0,0074
+  next one up.** Without the ladder the labels come out like 0.0037 and 0.0074
   — the thing that gives a home-made chart away instantly. Rounding up looks
   logical and thins the axis by half: on the real 137 MiB range of the NTFS
   curve it jumps from a step of 20 straight to 50, and instead of seven ticks
   only two remain.
+- **The decimal separator is a point, as in the tables.** The ticks and the
+  tooltips once wrote a comma while the tables beside them wrote a point, and
+  one number read two ways. Numbers are not localized in any language: the
+  input fields parse a point (`formatting.IGNORED_IN_INPUT`), and a separator
+  that followed the language on the chart alone would split them again.
 - **The edge measurements on the residual chart are moved into their own series
   and hidden.** Without the outermost point the model has nothing to draw a line
   between, and it extrapolates with the baseline slope; the miss there measures

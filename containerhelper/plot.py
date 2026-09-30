@@ -216,7 +216,7 @@ def _nice_step(span: float, count: int) -> float:
     """A round step from the 1-2-5 series giving about `count` ticks.
 
     The 1-2-5 series is what sets axis ticks apart from home-made ones:
-    without it the labels come out like 0,0037 and 0,0074, and the chart at
+    without it the labels come out like 0.0037 and 0.0074, and the chart at
     once looks machine-made.
 
     The step taken is the **nearest** by tick count, not the first fitting one
@@ -286,9 +286,12 @@ def _log_values(lo: float, hi: float, base: float, limit: int) -> list[float]:
 
 
 def _group(value: float, digits: int) -> str:
-    """A number with digit group separators and a decimal comma."""
-    text = format(value, f",.{digits}f").replace(",", GROUP_SEPARATOR)
-    return text.replace(".", ",") if digits else text
+    """A number with digit group separators and a decimal point.
+
+    A point, as in the tables (`formatting.fmt_mib`): the chart and the table
+    beside it must not write one number two ways.
+    """
+    return format(value, f",.{digits}f").replace(",", GROUP_SEPARATOR)
 
 
 def _unit_digits(step: float, resolved: Unit) -> int:
@@ -308,8 +311,8 @@ def _count_tick(value: float) -> str:
 
     An integer is printed as an integer, a fraction with the number of decimal
     places at which it is visible at all: the ticks there go by decades, and
-    "0,01" without decimal places turns into zero. The share of the volume
-    taken by metadata is exactly such a value — from 0,013 % at a terabyte to
+    "0.01" without decimal places turns into zero. The share of the volume
+    taken by metadata is exactly such a value — from 0.013 % at a terabyte to
     16 % at sixty-four megabytes.
     """
     if value >= 1:
