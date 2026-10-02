@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
+from shiboken6 import isValid  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QAbstractButton,
     QApplication,
@@ -30,7 +31,7 @@ from containerhelper import i18n  # noqa: E402
 from containerhelper.factory import factory_data  # noqa: E402
 from containerhelper.model import MIB  # noqa: E402
 from containerhelper.records import Record  # noqa: E402
-from containerhelper.ui.app import MainWindow  # noqa: E402
+from containerhelper.ui.app import LANGUAGE_KEY, MainWindow, language_name  # noqa: E402
 from containerhelper.ui.chart_window import (  # noqa: E402
     CHART_CALC,
     CHART_FORECAST,
@@ -38,6 +39,7 @@ from containerhelper.ui.chart_window import (  # noqa: E402
     CHART_SLACK,
 )
 from containerhelper.ui.collect_dialog import PATH_KEY, CollectDialog  # noqa: E402
+from containerhelper.ui.language import apply_language  # noqa: E402
 from containerhelper.ui.measure_dialog import MeasureDialog  # noqa: E402
 from containerhelper.ui.path_picker import PathPicker  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
@@ -53,7 +55,9 @@ def texts(top: QWidget):
 
     Not with its position: a refresh rebuilds the widgets in table cells, and
     the order of children changes with it. Table cells are left out: they show
-    data, and record names stay in the language they were made in.
+    data, and record names stay in the language they were made in. So is the
+    language list: each name there is in its own language, whatever the
+    current one.
     """
     # Cell widgets replaced by a refresh are only scheduled for deletion;
     # until then they are still children, in the old language.
@@ -69,7 +73,11 @@ def texts(top: QWidget):
             yield kind + ":placeholder", widget.placeholderText()
         if isinstance(widget, QGroupBox):
             yield kind + ":group", widget.title()
-        if isinstance(widget, QComboBox) and not widget.isEditable():
+        if (
+            isinstance(widget, QComboBox)
+            and not widget.isEditable()
+            and widget.objectName() != "language"
+        ):
             for item in range(widget.count()):
                 yield kind + ":item", widget.itemText(item)
         if isinstance(widget, QTabWidget):
@@ -84,17 +92,26 @@ def texts(top: QWidget):
                     yield kind + ":column:tip", item.toolTip()
 
 
-def switch(code: str, windows) -> None:
-    """What the language list will do: switch, then tell every window."""
-    i18n.set_language(code)
-    for window in windows:
-        QCoreApplication.sendEvent(window, QEvent(QEvent.Type.LanguageChange))
+def switch(code: str) -> None:
+    """What the language list does, with Qt's queue emptied after it."""
+    apply_language(code)
     _app.processEvents()
+
+
+def dispose(*windows: QWidget) -> None:
+    """Delete windows now: a closed one left alive hears every later switch
+    of the suite and reads whatever its substitutes no longer cover."""
+    for window in windows:
+        if not isValid(window):  # disposed of by the test itself
+            continue
+        window.close()
+        window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class LiveSwitchTests(unittest.TestCase):
     def setUp(self):
-        self.addCleanup(i18n.set_language, i18n.current())
+        self.addCleanup(apply_language, i18n.current())
         folder = Path(tempfile.mkdtemp())
         self.window = MainWindow(data_dir=folder)
         self.window.records_tab.report_error = lambda *_: None
@@ -139,8 +156,8 @@ class LiveSwitchTests(unittest.TestCase):
         _app.processEvents()
 
     def tearDown(self):
-        for window in reversed(self.windows):
-            window.close()
+        # The parentless ones; the rest go with the main window.
+        dispose(self.collect, self.window)
 
     def shown(self) -> Counter:
         """The texts of every window with how often each occurs."""
@@ -157,7 +174,7 @@ class LiveSwitchTests(unittest.TestCase):
         becomes catalog keys."""
         factory = factory_data()
         data = (str(Path.cwd()), factory.source, factory.note)
-        switch("en", self.windows)
+        switch("en")
         russian = []
         for number, kind, text in self.shown():
             for piece in data:
@@ -170,7 +187,7 @@ class LiveSwitchTests(unittest.TestCase):
         """A collection may be running: the bar is not the scope's to reset."""
         self.collect.progress.setMaximum(100)
         self.collect.progress.setValue(40)
-        switch("en", self.windows)
+        switch("en")
         self.assertEqual(
             (self.collect.progress.maximum(), self.collect.progress.value()), (100, 40)
         )
@@ -179,17 +196,131 @@ class LiveSwitchTests(unittest.TestCase):
         """The check of the copied data is not repeated on a switch: a lost
         mismatch warning would let a spoilt record be saved."""
         self.record._take_payload()  # no Calculation tab: a message, not data
-        switch("en", self.windows)
+        switch("en")
         self.assertIn(i18n.tr("record.payload.none"), self.record.issues_label.text())
         QTest.keyClicks(self.record.id_edit, "x")  # an edit clears it
         self.assertNotIn(i18n.tr("record.payload.none"), self.record.issues_label.text())
 
     def test_switching_back_restores_every_text(self):
         before = self.shown()
-        switch("en", self.windows)
-        switch("ru", self.windows)
+        switch("en")
+        switch("ru")
         after = self.shown()
         self.assertEqual((before - after, after - before), (Counter(), Counter()))
+
+    def test_each_window_hears_of_a_switch_once(self):
+        """Qt tells a window with a parent twice: as a window and through its
+        parent. Twice is the charts rebuilt and the volume read twice."""
+        counted = {}
+        for number, window in enumerate(self.windows):
+            counted[number] = mock.patch.object(
+                window, "retranslate", wraps=window.retranslate
+            ).start()
+        self.addCleanup(mock.patch.stopall)
+        switch("en")
+        calls = {number: spy.call_count for number, spy in counted.items()}
+        self.assertEqual(calls, {number: 1 for number in counted})
+
+    def test_qt_s_own_captions_follow(self):
+        """The stock buttons and labels of Qt's dialogs come from Qt's own
+        catalog; without it they stayed English in Russian windows."""
+        look_in = lambda: QCoreApplication.translate("QFileDialog", "Look in:")
+        switch("ru")
+        self.assertTrue(CYRILLIC.search(look_in()), look_in())
+        switch("en")
+        self.assertEqual(look_in(), "Look in:")
+
+
+class LanguageChoiceTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(apply_language, i18n.current())
+        self.folder = Path(tempfile.mkdtemp())
+
+    def open(self) -> MainWindow:
+        window = MainWindow(data_dir=self.folder)
+        self.addCleanup(dispose, window)
+        return window
+
+    def test_a_start_retranslates_once(self):
+        """Qt posts the new window an event for the catalog it installs at
+        start; built in that language, the window has nothing to redo."""
+        with mock.patch.object(MainWindow, "retranslate", autospec=True) as spy:
+            window = self.open()
+            window.show()
+            _app.processEvents()
+        self.assertEqual(spy.call_count, 1)
+
+    def test_an_unknown_stored_code_keeps_the_language(self):
+        window = self.open()
+        window.settings.setValue(LANGUAGE_KEY, "xx")
+        dispose(window)
+        again = self.open()
+        self.assertEqual(i18n.current(), "ru")
+        self.assertEqual(again.language_combo.currentData(), "ru")
+        look_in = QCoreApplication.translate("QFileDialog", "Look in:")
+        self.assertTrue(CYRILLIC.search(look_in), look_in)
+
+    def test_an_unread_language_is_marked_in_itself(self):
+        reviewed = i18n.meta
+        draft = lambda code: {**reviewed(code), "status": "draft"}
+        with mock.patch("containerhelper.ui.app.meta", side_effect=draft):
+            self.assertEqual(language_name("ru"), "Русский (бета)")
+            self.assertEqual(language_name("en"), "English (beta)")
+        self.assertEqual(language_name("ru"), "Русский")
+
+    def test_the_list_switches_and_stores_the_code(self):
+        window = self.open()
+        combo = window.language_combo
+        combo.setCurrentIndex(combo.findData("en"))
+        self.assertEqual(i18n.current(), "en")
+        self.assertEqual(window.windowTitle(), i18n.tr("app.title"))
+        self.assertEqual(window.settings.value(LANGUAGE_KEY), "en")
+
+    def test_the_stored_language_opens_the_next_launch(self):
+        window = self.open()
+        window.language_combo.setCurrentIndex(window.language_combo.findData("en"))
+        dispose(window)
+        apply_language("ru")
+        again = self.open()
+        self.assertEqual(i18n.current(), "en")
+        self.assertEqual(again.language_combo.currentData(), "en")
+        self.assertFalse(CYRILLIC.search(again.windowTitle()))
+
+    def test_without_a_stored_choice_the_language_stays(self):
+        window = self.open()
+        self.assertEqual(window.language_combo.currentData(), i18n.current())
+
+    def test_names_are_in_their_own_language(self):
+        """Whoever cannot read the current language has to find theirs."""
+        window = self.open()
+        combo = window.language_combo
+        names = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
+        apply_language("en")
+        again = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
+        self.assertEqual(names, again)
+        self.assertEqual(names["ru"], i18n.meta("ru")["name"])
+
+
+class GuardTests(unittest.TestCase):
+    def test_every_window_class_drops_a_repeated_switch(self):
+        """A window class without the guard hears every switch up to four
+        times; nothing on screen shows it, only the work done four times."""
+        import ast
+
+        missing = []
+        for path in sorted((Path(__file__).parent.parent / "containerhelper" / "ui").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                source = ast.unparse(node)
+                bases = {ast.unparse(base) for base in node.bases}
+                window = bases & {"QDialog", "QMainWindow", "QFileDialog"} or (
+                    "Qt.Window" in source and "super().__init__" in source
+                )
+                if window and "repeated_change(self, event)" not in source:
+                    missing.append(f"{path.name}: {node.name}")
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

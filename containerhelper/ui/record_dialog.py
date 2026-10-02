@@ -40,6 +40,7 @@ MAX_NOTE_CHARS = 400
 from ..sizes import scan_volume
 from ..records import Record, validate
 from .calc_tab import CLUSTER_CHOICES
+from .language import repeated_change
 from .measure_dialog import MeasureDialog
 from .table import digits_only, plain_text
 
@@ -155,6 +156,11 @@ class RecordDialog(QDialog):
         # the window looks intact. Measured again after every change of
         # language: the captions change their width.
         self.setMinimumWidth(max(560, self._actions_width()))
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.Type.LanguageChange:
@@ -410,7 +416,11 @@ class RecordDialog(QDialog):
         # windows can now be open, and choosing a drive letter in one of them
         # must not lock the others together with the Calculation tab.
         dialog.setWindowModality(Qt.WindowModal)
-        if dialog.exec() != QDialog.Accepted:
+        accepted = dialog.exec() == QDialog.Accepted
+        # Deleted once read: a hidden child would still hear every language
+        # switch and read a volume that may be long unmounted.
+        dialog.deleteLater()
+        if not accepted:
             return None
         values = dialog.result_values()
         drive = dialog.selected_drive()

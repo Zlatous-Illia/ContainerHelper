@@ -384,7 +384,7 @@ class ChartView(QWidget):
         else:
             self._x = self._y = None
             self._hidden = {
-                item.name for item in (chart.series if chart else ()) if not item.visible
+                item.key for item in (chart.series if chart else ()) if not item.visible
             }
         self._apply_minimum()
         self._outside = self._count_outside()
@@ -417,14 +417,17 @@ class ChartView(QWidget):
         would crawl back out on every update — or, the other way round, a
         series hidden by hand would not stay hidden if the chart showed it by
         default.
+
+        By the series key, not its name: the name changes with the language,
+        and a switch would bring every hidden series back.
         """
-        known = {item.name for item in previous}
+        known = {item.key for item in previous}
         fresh = tuple(chart.series) if chart else ()
-        names = {item.name for item in fresh}
-        self._hidden = {name for name in self._hidden if name in names} | {
-            item.name
+        keys = {item.key for item in fresh}
+        self._hidden = {key for key in self._hidden if key in keys} | {
+            item.key
             for item in fresh
-            if not item.visible and item.name not in known
+            if not item.visible and item.key not in known
         }
 
     def _count_outside(self) -> int:
@@ -491,7 +494,7 @@ class ChartView(QWidget):
         if self._chart is None:
             return ()
         return tuple(
-            item.with_visible(item.name not in self._hidden)
+            item.with_visible(item.key not in self._hidden)
             for item in self._chart.series
         )
 
@@ -879,7 +882,7 @@ class ChartView(QWidget):
 
         self._legend_boxes = []
         for item, width in zip(chart.series, widths):
-            hidden = item.name in self._hidden
+            hidden = item.key in self._hidden
             box = QRectF(x, y + 2, LEGEND_BOX, LEGEND_BOX)
             colour = self._tone(item.tone)
             painter.setPen(QPen(self._ink(90)))
@@ -892,7 +895,7 @@ class ChartView(QWidget):
                 Qt.AlignLeft | Qt.AlignVCenter,
                 item.name,
             )
-            self._legend_boxes.append((QRectF(x, y, width, line + 4), item.name))
+            self._legend_boxes.append((QRectF(x, y, width, line + 4), item.key))
             x += width + LEGEND_GAP
 
     def _render_crosshair(self, painter: QPainter, chart: Chart, frame: Frame) -> None:
@@ -1071,18 +1074,18 @@ class ChartView(QWidget):
         return point.tip if point is not None else ""
 
     def legend_at(self, x: float, y: float) -> str:
-        """Name of the series whose legend entry is pointed at. Empty: none."""
-        for box, name in self._legend_boxes:
+        """Key of the series whose legend entry is pointed at. Empty: none."""
+        for box, key in self._legend_boxes:
             if box.contains(QPointF(x, y)):
-                return name
+                return key
         return ""
 
-    def toggle_series(self, name: str) -> None:
+    def toggle_series(self, key: str) -> None:
         """Hide a series or bring it back. The legend is the only toggle."""
-        if name in self._hidden:
-            self._hidden.discard(name)
+        if key in self._hidden:
+            self._hidden.discard(key)
         else:
-            self._hidden.add(name)
+            self._hidden.add(key)
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -1096,9 +1099,9 @@ class ChartView(QWidget):
             return
         if event.button() != Qt.LeftButton:
             return
-        name = self.legend_at(position.x(), position.y())
-        if name:
-            self.toggle_series(name)
+        key = self.legend_at(position.x(), position.y())
+        if key:
+            self.toggle_series(key)
             return
         frame = self.frame()
         if frame is not None and frame.contains(position.x(), position.y()):

@@ -30,6 +30,7 @@ from ..formatting import DEFAULT_UNIT, Unit
 from ..i18n import tr
 from ..plot import LAYOUT_STACK, Chart
 from .chart import ChartView
+from .language import repeated_change
 
 #: Window keys. The saved geometry is named by them too, hence strings, not
 #: numbers: after a reordering a list of numbers would drift silently — the
@@ -188,6 +189,11 @@ class DetachedChart(QWidget):
         self.sync_check.setToolTip(tr("chart.sync.tip"))
         self.cross_check.setText(tr("chart.cross"))
         self.cross_check.setToolTip(tr("chart.cross.tip"))
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
         if event.type() == QEvent.Type.LanguageChange:
@@ -384,6 +390,11 @@ class ChartWindow(QWidget):
         self.hint.setText(tr(HINT))
         self._refresh_grid_button()
         self.refresh()
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
         if event.type() == QEvent.Type.LanguageChange:

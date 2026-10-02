@@ -15,6 +15,7 @@ from ..formatting import fmt_both
 from ..i18n import tr
 from ..records import DEFAULT_PROFILE, VolumeProfile, volume_profile
 from ..sizes import cluster_size, mounted_drives, volume_filesystem, volume_usage
+from .language import repeated_change
 
 
 #: What the dialog does when opened without specifics, as a key. The caller
@@ -92,6 +93,11 @@ class MeasureDialog(QDialog):
             self._refresh()
         else:
             self.details.setText(tr("measure.details.none"))
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.Type.LanguageChange:

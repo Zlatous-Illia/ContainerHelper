@@ -55,6 +55,15 @@ from .records import (
 CURVE_SAMPLES = 160
 
 
+def _series(key: str, *args, **kwargs) -> Series:
+    """A series named in the current language and keyed by its catalog key.
+
+    The key is what a hidden series is remembered by: the name changes with
+    the language.
+    """
+    return Series(tr(key), *args, key=key, **kwargs)
+
+
 def _own(store) -> list[Record]:
     """Records taken here: both copy records and calibration ones."""
     return [*store.records, *store.calibration]
@@ -163,9 +172,9 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
         Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
         Axis(tr("charts.ntfs_curve.y"), AXIS_BYTES),
         (
-            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
-            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
-            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
+            _series("charts.series.model", tuple(curve), KIND_LINE, tone=2),
+            _series("charts.series.own", tuple(mine), KIND_DOTS, tone=0),
+            _series("charts.series.factory", tuple(factory), KIND_DOTS, tone=1),
         ),
         note=note,
     )
@@ -225,10 +234,10 @@ def ntfs_residuals(store) -> Chart:
             # As stems, not bare dots: zero here is the model itself, and the
             # stem from it to the dot shows which way and how far the miss
             # goes, without making the eye measure the distance to the line.
-            Series(tr("charts.series.under"), tuple(under), KIND_STEMS, tone=1),
-            Series(tr("charts.series.over"), tuple(over), KIND_STEMS, tone=0),
-            Series(
-                tr("charts.ntfs_residuals.edge"),
+            _series("charts.series.under", tuple(under), KIND_STEMS, tone=1),
+            _series("charts.series.over", tuple(over), KIND_STEMS, tone=0),
+            _series(
+                "charts.ntfs_residuals.edge",
                 tuple(edge),
                 KIND_STEMS,
                 tone=3,
@@ -295,9 +304,9 @@ def ntfs_share(store) -> Chart:
         # volumes lies in one line near zero.
         Axis(tr("charts.ntfs_share.y"), AXIS_PLAIN, log=True),
         (
-            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
-            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
-            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
+            _series("charts.series.model", tuple(curve), KIND_LINE, tone=2),
+            _series("charts.series.own", tuple(mine), KIND_DOTS, tone=0),
+            _series("charts.series.factory", tuple(factory), KIND_DOTS, tone=1),
         ),
         note=tr("charts.ntfs_share.note"),
     )
@@ -332,7 +341,7 @@ def ntfs_slopes(store) -> Chart:
         tr("charts.ntfs_slopes.title"),
         Axis(tr("charts.axis.volume"), AXIS_BYTES, log=True),
         Axis(tr("charts.ntfs_slopes.y"), AXIS_PLAIN),
-        (Series(tr("charts.ntfs_slopes.series"), tuple(steps), KIND_STEPS, tone=3),),
+        (_series("charts.ntfs_slopes.series", tuple(steps), KIND_STEPS, tone=3),),
         note=tr("charts.ntfs_slopes.note"),
         zero_line=True,
     )
@@ -383,9 +392,9 @@ def slack_curve(store) -> Chart:
         Axis(tr("charts.axis.files"), AXIS_COUNT, log=True),
         Axis(tr("charts.slack_curve.y"), AXIS_BYTES),
         (
-            Series(tr("charts.series.model"), tuple(curve), KIND_LINE, tone=2),
-            Series(tr("charts.series.own"), tuple(mine), KIND_DOTS, tone=0),
-            Series(tr("charts.series.factory"), tuple(factory), KIND_DOTS, tone=1),
+            _series("charts.series.model", tuple(curve), KIND_LINE, tone=2),
+            _series("charts.series.own", tuple(mine), KIND_DOTS, tone=0),
+            _series("charts.series.factory", tuple(factory), KIND_DOTS, tone=1),
         ),
         note=per_file,
     )
@@ -416,8 +425,8 @@ def slack_residuals(store) -> Chart:
         Axis(tr("charts.axis.files"), AXIS_COUNT, log=True),
         Axis(tr("charts.axis.residual"), AXIS_BYTES),
         (
-            Series(tr("charts.series.under"), tuple(under), KIND_STEMS, tone=1),
-            Series(tr("charts.series.over"), tuple(over), KIND_STEMS, tone=0),
+            _series("charts.series.under", tuple(under), KIND_STEMS, tone=1),
+            _series("charts.series.over", tuple(over), KIND_STEMS, tone=0),
         ),
         note=tr("charts.slack_residuals.note"),
         zero_line=True,
@@ -479,12 +488,12 @@ def forecast_misses(store) -> Chart:
         Axis(tr("charts.forecast.x"), AXIS_PLAIN),
         Axis(tr("charts.forecast.y"), AXIS_MIB),
         (
-            Series(tr("charts.forecast.misses"), tuple(misses), KIND_BARS, tone=0),
+            _series("charts.forecast.misses", tuple(misses), KIND_BARS, tone=0),
             # As dots, not bars: a bar over a bar reads as "part of a whole",
             # and this is a separate value of the same miss, taken from a
             # different place. Below zero the dot stands alone, and the
             # caption under the chart spells out what it means.
-            Series(tr("charts.forecast.bare"), tuple(bare), KIND_DOTS, tone=1),
+            _series("charts.forecast.bare", tuple(bare), KIND_DOTS, tone=1),
         ),
         note=note,
         zero_line=True,
@@ -524,7 +533,7 @@ def container_breakdown(solution: Solution) -> Chart:
         tr("charts.breakdown.title", container=solution.container_mib),
         Axis(""),
         Axis(""),
-        (Series(tr("charts.breakdown.series"), points, KIND_STACK),),
+        (_series("charts.breakdown.series", points, KIND_STACK),),
         note=tr("charts.breakdown.note", tail=fmt_both(solution.cluster_tail)),
         layout=LAYOUT_STACK,
     )
@@ -575,11 +584,11 @@ def cluster_tail(
         Axis(tr("charts.cluster_tail.x"), AXIS_BYTES, log=True),
         Axis(tr("charts.cluster_tail.y"), AXIS_BYTES),
         (
-            Series(
-                tr("charts.cluster_tail.alloc"), tuple(points), KIND_LINE_DOTS, tone=0
+            _series(
+                "charts.cluster_tail.alloc", tuple(points), KIND_LINE_DOTS, tone=0
             ),
-            Series(tr("charts.cluster_tail.logical"), flat, KIND_LINE, tone=4),
-            Series(tr("charts.cluster_tail.chosen"), tuple(chosen), KIND_DOTS, tone=1),
+            _series("charts.cluster_tail.logical", flat, KIND_LINE, tone=4),
+            _series("charts.cluster_tail.chosen", tuple(chosen), KIND_DOTS, tone=1),
         ),
         note=tr("charts.cluster_tail.note", files=fmt_bytes(len(sizes))),
     )

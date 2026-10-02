@@ -20,7 +20,7 @@ numbers.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .formatting import (
     DEFAULT_UNIT,
@@ -109,9 +109,17 @@ class Series:
     tone: int = 0
     #: Whether to show the series. A click on the legend toggles it.
     visible: bool = True
+    #: What the series is, whatever the language: the chart keeps hidden
+    #: series by it. By the name, a language switch would bring every hidden
+    #: series back. Empty means the name, for a series built from data.
+    key: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.key:
+            object.__setattr__(self, "key", self.name)
 
     def with_visible(self, visible: bool) -> "Series":
-        return Series(self.name, self.points, self.kind, self.tone, visible)
+        return replace(self, visible=visible)
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..i18n import tr
+from .language import repeated_change
 
 #: The views that hold files and folders: the plain list and the detail view.
 #: By name, not by going through every QAbstractItemView: the sidebar is a
@@ -175,6 +176,8 @@ class PathPicker(QFileDialog):
         retranslated there, Select came back as Open. `QWidget.event` hands
         the event to the children before it returns.
         """
+        if repeated_change(self, event):
+            return True
         handled = super().event(event)
         if event.type() == QEvent.Type.LanguageChange:
             self.retranslate()
@@ -514,5 +517,8 @@ def ask_paths(parent, state: PickerState | None = None) -> list[str]:
     """
     dialog = PathPicker(parent, state)
     accepted = dialog.exec() == QDialog.Accepted
+    # Deleted once read: a hidden child would still hear every language
+    # switch.
+    dialog.deleteLater()
     dialog.store_state()
     return dialog.chosen_paths() if accepted else []

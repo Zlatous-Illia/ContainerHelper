@@ -18,6 +18,11 @@ Every window switches language live: a class that owns text sets all of it in
 `retranslate()`, which the constructor calls and `changeEvent` calls again on
 `QEvent.LanguageChange`. Text built from data is rebuilt by the same refresh
 that fills it, without touching the selection, sorting or column widths.
+The switch is `ui/language.apply_language`: our catalog and Qt's own
+`qtbase_<code>.qm` together. A new top-level window overrides `event()` with
+`repeated_change`, or it hears every switch up to four times (see SPEC
+"Interface language"); a chart series built from a catalog key carries it as
+`Series.key`, because hidden series are kept by key.
 
 `tests/test_i18n.py` fails on a key that is missing from a catalog or unused,
 on a key glued together (a key chosen by condition comes from a dict of

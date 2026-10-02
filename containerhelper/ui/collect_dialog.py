@@ -53,6 +53,7 @@ from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit
 from ..i18n import tr, tr_n
 from ..model import MIB, CopySlackModel, MetadataModel, SafetyModel
 from ..paths import is_writable
+from .language import repeated_change
 from .table import scrollable, wrapped
 from ..veracrypt import (
     FORMAT_NAMES,
@@ -368,6 +369,11 @@ class CollectDialog(QDialog):
         self._refresh_scope_text(self.steps())
         if self.running():
             self._show_progress()
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.Type.LanguageChange:

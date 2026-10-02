@@ -579,6 +579,27 @@ class KeepViewTests(unittest.TestCase):
         self.view.set_chart(chart, keep_view=True)
         self.assertNotIn("край", self.view._hidden)
 
+    def test_a_hidden_series_survives_a_new_name(self):
+        """A language switch renames every series; what was hidden by key
+        stays hidden, and an edge series hidden by the chart stays in the
+        shade."""
+        def chart(model: str, edge: str) -> Chart:
+            return Chart(
+                "t",
+                Axis("x"),
+                Axis("y"),
+                (
+                    Series(model, (Point(1.0, 1.0),), KIND_LINE, key="model"),
+                    Series(edge, (Point(2.0, 2.0),), KIND_DOTS, visible=False, key="edge"),
+                ),
+            )
+
+        self.view.set_chart(chart("модель", "край"))
+        self.view.toggle_series("model")
+        self.view.set_chart(chart("model", "edge"), keep_view=True)
+        self.assertEqual(self.view._hidden, {"model", "edge"})
+        self.assertEqual([item.visible for item in self.view.series()], [False, False])
+
     def test_points_outside_the_view_are_counted(self):
         self.view.set_chart(sample_chart(), keep_view=True)
         self.assertGreater(self.view._outside, 0)

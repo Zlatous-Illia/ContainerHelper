@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from .. import charts
 from ..fileset import FILE_SETS
 from ..formatting import DEFAULT_UNIT, UNITS, unit_by_key
-from ..i18n import catalog, tr
+from ..i18n import LANGUAGES, REFERENCE, catalog, current, meta, tr
 from ..model import CopySlackModel, MetadataModel, SafetyModel
 from ..paths import (
     DataDirError,
@@ -44,6 +44,7 @@ from .chart_window import (
     ChartWindow,
 )
 from .collect_dialog import CollectDialog
+from .language import APPLIED, apply_language, load_language, repeated_change
 from .path_picker import PickerState
 from .model_tab import ModelTab
 from .records_tab import RecordsTab
@@ -58,6 +59,9 @@ from .table import (
 )
 
 UNIT_KEY = "display_unit"
+#: The language by its code ("en"), not its name: the name is shown in the
+#: language itself and may change with the catalog.
+LANGUAGE_KEY = "language"
 EXPAND_KEY = "expand_tables"
 GEOMETRY_KEY = "window_geometry"
 STATE_KEY = "window_state"
@@ -121,6 +125,21 @@ CHART_TITLES = {
 }
 
 
+def language_name(code: str) -> str:
+    """A language's name in that language, marked if nobody has read it
+    through yet.
+
+    The mark is in that language too, not the current one: whoever cannot
+    read the current language has to find theirs.
+    """
+    info = meta(code)
+    name = info.get("name", code)
+    if info.get("status") == "reviewed":
+        return name
+    beta = catalog(code).get("app.language.beta") or catalog(REFERENCE)["app.language.beta"]
+    return f"{name} {beta}"
+
+
 def stored_tab_id(stored: str) -> str:
     """The tab id of a stored setting; an old Russian title is migrated.
 
@@ -152,6 +171,13 @@ class MainWindow(QMainWindow):
         # data folder is carried around whole, and there is no reason to leave
         # a trace outside it.
         self.settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
+        # Before the tabs are built: they set their text in the constructor,
+        # and there is no window yet to tell. Without a stored choice, the
+        # language of the first launch stays.
+        load_language(self.settings.value(LANGUAGE_KEY, current(), type=str))
+        # Qt has posted this window its own event for the catalog it just
+        # installed; built in this language, the window has nothing to redo.
+        self.setProperty(APPLIED, current())
 
         self._ntfs = MetadataModel()
         self._slack = CopySlackModel()
@@ -436,7 +462,11 @@ class MainWindow(QMainWindow):
         return dialog
 
     def _collect_points(self) -> None:
-        self.build_collect_dialog().exec()
+        dialog = self.build_collect_dialog()
+        dialog.exec()
+        # A hidden child would still hear every language switch and read the
+        # disk for its scope.
+        dialog.deleteLater()
 
     def _remove_slack(self, record) -> None:
         """Remove a copy-slack measurement for good: disabling it is pointless.
@@ -518,6 +548,16 @@ class MainWindow(QMainWindow):
             self.unit_combo.addItem(unit.label, unit.key)
         self.unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         row.addWidget(self.unit_combo)
+
+        self.language_label = QLabel()
+        row.addWidget(self.language_label)
+        self.language_combo = QComboBox()
+        self.language_combo.setObjectName("language")
+        for code in LANGUAGES:
+            self.language_combo.addItem(language_name(code), code)
+        self.language_combo.setCurrentIndex(max(self.language_combo.findData(current()), 0))
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        row.addWidget(self.language_combo)
         return row
 
     # --- language ----------------------------------------------------------
@@ -544,6 +584,14 @@ class MainWindow(QMainWindow):
         # By index: the item data stays the unit key, and the selection holds.
         for index, unit in enumerate(UNITS):
             self.unit_combo.setItemText(index, unit.label)
+        # The language names are not translated: each is in its own language.
+        self.language_label.setText(tr("app.language"))
+        self.language_combo.setToolTip(tr("app.language.tip"))
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.Type.LanguageChange:
@@ -576,6 +624,11 @@ class MainWindow(QMainWindow):
         for window in self._charts.values():
             window.set_unit(unit)
         self.settings.setValue(UNIT_KEY, unit.key)
+
+    def _on_language_changed(self) -> None:
+        code = self.language_combo.currentData()
+        apply_language(code)
+        self.settings.setValue(LANGUAGE_KEY, code)
 
     def _on_remember_tab_toggled(self, remember: bool) -> None:
         self.settings.setValue(REMEMBER_TAB_KEY, remember)
@@ -689,6 +742,9 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    # Qt's catalog before the first dialog: the data-folder question may come
+    # before the window knows its stored language.
+    load_language(current())
     window = MainWindow()
     window.show()
     return app.exec()

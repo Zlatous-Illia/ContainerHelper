@@ -1514,7 +1514,8 @@ drives permissions lie.
 
 Remembered between launches: the size and position of the window, the active
 tab, the column widths and the height of each table, the sort order, the
-display units and the Full-height tables and Remember tab toggles.
+display units, the interface language and the Full-height tables and
+Remember tab toggles.
 
 The active tab is stored **by name, not by index**. The index changes with any
 rearrangement of the tabs, and after one the program silently opens on the
@@ -1730,6 +1731,41 @@ In Auto mode the unit is chosen for each value and is therefore written in the
 cell itself, not in the header.
 
 The choice is remembered in `QSettings` between launches.
+
+## Interface language
+
+A list in the header of the window, next to the units: «Русский» and English.
+Each name is written in its own language, whatever the current one, so that
+whoever cannot read the current language still finds theirs; a language
+nobody has read through yet gets "(beta)" after its name, in that language
+too. The first launch
+speaks the Windows UI language if it is shipped, English otherwise.
+
+The switch is live: every open window — the main one, record windows and the
+volume chooser over them, chart windows and detached charts — sets its text
+again, and nothing else changes. The file picker and the collection dialog
+block the main window while open, so the list cannot reach them; they
+retranslate all the same. The data, the selection, the
+sorting, the column widths, the zoom and the hidden series of a chart stay;
+so do the lines already in the collection log, which are history, and names
+and notes typed by a person.
+
+Qt's own captions — the buttons of a message box, the labels of the file
+dialog — switch with ours: Qt's catalog for the language (`qtbase_<code>.qm`)
+is loaded alongside. Without it they stayed English in Russian windows.
+
+The choice is stored by its code (`language = en`), not by its name.
+
+- **A window hears of one switch several times.** Qt posts the event to
+  every top-level widget and once more through every shown native window,
+  and a window with a parent hears it from the parent too: up to four times,
+  that is the charts rebuilt and the volume read four times. Taking Qt's
+  posted events back does not catch them all. So the switch tells every
+  parentless window at once, and each top-level window lets through only the
+  first event for a language (`ui/language.repeated_change`).
+- **A hidden series is kept by its key, not its name.** The name is
+  translated; kept by name, every hidden series came back after a switch,
+  and the edge measurements on the residual chart with them.
 
 ## Charts
 
