@@ -1,6 +1,6 @@
-"""Прокрутка окна, высота таблиц и свободная ширина столбцов.
+"""Window scrolling, table heights and free column widths.
 
-Отдельным модулем, потому что проверяется поведение оболочки, а не данных.
+A separate module, because it tests the behaviour of the shell, not the data.
 """
 
 import os
@@ -27,11 +27,12 @@ QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.ui.table import TableGrip  # noqa: E402
 
 
 def _wheel_event(global_y):
-    """Событие мыши с нужной глобальной координатой — для ручки."""
+    """A mouse event with the wanted global coordinate — for the grip."""
     return QMouseEvent(
         QMouseEvent.MouseMove,
         QPointF(0, 0),
@@ -49,8 +50,8 @@ def seeded(path):
             Record(
                 id=f"Test {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=gib * 1024 * 1024 * 1024 - 266_240,
-                empty_free_bytes=gib * 1024 * 1024 * 1024 - 266_240 - gib * 3_000_000,
+                mounted_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL,
+                empty_free_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL - gib * 3_000_000,
             )
             for gib in (1, 2, 4, 8, 16, 32, 64)
         ],
@@ -90,7 +91,7 @@ class ScrollTests(LayoutFixture):
                 self.assertIsNotNone(self.scroll_area_of(tab))
 
     def show_tab(self, tab):
-        """Сделать вкладку текущей: невидимая не раскладывается."""
+        """Make the tab current: an invisible one is not laid out."""
         area = self.scroll_area_of(tab)
         self.tab_widget().setCurrentWidget(area)
         _app.processEvents()
@@ -110,7 +111,7 @@ class ScrollTests(LayoutFixture):
                 self.assertGreater(area.verticalScrollBar().maximum(), 0)
 
     def test_content_never_shrinks_below_what_it_needs(self):
-        """Смысл прокрутки в том, что содержимое не сплющивается."""
+        """The point of scrolling is that the content is not squashed."""
         for tab in self.tabs():
             with self.subTest(type(tab).__name__):
                 self.show_tab(tab)
@@ -123,7 +124,7 @@ class ScrollTests(LayoutFixture):
 
 class TableHeightTests(LayoutFixture):
     def test_every_table_has_its_own_grip(self):
-        """Разделитель делит фиксированную высоту, а нужно менять свою."""
+        """A splitter shares a fixed height; a table must change its own."""
         for table in self.window.all_tables().values():
             with self.subTest(table.objectName()):
                 self.assertTrue(
@@ -161,7 +162,7 @@ class ColumnWidthTests(LayoutFixture):
         return sum(header.sectionSize(c) for c in range(header.count()))
 
     def test_no_column_is_pinned_to_the_window(self):
-        """Растянутый столбец съедал остаток и запрещал двигать свой край."""
+        """A stretched column ate the rest and would not let its edge move."""
         header = self.header()
         self.assertFalse(header.stretchLastSection())
         for column in range(header.count()):
@@ -202,7 +203,7 @@ class ColumnWidthTests(LayoutFixture):
         self.assertEqual(header.sectionSize(0), 350)
 
     def test_breakdown_stays_unsorted(self):
-        """Порядок строк разложения и есть его содержание."""
+        """The order of the breakdown rows is its content."""
         self.assertFalse(self.window.calc_tab.table.isSortingEnabled())
 
 

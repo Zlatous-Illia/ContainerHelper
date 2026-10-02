@@ -1,8 +1,8 @@
-"""Поиск VeraCrypt, командные строки и проверка результата по факту.
+"""Finding VeraCrypt, the command lines, and checking the result by the facts.
 
-Настоящий VeraCrypt здесь не запускается: он требует установки, прав
-администратора и минут на каждый контейнер. Проверяется то, что от него не
-зависит, — а зависит от одного неверного ключа несколько часов работы.
+The real VeraCrypt is not run here: it needs an installation, administrator
+rights and minutes per container. What is checked is what does not depend on
+it, and several hours of work hang on a single wrong switch.
 """
 
 import shutil
@@ -11,6 +11,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from containerhelper.model import VC_HEADERS_BYTES
 from containerhelper.veracrypt import (
     CALIBRATION_PASSWORD,
     LETTER_TIMEOUT,
@@ -46,7 +47,7 @@ def make_install(folder: Path, format_name: str, mount_name: str) -> Path:
 
 
 class Fake:
-    """Запуск процессов и тома, которых нет. Помнит всё, что ей сказали."""
+    """Process runs and volumes that do not exist. Remembers all it is told."""
 
     def __init__(self, size_of=lambda mib: mib * MIB):
         self.commands: list[list[str]] = []
@@ -54,29 +55,31 @@ class Fake:
         self.pauses = 0
         self.slept = 0.0
         self.size_of = size_of
-        #: Что не делать: 'create', 'mount', 'unmount'.
+        #: What not to do: 'create', 'mount', 'unmount'.
         self.broken: set[str] = set()
-        #: Сколько «съест» файловая система на смонтированном томе. Меняется
-        #: в тестах, чтобы развести два способа создания контейнера.
+        #: How much the filesystem "eats" on the mounted volume. Changed in
+        #: tests to tell the two ways of creating a container apart.
         self.ntfs = 17_879_040
         self.total = 0
+        self.volume = 0
         self.cluster_bytes = 4096
-        #: Чем оборачивается появление файлов на поддельном томе. Числа те же,
-        #: что в модели по умолчанию, — важно не значение, а то, что замер
-        #: возвращает ровно заложенное.
+        #: What the appearance of files costs on the fake volume. The numbers
+        #: are the same as in the default model: what matters is not the value
+        #: but that the measurement returns exactly what was put in.
         self.slack_base = 192 * 1024
         self.slack_per_file = 1280
-        #: Папка, изображающая корень тома. Заводится при создании контейнера
-        #: рядом с ним и переживает размонтирование: замер остатка снимается
-        #: на свежесмонтированном томе, и данные обязаны там остаться.
+        #: A folder standing in for the volume root. It is made next to the
+        #: container when the container is created and survives unmounting:
+        #: left space is measured on a freshly mounted volume, and the data
+        #: must still be there.
         self.volume_dir: Path | None = None
-        #: Сколько первых попыток размонтирования том «не отдаст». Так он
-        #: ведёт себя сразу после записи данных: VeraCrypt отказывает кодом 1
-        #: и немедленно, а через полминуты отпускает. `/force` берёт его
-        #: всегда — на то он и force.
+        #: How many first unmount attempts the volume "refuses". That is how it
+        #: behaves right after data is written: VeraCrypt refuses with code 1,
+        #: at once, and half a minute later lets go. `/force` always takes
+        #: it; that is what force is for.
         self.stubborn = 0
 
-    # --- подставляется вместо run_command ---------------------------------
+    # --- stands in for run_command ----------------------------------------
 
     def run(self, command, timeout):
         command = list(command)
@@ -84,7 +87,8 @@ class Fake:
         if "/create" in command:
             self._create(command)
         elif "/unmount" in command or "/dismount" in command:
-            # Обе формы: 1.26 понимает и старую, просто ругает её устаревшей.
+            # Both forms: 1.26 understands the old one too, just calls it
+            # deprecated.
             return self._unmount(command)
         elif "/volume" in command:
             self._mount(command)
@@ -97,7 +101,7 @@ class Fake:
         size = int(command[command.index("/size") + 1])
         with open(path, "wb") as handle:
             handle.truncate(size)
-        # Свежий контейнер пуст — как и настоящий после форматирования.
+        # A fresh container is empty, like a real one after formatting.
         self.volume_dir = path.with_name(path.stem + "-volume")
         if self.volume_dir.exists():
             shutil.rmtree(self.volume_dir)
@@ -108,14 +112,16 @@ class Fake:
             return
         letter = command[command.index("/letter") + 1]
         path = Path(command[command.index("/volume") + 1])
-        self.total = path.stat().st_size - 266_240
+        # The capacity is one cluster short of the volume, as on real NTFS.
+        self.volume = path.stat().st_size - VC_HEADERS_BYTES
+        self.total = self.volume - 4096
         self.drives.append(f"{letter}:")
 
     def _occupied(self) -> int:
-        """Сколько заняли файлы, положенные на поддельный том.
+        """How much the files put on the fake volume took.
 
-        По кластерам плюс заложенный запас — ровно та величина, которую замер
-        и должен вернуть обратно.
+        By clusters plus the built-in slack: exactly the value the
+        measurement must give back.
         """
         if self.volume_dir is None or not self.volume_dir.is_dir():
             return 0
@@ -135,7 +141,8 @@ class Fake:
         if "unmount" in self.broken:
             return 1
         if self.stubborn > 0 and "/force" not in command:
-            # Том занят: VeraCrypt отказывает сразу и ненулевым кодом.
+            # The volume is busy: VeraCrypt refuses at once, with a non-zero
+            # code.
             self.stubborn -= 1
             return 1
         switch = "/unmount" if "/unmount" in command else "/dismount"
@@ -144,12 +151,13 @@ class Fake:
             self.drives.remove(f"{letter}:")
         return 0
 
-    # --- подставляется вместо ожидания и чтения тома ----------------------
+    # --- stands in for waiting and for reading the volume -----------------
 
     def pause(self, seconds):
         self.pauses += 1
-        #: Сколько «прошло». По-настоящему тесты не спят, но проверить, что
-        #: отказ не выжидается минутой, иначе нечем.
+        #: How much time has "passed". The tests do not really sleep, but
+        #: there is no other way to check that a refusal is not waited out
+        #: for a minute.
         self.slept += seconds
 
     def volumes(self) -> Volumes:
@@ -163,16 +171,16 @@ class Fake:
 
     @property
     def free(self) -> int:
-        """Свободное место считается, а не запоминается.
+        """Free space is computed, not stored.
 
-        Запомненное не менялось бы от записи файлов, и замер остатка вернул
-        бы то же, что замер пустого тома.
+        A stored value would not change when files are written, and the
+        left-space measurement would return the same as the empty-volume one.
         """
-        return self.total - self.ntfs - self._occupied()
+        return self.volume - self.ntfs - self._occupied()
 
 
 class DiscoveryTests(unittest.TestCase):
-    """Стандартные места, портативные имена и ручное указание папки."""
+    """Standard locations, portable names and a folder given by hand."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -182,13 +190,13 @@ class DiscoveryTests(unittest.TestCase):
         self._dir.cleanup()
 
     def test_standard_dirs_name_both_program_files(self):
-        """Именно туда VeraCrypt и ставится."""
+        """That is exactly where VeraCrypt installs."""
         found = {str(path) for path in standard_dirs()}
         for expected in FALLBACK_DIRS:
             self.assertIn(expected, found)
 
     def test_standard_dirs_have_no_repeats(self):
-        """На 64-битной Windows ProgramFiles и ProgramW6432 совпадают."""
+        """On 64-bit Windows ProgramFiles and ProgramW6432 are the same."""
         paths = [str(path).lower() for path in standard_dirs()]
         self.assertEqual(len(paths), len(set(paths)))
 
@@ -200,7 +208,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(install.mount_exe.name, "VeraCrypt.exe")
 
     def test_portable_build_with_architecture_suffix_is_found(self):
-        """У портативной сборки имена другие, и поиск обязан знать оба вида."""
+        """Portable builds have other names; the search must know both."""
         make_install(self.folder, "VeraCrypt Format-x64.exe", "VeraCrypt-x64.exe")
         install = install_at(self.folder)
         self.assertIsNotNone(install)
@@ -211,7 +219,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(install_at(self.folder))
 
     def test_half_an_installation_is_not_an_installation(self):
-        """Создание и монтирование — разные бинарники, нужны оба."""
+        """Creating and mounting are different binaries; both are needed."""
         self.folder.mkdir(parents=True)
         (self.folder / "VeraCrypt.exe").write_text("", encoding="utf-8")
         self.assertIsNone(install_at(self.folder))
@@ -240,7 +248,7 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class DefaultWiringTests(unittest.TestCase):
-    """Без подмены объекты берут настоящие функции, а не свои описатели."""
+    """By default the objects take the real functions, not own descriptors."""
 
     def test_volumes_default_to_the_real_readers(self):
         from containerhelper.sizes import (
@@ -264,7 +272,7 @@ class DefaultWiringTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    """Ключи сверены с документацией VeraCrypt 1.26.24."""
+    """The switches are checked against the VeraCrypt 1.26.24 documentation."""
 
     def setUp(self):
         self.install = Install(
@@ -275,7 +283,7 @@ class CommandTests(unittest.TestCase):
         self.path = Path(r"C:\Temp\test.hc")
 
     def test_create_passes_the_size_in_exact_bytes(self):
-        """Суффикс G округлил бы, и замер встал бы мимо своей строки."""
+        """The G suffix would round, and the measurement would miss its row."""
         command = create_command(self.install, self.path, 1024 * MIB)
         self.assertEqual(command[command.index("/size") + 1], "1073741824")
 
@@ -287,7 +295,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("/hash") + 1], "sha512")
 
     def test_nosizecheck_is_there_on_purpose(self):
-        """Без него терабайтный динамический контейнер просто не создастся."""
+        """Without it a terabyte dynamic container is simply not created."""
         self.assertIn("/nosizecheck", create_command(self.install, self.path, MIB))
 
     def test_the_fast_variant_is_dynamic_and_quick(self):
@@ -301,7 +309,7 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("/quick", command)
 
     def test_format_never_gets_a_pim(self):
-        """У VeraCrypt Format.exe ключа /pim нет вовсе."""
+        """VeraCrypt Format.exe has no /pim switch at all."""
         self.assertNotIn("/pim", create_command(self.install, self.path, MIB))
 
     def test_creation_and_mounting_use_different_binaries(self):
@@ -311,7 +319,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(mount[0], str(self.install.mount_exe))
 
     def test_mounting_names_the_hash(self):
-        """Без /hash VeraCrypt перебирает все PRF подряд — это долго."""
+        """Without /hash VeraCrypt tries every PRF in turn; that is slow."""
         command = mount_command(self.install, self.path, "Z")
         self.assertEqual(command[command.index("/hash") + 1], "sha512")
         self.assertEqual(command[command.index("/letter") + 1], "Z")
@@ -326,13 +334,13 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("/password") + 1], "секрет")
 
     def test_the_default_password_is_long_enough_to_pass_without_a_warning(self):
-        """На коротком VeraCrypt показывает предупреждение, а в тихом режиме
-        предупреждение — это молчаливый отказ."""
+        """With a short password VeraCrypt shows a warning, and in silent mode
+        a warning is a silent refusal."""
         self.assertGreaterEqual(len(CALIBRATION_PASSWORD), 20)
 
 
 class OldVersionTests(unittest.TestCase):
-    """Ключи VeraCrypt менялись; версия читается именно ради этого."""
+    """VeraCrypt switches have changed; that is why the version is read."""
 
     def install(self, version):
         return Install(
@@ -353,7 +361,7 @@ class OldVersionTests(unittest.TestCase):
         self.assertEqual(parse_version(""), ())
 
     def test_dismount_is_used_before_the_rename(self):
-        """/unmount появился в 1.26.20; до неё его просто не понимают."""
+        """/unmount came in 1.26.20; older versions simply do not know it."""
         self.assertEqual(self.switch("1.25.9"), "/dismount")
         self.assertEqual(self.switch("1.26.7"), "/dismount")
 
@@ -362,7 +370,7 @@ class OldVersionTests(unittest.TestCase):
         self.assertEqual(self.switch("1.26.24"), "/unmount")
 
     def test_an_unreadable_version_falls_back_to_the_old_switch(self):
-        """/dismount понимают все версии, включая свежую, /unmount — нет."""
+        """All versions, the latest too, understand /dismount; not /unmount."""
         self.assertEqual(self.switch(""), "/dismount")
 
     def test_a_version_too_old_for_the_run_is_refused(self):
@@ -371,7 +379,7 @@ class OldVersionTests(unittest.TestCase):
         self.assertIn("1.24", notice)
 
     def test_the_oldest_workable_version_is_allowed_with_a_warning(self):
-        """До 1.25.4 /silent не убирал окно ожидания — но сбор идёт."""
+        """Before 1.25.4 /silent kept the wait window, but collection runs."""
         supported, notice = version_notice(self.install("1.24"))
         self.assertTrue(supported)
         self.assertIn("окно", notice)
@@ -391,7 +399,7 @@ class OldVersionTests(unittest.TestCase):
 
 
 class OperationTests(unittest.TestCase):
-    """Результат проверяется по факту: /silent молчит и об ошибке тоже."""
+    """The result is checked by the facts: /silent is silent on errors too."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -422,7 +430,7 @@ class OperationTests(unittest.TestCase):
         self.assertIn("не создан", str(caught.exception))
 
     def test_a_container_of_the_wrong_size_is_refused(self):
-        """Иначе замер встал бы не в свою строку таблицы покрытия."""
+        """Otherwise the measurement goes into the wrong coverage table row."""
         self.path.write_bytes(b"0" * 10)
         self.fake.broken.add("create")
         with self.assertRaises(VeraCryptError) as caught:
@@ -449,7 +457,7 @@ class OperationTests(unittest.TestCase):
         self.assertNotIn("Z:", self.fake.drives)
 
     def test_a_volume_that_stays_up_is_an_error(self):
-        """Пока том поднят, файл контейнера удалить нельзя."""
+        """While the volume is up, the container file cannot be deleted."""
         self.vc.create(self.path, MIB)
         self.vc.mount(self.path, "Z")
         self.fake.broken.add("unmount")
@@ -461,7 +469,7 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(self.fake.commands, [])
 
     def test_quiet_unmount_swallows_the_failure(self):
-        """В finally ошибка уборки не должна заслонять настоящую."""
+        """In finally, a cleanup error must not mask the real one."""
         self.vc.create(self.path, MIB)
         self.vc.mount(self.path, "Z")
         self.fake.broken.add("unmount")
@@ -481,7 +489,7 @@ class OperationTests(unittest.TestCase):
 
 
 class OrphanTests(unittest.TestCase):
-    """Терабайтный файл, переживший падение, иначе копился бы молча."""
+    """Otherwise terabyte files surviving a crash would pile up silently."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -508,11 +516,11 @@ class OrphanTests(unittest.TestCase):
 
 
 class UnmountRetryTests(unittest.TestCase):
-    """Отказ размонтировать временный, и снимает его повтор, а не ожидание.
+    """A refusal to unmount is temporary; a retry clears it, not waiting.
 
-    На первом настоящем прогоне сбора запаса так сорвались четыре замера из
-    семи: VeraCrypt отказывала кодом 1 сразу после записи данных, а через
-    полминуты отдавала том без возражений.
+    On the first real copy-slack collection run four measurements of seven
+    failed this way: VeraCrypt refused with code 1 right after data was
+    written, and half a minute later released the volume without objection.
     """
 
     def setUp(self):
@@ -553,7 +561,7 @@ class UnmountRetryTests(unittest.TestCase):
         self.assertIn("попыт", str(caught.exception))
 
     def test_a_refusal_is_not_waited_out_for_a_whole_minute(self):
-        """Том не размонтируется медленно — его не отдали вовсе."""
+        """The volume is not unmounting slowly; it was not released at all."""
         self.fake.stubborn = 1
         self.vc.unmount("Z")
         self.assertLess(self.fake.slept, LETTER_TIMEOUT)
@@ -564,12 +572,12 @@ class UnmountRetryTests(unittest.TestCase):
         self.assertEqual(self.fake.slept, 0.0)
 
     def test_the_measuring_unmount_never_forces(self):
-        """Force отбросил бы кэш, и остаток вышел бы завышенным."""
+        """Force would drop the cache, and left space would read too high."""
         self.vc.unmount("Z")
         self.assertNotIn("/force", self.attempts()[0])
 
     def test_the_cleanup_asks_politely_before_forcing(self):
-        """Незнакомый ключ VeraCrypt проглотит молча — начинать с силы нельзя."""
+        """VeraCrypt swallows an unknown switch silently: never force first."""
         self.fake.stubborn = 99
         self.vc.unmount_quietly("Z")
         forced = ["/force" in item for item in self.attempts()]

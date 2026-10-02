@@ -1,8 +1,10 @@
-"""Проверка страховочного запаса: он должен зависеть от размера, а не быть одним числом.
+"""Tests of the safety margin: it must depend on size, not be one number.
 
-Данные — двенадцать точек пустых контейнеров от 1 до 100 GiB. На них кривая
-метаданных выпукла до 16 GiB и вогнута выше, и именно это разделение и должно
-проступать в совете.
+The data are twelve empty-container points from 1 to 100 GiB. On them the
+metadata curve is convex up to 16 GiB and concave above, and exactly this
+split must show through in the advice. The shape is this grid's, not the real
+curve's: denser measurements show a staircase below 8 GiB, where a point can
+land above the chord.
 """
 
 import unittest
@@ -11,15 +13,22 @@ from containerhelper.model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     MIN_SAFETY_BYTES,
-    NtfsModel,
+    CopySlackModel,
+    MetadataModel,
+    Payload,
+    SafetyAdvice,
     SafetyModel,
+    fit_safety,
+    solve_container_mib,
 )
+from containerhelper.model import volume_of as model_volume_of
 from containerhelper.records import Record, build_safety
+from tests.reference import HEADERS_AND_TAIL
 
 GIB = 1024**3
 
-#: (размер контейнера в MiB, свободно на пустом томе) — снято с реальных
-#: контейнеров, те же числа, что в рабочем файле записей.
+#: (container size in MiB, free on the empty volume) — taken from real
+#: containers, the same numbers as in the working records file.
 GRID = (
     (1024, 1_055_596_544),
     (2048, 2_127_495_168),
@@ -41,7 +50,7 @@ def grid_records():
         Record(
             id=f"Test {mib // 1024} GiB",
             container_mib=mib,
-            mounted_bytes=mib * MIB - 266_240,
+            mounted_bytes=mib * MIB - HEADERS_AND_TAIL,
             empty_free_bytes=free,
         )
         for mib, free in GRID
@@ -49,15 +58,15 @@ def grid_records():
 
 
 def volume_of(mib):
-    return mib * MIB - 266_240
+    return model_volume_of(mib * MIB)
 
 
 class InterpolationBoundTests(unittest.TestCase):
-    """Граница того, насколько модель может занизить между двумя замерами."""
+    """How far the model can underestimate between two measurements."""
 
     def setUp(self):
-        self.model = NtfsModel(
-            [(r.mounted_bytes, r.ntfs_bytes) for r in grid_records()]
+        self.model = MetadataModel(
+            [(r.mounted_bytes, r.metadata_bytes) for r in grid_records()]
         )
 
     def test_measured_points_have_nothing_to_interpolate(self):
@@ -68,17 +77,21 @@ class InterpolationBoundTests(unittest.TestCase):
                 )
 
     def test_convex_stretch_cannot_be_underestimated(self):
-        """До 8 GiB наклон растёт, хорда идёт выше кривой."""
+        """Below 8 GiB the slope grows on this grid: the chord runs above.
+
+        Only on the grid. The real curve there is a staircase, and a point
+        between two measurements can land above the chord.
+        """
         for gib in (1.5, 3, 6):
             with self.subTest(gib=gib):
                 self.assertEqual(self.model.interpolation_bound(int(gib * GIB)), 0)
 
     def test_almost_straight_stretch_costs_almost_nothing(self):
-        """8–16 GiB линейны не идеально, но зазор там — килобайты."""
+        """8–16 GiB is not perfectly linear, but the gap there is kilobytes."""
         self.assertLess(self.model.interpolation_bound(int(12 * GIB)), 64 * 1024)
 
     def test_concave_stretch_has_a_real_gap(self):
-        """Выше 16 GiB составляющие метаданных упираются в потолки."""
+        """Above 16 GiB the metadata components hit their ceilings."""
         self.assertGreater(self.model.interpolation_bound(int(18 * GIB)), 0)
         self.assertGreater(self.model.interpolation_bound(int(47 * GIB)), 0)
 
@@ -94,7 +107,7 @@ class InterpolationBoundTests(unittest.TestCase):
         self.assertEqual(self.model.interpolation_bound(int(200 * GIB)), 0)
 
     def test_uncalibrated_model_has_no_bound(self):
-        self.assertEqual(NtfsModel().interpolation_bound(10 * GIB), 0)
+        self.assertEqual(MetadataModel().interpolation_bound(10 * GIB), 0)
 
 
 class AdviceTests(unittest.TestCase):
@@ -105,36 +118,36 @@ class AdviceTests(unittest.TestCase):
         return self.safety.advise(volume_of(mib), files)
 
     def test_advice_varies_with_size(self):
-        """Главное свойство: это не одно число на все расчёты."""
+        """The main property: this is not one number for every calculation."""
         totals = {self.advise(mib).total_mib for mib in (1024, 8192, 18432, 49152)}
         self.assertGreater(len(totals), 1)
 
     def test_measured_size_needs_only_the_floor(self):
-        """На самом замере модель точна: приписывать ей погрешность нечего."""
+        """At a measurement the model is exact: no error to charge it with."""
         advice = self.advise(40960)
-        self.assertEqual(advice.ntfs_bytes, 0)
+        self.assertEqual(advice.metadata_bytes, 0)
         self.assertEqual(advice.total_bytes, MIN_SAFETY_BYTES)
 
     def test_gap_between_measurements_costs_more_than_a_measured_point(self):
         self.assertGreater(
-            self.advise(18432).ntfs_bytes, self.advise(16384).ntfs_bytes
+            self.advise(18432).metadata_bytes, self.advise(16384).metadata_bytes
         )
 
     def test_far_neighbours_do_not_leak_in(self):
-        """Ломкое место у 48 GiB не должно удорожать контейнер на 5 GiB."""
-        near_the_knee = self.safety.advise(int(56 * GIB), 1).ntfs_bytes
-        small = self.safety.advise(int(5 * GIB), 1).ntfs_bytes
+        """The knee at 48 GiB must not make a 5 GiB container dearer."""
+        near_the_knee = self.safety.advise(int(56 * GIB), 1).metadata_bytes
+        small = self.safety.advise(int(5 * GIB), 1).metadata_bytes
         self.assertLess(small, MIB // 2)
         self.assertGreater(near_the_knee, small)
 
     def test_flat_stretch_does_not_inherit_the_knee(self):
-        """Выше 64 GiB по замерам растёт одна битовая карта.
+        """Above 64 GiB, by the measurements, only the bitmap grows.
 
-        Промах на 48 GiB, где у кривой излом, туда попадать не должен: окно
-        «похожего размера» — это концы своего отрезка, а не всё в пределах
-        двойки.
+        The miss at 48 GiB, where the curve has a knee, must not get there: the
+        window of "similar size" is the ends of its own segment, not everything
+        within a factor of two.
         """
-        self.assertLess(self.safety.advise(int(90 * GIB), 1).ntfs_bytes, MIB)
+        self.assertLess(self.safety.advise(int(90 * GIB), 1).metadata_bytes, MIB)
 
     def test_advice_names_the_records_it_leaned_on(self):
         advice = self.advise(18432)
@@ -148,7 +161,7 @@ class AdviceTests(unittest.TestCase):
         self.assertIn("вне измеренного диапазона", far.ntfs_reason)
 
     def test_many_files_cost_more_than_one(self):
-        """По-файловая часть запаса ничем не подтверждена — это должно быть видно."""
+        """Nothing confirms the per-file slack — that has to be visible."""
         one = self.advise(40960, files=1)
         many = self.advise(40960, files=500_000)
         self.assertGreater(many.slack_bytes, one.slack_bytes)
@@ -166,22 +179,22 @@ class AdviceTests(unittest.TestCase):
 
 
 class ScalingTests(unittest.TestCase):
-    """Промах приводится к ширине нужного отрезка, а не берётся как есть."""
+    """A miss is scaled to the relevant segment's width, not taken as is."""
 
     def setUp(self):
         self.safety = build_safety(grid_records())
 
     def test_deviation_shrinks_when_the_real_gap_is_narrower(self):
-        """Проверка исключением меряет прореху вдвое шире настоящей.
+        """The leave-one-out check sees a gap twice as wide as the real one.
 
-        Брать её промах как есть — это и есть тот общий «наибольший промах»,
-        от которого уходим: он не спадает от добавления замеров.
+        Taking its miss as is would be exactly the single "largest miss" we
+        are moving away from: it does not shrink as measurements are added.
         """
         raw = max(
             deviation for _, deviation, _ in self.safety.ntfs_deviations
         )
         worst_advice = max(
-            self.safety.advise(int(gib * GIB / 2), 1).ntfs_bytes
+            self.safety.advise(int(gib * GIB / 2), 1).metadata_bytes
             for gib in range(4, 200)
         )
         self.assertGreater(raw, 4 * MIB)
@@ -192,21 +205,21 @@ class ScalingTests(unittest.TestCase):
         self.assertEqual(set(advice.basis), {"Test 16 GiB", "Test 20 GiB"})
 
     def test_overshoot_is_not_a_risk(self):
-        """Отрицательное отклонение — перезаклад, в страховку его класть нечего."""
+        """A negative deviation is overestimate and adds no safety margin."""
         model = SafetyModel(
-            ntfs=NtfsModel([(r.mounted_bytes, r.ntfs_bytes) for r in grid_records()]),
+            ntfs=MetadataModel([(r.mounted_bytes, r.metadata_bytes) for r in grid_records()]),
             ntfs_deviations=[
                 (r.mounted_bytes, -50 * MIB, r.id) for r in grid_records()
             ],
         )
-        self.assertEqual(model.advise(int(18 * GIB), 1).ntfs_bytes, 
+        self.assertEqual(model.advise(int(18 * GIB), 1).metadata_bytes, 
                          model.ntfs.interpolation_bound(int(18 * GIB)))
 
 
 class FallbackTests(unittest.TestCase):
     def test_without_records_it_falls_back_to_the_default(self):
         advice = SafetyModel().advise(10 * GIB, 1)
-        self.assertEqual(advice.ntfs_bytes, DEFAULT_SAFETY_BYTES)
+        self.assertEqual(advice.metadata_bytes, DEFAULT_SAFETY_BYTES)
         self.assertIn("не откалибрована", advice.ntfs_reason)
 
     def test_one_file_trusts_the_measured_constant_part(self):
@@ -216,6 +229,61 @@ class FallbackTests(unittest.TestCase):
     def test_a_folder_does_not(self):
         advice = SafetyModel().advise(10 * GIB, 5000)
         self.assertEqual(advice.slack_bytes, DEFAULT_SAFETY_BYTES)
+
+
+class _Alternating:
+    """Advises 5 MiB for a volume up to the edge and 4 MiB above it.
+
+    With the edge at the volume a 4 MiB margin gives, that is the cycle found
+    at 547 MiB in 10 000 files: the volume a 4 MiB margin gives is advised
+    5 MiB, and the one a 5 MiB margin gives, a mebibyte further, 4 MiB.
+    """
+
+    def __init__(self, edge: int) -> None:
+        self.edge = edge
+
+    def advise(self, volume_bytes: int, file_count: int = 1) -> SafetyAdvice:
+        total = 5 * MIB if volume_bytes <= self.edge else 4 * MIB
+        return SafetyAdvice(total, total, 0, "", "")
+
+
+class FitTests(unittest.TestCase):
+    """`fit_safety`: the advice solved together with the volume it gives."""
+
+    def setUp(self):
+        self.payload = Payload(512 * MIB, 512 * MIB, 10_000)
+        self.ntfs, self.slack = MetadataModel(), CopySlackModel()
+        edge = self.solve(4 * MIB).volume_bytes
+        self.safety = _Alternating(edge)
+        self.assertGreater(self.solve(5 * MIB).volume_bytes, edge)
+
+    def solve(self, safety_bytes: int):
+        return solve_container_mib(
+            self.payload, ntfs=self.ntfs, slack=self.slack, safety_bytes=safety_bytes
+        )
+
+    def fit(self, **kwargs) -> SafetyAdvice:
+        return fit_safety(self.payload, self.ntfs, self.slack, self.safety, **kwargs)
+
+    def test_a_cycle_takes_the_larger_advice(self):
+        self.assertEqual(self.fit().total_bytes, 5 * MIB)
+
+    def test_the_answer_does_not_depend_on_the_seed(self):
+        """The seed used to be the field, that is, the previous answer."""
+        for seed_mib in (1, 4, 5, 7):
+            with self.subTest(seed_mib=seed_mib):
+                self.assertEqual(
+                    self.fit(seed_bytes=seed_mib * MIB).total_bytes, 5 * MIB
+                )
+
+    def test_the_margin_covers_the_volume_it_gives(self):
+        margin = self.fit().total_bytes
+        volume = self.solve(margin).volume_bytes
+        self.assertLessEqual(self.safety.advise(volume).total_bytes, margin)
+
+    def test_a_settled_advice_is_taken_as_is(self):
+        self.safety = _Alternating(0)
+        self.assertEqual(self.fit().total_bytes, 4 * MIB)
 
 
 if __name__ == "__main__":

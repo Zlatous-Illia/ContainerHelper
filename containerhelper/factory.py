@@ -1,13 +1,14 @@
-"""Заводские точки калибровки, которые едут внутри программы.
+"""Factory calibration points that ship inside the program.
 
-Смысл в том, чтобы новая копия считала осмысленно с первого запуска: снять
-двадцать шесть пустых контейнеров от 512 MiB до 1 TiB — это несколько часов
-работы, и без динамических контейнеров ещё и терабайт свободного места.
+The point is for a new copy to calculate sensibly from the first launch:
+measuring twenty-six empty containers from 512 MiB to 1 TiB is several hours
+of work, and without dynamic containers a terabyte of free space as well.
 
-Данные только на чтение. Заменить их нельзя, можно лишь перекрыть своим
-замером на тот же размер тома — и это правильный порядок, потому что размер
-метаданных решает не NTFS вообще, а конкретный код форматирования: сборка
-Windows и версия VeraCrypt. Своё всегда вернее заводского.
+The data is read-only. It cannot be replaced, only overridden by an own
+measurement at the same volume size — and that is the right order,
+because the size of the metadata is decided not by NTFS in general but by the
+specific formatting code: the Windows build and the VeraCrypt version. Own is
+always truer than factory.
 """
 
 from __future__ import annotations
@@ -16,20 +17,22 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from .model import MIB, VC_HEADER_BYTES
+from .model import MIB, volume_of
 
 PACKAGE_DATA = "containerhelper.data"
 FACTORY_FILE = "factory_points.json"
 
-#: Заводские замеры запаса на копирование. Отдельным файлом, а не ключом в
-#: том же: точки NTFS снимаются пустыми контейнерами за минуты, а замеры
-#: запаса пишут на том гигабайты, и обновляются они порознь.
+#: Factory copy-slack measurements. A separate file, not a key in the same
+#: one: NTFS points are taken with empty containers in minutes, while copy
+#: slack measurements write gigabytes to the volume, and the two are updated
+#: separately.
 FACTORY_SLACK_FILE = "factory_slack.json"
 
-#: Надбавка к страховке, пока оба конца отрезка — заводские точки. Чужая
-#: сборка Windows могла выбрать другой размер $LogFile, а занижение здесь и
-#: есть единственная опасная сторона. Свой замер рядом надбавку снимает.
-FACTORY_MARGIN_BYTES = 4 * MIB
+#: What a factory measurement without the `filesystem` field was taken on.
+#: Every one shipped so far is NTFS; the field is written out all the same,
+#: so that a measurement on another filesystem cannot pass for NTFS by
+#: leaving it out.
+FACTORY_FILESYSTEM = "NTFS"
 
 
 @dataclass(frozen=True)
@@ -38,19 +41,25 @@ class FactoryPoint:
     cluster_bytes: int
     mounted_bytes: int
     empty_free_bytes: int
+    filesystem: str = FACTORY_FILESYSTEM
 
     @property
-    def ntfs_bytes(self) -> int:
-        return self.mounted_bytes - self.empty_free_bytes
+    def volume_bytes(self) -> int:
+        return volume_of(self.container_mib * MIB)
+
+    @property
+    def metadata_bytes(self) -> int:
+        """Counted from the volume size, as `Record.metadata_bytes` is."""
+        return self.volume_bytes - self.empty_free_bytes
 
 
 @dataclass(frozen=True)
 class FactorySample:
-    """Заводской замер запаса на копирование: набор файлов на пустом томе.
+    """Factory copy-slack measurement: a file set on an empty volume.
 
-    Хранятся только измеренные величины, как и везде: сам запас выводится из
-    них. Ровно дублирование вычислимых полей и испортило исходные рукописные
-    записи.
+    Only measured values are stored, as everywhere: the slack itself is
+    derived from them. It was exactly the duplication of computable fields
+    that corrupted the original handwritten records.
     """
 
     fileset: str
@@ -63,6 +72,11 @@ class FactorySample:
     file_count: int
     file_alloc_bytes: int
     left_bytes: int
+    filesystem: str = FACTORY_FILESYSTEM
+
+    @property
+    def volume_bytes(self) -> int:
+        return volume_of(self.container_mib * MIB)
 
     @property
     def copy_slack_bytes(self) -> int:
@@ -74,12 +88,9 @@ class FactoryData:
     source: str
     note: str
     points: tuple[FactoryPoint, ...]
-    #: Заводские замеры запаса. Пусто, пока их не сняли ни разу: пустой
-    #: список честнее выдуманных чисел.
+    #: Factory copy-slack measurements. Empty until they have been taken even
+    #: once: an empty list is more honest than made-up numbers.
     samples: tuple[FactorySample, ...] = ()
-
-    def by_volume(self) -> dict[int, FactoryPoint]:
-        return {point.mounted_bytes: point for point in self.points}
 
 
 def _empty() -> FactoryData:
@@ -87,10 +98,11 @@ def _empty() -> FactoryData:
 
 
 def _read_resource(name: str) -> dict:
-    """Прочитать ресурс пакета. Отсутствие файла — не ошибка, а пустота.
+    """Read a package resource. A missing file is not an error but emptiness.
 
-    Через importlib.resources, а не по пути на диске: в сборке одним файлом
-    ресурс распаковывается во временный каталог, и обычный путь туда не ведёт.
+    Through importlib.resources, not by a path on disk: in a one-file build
+    the resource is unpacked into a temporary folder, and an ordinary path
+    does not lead there.
     """
     try:
         from importlib.resources import files
@@ -106,10 +118,11 @@ def _read_resource(name: str) -> dict:
 
 
 def _read_samples(data: dict) -> tuple[FactorySample, ...]:
-    """Заводские замеры запаса. Битый файл оставляет их пустыми, а не рушит.
+    """Factory copy-slack measurements.
 
-    Пустой список — рабочее состояние, а не поломка: замеры запаса появляются
-    только после настоящего прогона на живой машине.
+    A broken file leaves them empty rather than bringing anything down. An
+    empty list is a working state, not a breakage: copy-slack measurements
+    appear only after a real run on a live machine.
     """
     try:
         return tuple(
@@ -124,6 +137,7 @@ def _read_samples(data: dict) -> tuple[FactorySample, ...]:
                 file_count=int(item["file_count"]),
                 file_alloc_bytes=int(item["file_alloc_bytes"]),
                 left_bytes=int(item["left_bytes"]),
+                filesystem=str(item.get("filesystem", FACTORY_FILESYSTEM)),
             )
             for item in data.get("samples", ())
         )
@@ -133,10 +147,10 @@ def _read_samples(data: dict) -> tuple[FactorySample, ...]:
 
 @lru_cache(maxsize=1)
 def factory_data() -> FactoryData:
-    """Прочитать заводские точки и замеры запаса из ресурсов пакета.
+    """Read factory points and copy-slack measurements from the package.
 
-    Отсутствие любого из файлов — не ошибка: программа просто остаётся без
-    соответствующих заводских данных.
+    A missing file of either kind is not an error: the program is simply left
+    without the corresponding factory data.
     """
     data = _read_resource(FACTORY_FILE)
     try:
@@ -146,6 +160,7 @@ def factory_data() -> FactoryData:
                 cluster_bytes=int(item.get("cluster_bytes", 4096)),
                 mounted_bytes=int(item["mounted_bytes"]),
                 empty_free_bytes=int(item["empty_free_bytes"]),
+                filesystem=str(item.get("filesystem", FACTORY_FILESYSTEM)),
             )
             for item in data.get("points", ())
         )
@@ -161,5 +176,5 @@ def factory_data() -> FactoryData:
 
 
 def factory_volume(container_mib: int) -> int:
-    """Размер тома, который даёт контейнер такого размера."""
-    return container_mib * MIB - VC_HEADER_BYTES
+    """Volume size produced by a container of this size."""
+    return volume_of(container_mib * MIB)

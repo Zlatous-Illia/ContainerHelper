@@ -1,11 +1,18 @@
-"""Вкладка «Расчёт»: от размера исходных данных к размеру контейнера."""
+"""The Calculation tab: from the input data size to the container size."""
 
 from __future__ import annotations
 
 import os
 from typing import Callable, Sequence
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QMimeData, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelection,
+    QItemSelectionModel,
+    QMimeData,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,11 +37,12 @@ from ..model import (
     DEFAULT_SAFETY_BYTES,
     MIB,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     SafetyAdvice,
     SafetyModel,
     Solution,
+    fit_safety,
     round_up,
     solve_container_mib,
 )
@@ -49,6 +57,7 @@ from ..formatting import (
     parse_bytes,
     unit_suffix,
 )
+from ..i18n import tr, tr_n
 from ..sizes import ScanResult, scan_paths
 from .path_picker import PickerState, ask_paths
 from .table import (
@@ -63,127 +72,79 @@ from .table import (
 
 CLUSTER_CHOICES = (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536)
 
-#: Столбцы разбивки по источникам: заголовок, «в байтах», подсказка.
+#: Columns of the per-source split: header key, "in bytes", tooltip key.
 SOURCE_COLUMNS = (
-    (
-        "Источник",
-        False,
-        "Что выбрали. Полный путь — в подсказке к строке.",
-    ),
-    (
-        "Тип",
-        False,
-        "Папка считается целиком, со всем вложенным. Файл — сам по себе.",
-    ),
-    (
-        "Файлов",
-        False,
-        "Сколько файлов внутри. Чем их больше, тем больше запас на "
-        "копирование: на каждый нужна запись MFT и место в индексе.",
-    ),
-    (
-        "Папок",
-        False,
-        "Сколько вложенных папок обошли. На объём почти не влияет, зато "
-        "видно, что обход дошёл до конца.",
-    ),
-    (
-        "Логический размер",
-        True,
-        "Сумма размеров файлов — столько же показывает Проводник.",
-    ),
-    (
-        "По кластерам",
-        True,
-        "Сколько данные займут на томе: каждый файл округляется вверх до "
-        "кластера. На мелких файлах заметно больше логического размера.",
-    ),
+    ("calc.src.col.source", False, "calc.src.col.source.tip"),
+    ("calc.src.col.kind", False, "calc.src.col.kind.tip"),
+    ("calc.src.col.files", False, "calc.src.col.files.tip"),
+    ("calc.src.col.folders", False, "calc.src.col.folders.tip"),
+    ("calc.src.col.logical", True, "calc.src.col.logical.tip"),
+    ("calc.src.col.alloc", True, "calc.src.col.alloc.tip"),
 )
 
-#: Подсказки к столбцам разложения. Второй столбец всегда в байтах — это
-#: колонка для сверки, — а третий следует выбранной единице.
+#: The three selection buttons over the source table: title key, tooltip
+#: key. Their slots are paired in the order given here.
+SELECT_BUTTONS = (
+    ("calc.select.all", "calc.select.all.tip"),
+    ("calc.select.none", "calc.select.none.tip"),
+    ("calc.select.invert", "calc.select.invert.tip"),
+)
+
+#: Tooltips for the breakdown columns. The second column is always in bytes —
+#: it is the column for reconciliation — and the third follows the chosen
+#: unit.
 BREAKDOWN_TIPS = (
-    "Слагаемое размера контейнера. Строки идут в том порядке, в каком "
-    "складываются, «Итого» — их сумма.",
-    "Значение в байтах. Единице отображения не подчиняется: по нему сверяют "
-    "с тем, что показывают VeraCrypt и Проводник.",
-    "То же в выбранной единице. Для «B» показывает MiB — два одинаковых "
-    "столбца ни к чему.",
+    "calc.col.component.tip",
+    "calc.col.bytes.tip",
+    "calc.col.unit.tip",
 )
 
-#: Подсказки к строкам разложения — по названию слагаемого. Число в строке
-#: без объяснения, откуда оно, проверить нечем.
+#: Tooltips for the breakdown rows — keyed by the component's key. A number
+#: in a row with no explanation of where it comes from cannot be checked.
 BREAKDOWN_ROW_TIPS = {
-    "Полезные данные (по кластерам)": (
-        "Сами данные, но каждый файл округлён вверх до кластера — место "
-        "файловая система выдаёт только кластерами."
-    ),
-    "    в том числе кластерный хвост": (
-        "Сколько из строки выше ушло на округление. Растёт с числом файлов "
-        "и размером кластера."
-    ),
-    "Заголовок VeraCrypt": (
-        "266 240 B — разница между файлом контейнера и ёмкостью тома. На "
-        "всех замерах одна и та же."
-    ),
-    "Метаданные NTFS": (
-        "Что файловая система забирает себе: $MFT, $LogFile, $Bitmap и "
-        "прочее. Зависит от размера тома, а не от содержимого. Берётся из "
-        "замеров на вкладке «Калибровка»."
-    ),
-    "Запас на копирование": (
-        "Сколько файлы занимают сверх своего кластерного размера: запись "
-        "MFT на каждый и разрастание индексов каталогов."
-    ),
-    "Страховочный запас": (
-        "Поправка на погрешность моделей. В режиме «Авто» считается под "
-        "этот размер тома и это число файлов."
-    ),
-    "Итого контейнер": (
-        "Всё перечисленное, округлённое вверх до целых MiB. Это число и "
-        "вводят в VeraCrypt."
-    ),
-    "Ожидаемый остаток (Left space)": (
-        "Сколько места должно остаться на томе после копирования. Проверить "
-        "можно кнопкой «Замерить остаток» в записи."
-    ),
+    "calc.row.payload": "calc.row.payload.tip",
+    "calc.row.cluster_tail": "calc.row.cluster_tail.tip",
+    "calc.row.vc_header": "calc.row.vc_header.tip",
+    "calc.row.metadata": "calc.row.metadata.tip",
+    "calc.row.copy_slack": "calc.row.copy_slack.tip",
+    "calc.row.safety": "calc.row.safety.tip",
+    "calc.row.total": "calc.row.total.tip",
+    "calc.row.left": "calc.row.left.tip",
 }
 
-#: Пределы ввода. Байты — до петабайта с разделителями разрядов, кластер — до
-#: 65536. Без них в поле влезает число, для которого нет носителя.
+#: Input limits. Bytes — up to a petabyte with digit-group separators, cluster
+#: — up to 65536. Without them the field takes a number no storage device
+#: exists for.
 MAX_BYTES_CHARS = 24
 MAX_CLUSTER_CHARS = 7
 
-#: Самое длинное осмысленное значение для каждого поля — по нему и меряется
-#: ширина виджета. Поле кластера во весь экран врёт о том, что туда можно
-#: вписать: больше 65536 не бывает.
+#: The longest meaningful value for each field — the widget's width is
+#: measured by it. A screen-wide cluster field lies about what can be typed
+#: there: nothing above 65536 exists.
 SAMPLE_BYTES = "1 125 899 906 842 624"
 SAMPLE_CLUSTER = "65 536"
 
-#: Перенос строки в подсказке. Константой, потому что экранирование внутри
-#: шаблонов правки уже один раз схлопывалось.
+#: Line break in a tooltip. A constant, because escaping inside edit
+#: templates has already collapsed once.
 LINE_BREAK = chr(10)
 
-#: Подпись под пустой таблицей источников. Одной строкой на два места:
-#: она стоит и при сборке, и при каждом обновлении, а разойдясь, назвала бы
-#: одно и то же состояние по-разному.
-NO_SOURCE_HINT = (
-    "Источник не выбран: перетащите сюда файлы и папки, выберите их кнопкой "
-    "или введите размер вручную."
-)
+#: The label under an empty source table. One string for two places: it is
+#: set both when building and on every update, and if the two drifted apart
+#: they would name the same state in different ways.
+NO_SOURCE_HINT = "calc.source.none"
 
-ModelProvider = Callable[[], tuple[NtfsModel, CopySlackModel]]
+ModelProvider = Callable[[], tuple[MetadataModel, CopySlackModel]]
 SafetyProvider = Callable[[], SafetyModel]
 
 
 class CalcTab(QWidget):
     safetyChanged = Signal(int)
     autoSafetyChanged = Signal(bool)
-    #: Пересчитали. По нему обновляется окно с графиками текущего расчёта:
-    #: оно рисует ровно то, что стоит сейчас в таблице разложения.
+    #: Recalculated. The chart window of the current calculation updates on
+    #: it: it draws exactly what is in the breakdown table right now.
     calculationChanged = Signal()
-    #: Просьба показать окно с графиками. Открывает его главное окно —
-    #: вкладки друг о друге и об окнах не знают.
+    #: A request to show the chart window. The main window opens it — the
+    #: tabs know nothing about each other or about windows.
     chartRequested = Signal(str)
 
     def __init__(
@@ -194,23 +155,25 @@ class CalcTab(QWidget):
     ) -> None:
         super().__init__(parent)
         self._models = models
-        #: Откуда брать совет по страховке. None — подбор недоступен, поле
-        #: остаётся ручным, как было до его появления.
+        #: Where to get safety margin advice from. None — the fitting is not
+        #: available, the field stays manual, as it was before the fitting
+        #: appeared.
         self._safety = safety
         self._advice: SafetyAdvice | None = None
-        #: Итог последнего обхода. None — размер введён руками, и разбивки по
-        #: источникам нет вовсе.
+        #: The result of the last scan. None — the size was typed by hand,
+        #: and there is no per-source split at all.
         self._scan: ScanResult | None = None
-        #: Последнее решение — то же, что показано в таблице разложения.
-        #: Хранится, чтобы график рисовал показанное, а не пересчитанное
-        #: заново: пересчёт мог бы прийти к другому ответу, если между делом
-        #: сменилась модель.
+        #: The last solution — the same one shown in the breakdown table.
+        #: Kept so the chart draws what was shown, not a fresh recalculation:
+        #: a recalculation could reach a different answer if the model
+        #: changed in the meantime.
         self._solution: Solution | None = None
         self._unit: Unit = DEFAULT_UNIT
         self._sources_fitted = False
-        #: Что диалог выбора обязан пережить между показами: вид, размер
-        #: окна, обе галочки и показанная папка. Хранит и записывает в
-        #: настройки главное окно — диалог живёт один показ.
+        #: What the picker must survive between showings: the view, the
+        #: window size, both check boxes and the displayed folder. The main
+        #: window keeps it and writes it to the settings — the dialog lives
+        #: for one showing.
         self._picker = PickerState()
 
         layout = QVBoxLayout(self)
@@ -223,124 +186,131 @@ class CalcTab(QWidget):
         layout.addStretch(1)
 
         self.setAcceptDrops(True)
-        # Поля ввода принимают перетаскивание сами и вставили бы брошенный
-        # путь текстом прямо в размер. Отказ поля пускает событие дальше —
-        # во вкладку, где путь и станет источником.
+        # Input fields accept drops themselves and would paste a dropped path
+        # as text right into the size. The field refusing lets the event
+        # through — to the tab, where the path becomes a source.
         for field in self.findChildren(QLineEdit):
             field.setAcceptDrops(False)
 
+        # Sets the static text and recalculates, which fills the rest.
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        """Set the tab's text in the current language.
+
+        The text built from data is rebuilt by `recalculate`, which keeps the
+        selection, the column widths and what was typed: it only refills the
+        cells and labels.
+        """
+        self.source_group.setTitle(tr("calc.group.source"))
+        self.size_label.setText(tr("calc.size"))
+        self.size_edit.setPlaceholderText(tr("calc.size.placeholder"))
+        self.size_edit.setToolTip(tr("calc.size.tip"))
+        self.count_label.setText(tr("calc.count"))
+        self.count_spin.setToolTip(tr("calc.count.tip"))
+        self.pick_button.setText(tr("calc.pick"))
+        self.pick_button.setToolTip(tr("calc.pick.tip"))
+        self.add_button.setText(tr("calc.add"))
+        self.add_button.setToolTip(tr("calc.add.tip"))
+        self.drop_button.setText(tr("calc.drop"))
+        self.drop_button.setToolTip(tr("calc.drop.tip"))
+        for button, (title, tip) in zip(self.select_buttons, SELECT_BUTTONS):
+            button.setText(tr(title))
+            button.setToolTip(tr(tip))
+        self.source_table.setToolTip(tr("calc.src.tip"))
+        self.params_group.setTitle(tr("calc.group.params"))
+        self.cluster_label.setText(tr("calc.cluster"))
+        self.cluster_combo.setToolTip(tr("calc.cluster.tip"))
+        self.safety_label.setText(tr("calc.safety"))
+        self.safety_spin.setToolTip(tr("calc.safety.tip"))
+        self.auto_safety.setText(tr("calc.auto_safety"))
+        self.auto_safety.setToolTip(tr("calc.auto_safety.tip"))
+        self.copy_button.setText(tr("calc.copy"))
+        self.copy_button.setToolTip(tr("calc.copy.tip"))
+        self.table.setToolTip(tr("calc.breakdown.tip"))
+        self._apply_source_headers()
+        self._apply_breakdown_headers()
         self.recalculate()
 
-    # --- построение интерфейса --------------------------------------------
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    # --- building the interface ------------------------------------------
 
     def _build_source_group(self) -> QGroupBox:
-        group = QGroupBox("Исходные данные")
-        # Без подсказки на самой группе: она наследуется каждым виджетом без
-        # своей, и наведение на любую подпись внутри показывало пересказ того,
-        # что и так написано под таблицей источников.
+        group = self.source_group = QGroupBox()
+        # No tooltip on the group itself: every widget without its own
+        # inherits it, and hovering over any label inside showed a retelling
+        # of what is already written under the source table.
         outer = QVBoxLayout(group)
         outer.addLayout(self._build_source_buttons())
 
         self.source_box = with_grip(self._build_source_table())
         outer.addWidget(self.source_box)
 
-        self.source_label = QLabel(NO_SOURCE_HINT)
+        self.source_label = QLabel()
         self.source_label.setWordWrap(True)
         self.source_label.setStyleSheet("color: palette(mid);")
-        # Без подсказки: подпись и есть сводка, а подсказка её пересказывала.
+        # No tooltip: the label is the summary, and the tooltip retold it.
         outer.addWidget(self.source_label)
 
         form = QFormLayout()
         self.size_edit = QLineEdit()
-        self.size_edit.setPlaceholderText("например 10 941 734 967")
-        self.size_edit.setToolTip(
-            "Размер данных в байтах; разделители разрядов можно оставить.\n"
-            "После выбора источников заполняется сам. Если исправить руками, "
-            "связь с выбранными путями теряется, и число файлов придётся "
-            "указать самому."
-        )
         self.size_edit.setMaxLength(MAX_BYTES_CHARS)
         digits_only(self.size_edit)
         fit_field(self.size_edit, SAMPLE_BYTES)
         self.size_edit.textEdited.connect(self._on_manual_edit)
-        form.addRow("Размер, байт:", self.size_edit)
+        self.size_label = QLabel()
+        self.size_label.setBuddy(self.size_edit)
+        form.addRow(self.size_label, self.size_edit)
 
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, 100_000_000)
         self.count_spin.setValue(1)
-        self.count_spin.setToolTip(
-            "Сколько файлов. От этого зависит запас: каждый файл занимает "
-            "запись MFT и место в индексе каталога."
-        )
         self.count_spin.setMaximumWidth(150)
         self.count_spin.valueChanged.connect(self._on_manual_edit)
-        form.addRow("Файлов:", self.count_spin)
+        self.count_label = QLabel()
+        self.count_label.setBuddy(self.count_spin)
+        form.addRow(self.count_label, self.count_spin)
         outer.addLayout(form)
 
         return group
 
     def _build_source_buttons(self) -> QHBoxLayout:
-        """Одна кнопка выбора на оба рода источников.
+        """One Select button for both kinds of source.
 
-        Разделение на «файл» и «папку» было не выбором пользователя, а
-        пересказом того, что родные диалоги Windows устроены двумя разными
-        системными вызовами. Набор данных так не делится: в контейнер кладут и
-        папки, и отдельные файлы, и обычно вместе.
+        The split into "file" and "folder" was not the user's choice but a
+        retelling of the fact that Windows' native dialogs are built on two
+        different system calls. A data set does not divide that way: both
+        folders and single files go into a container, and usually together.
         """
         row = QHBoxLayout()
 
-        self.pick_button = QPushButton("Выбрать…")
-        self.pick_button.setToolTip(
-            "Выбрать файлы и папки — одним списком, любым набором. Заменяет "
-            "то, что выбрано сейчас.\n"
-            "Папка считается целиком. Вложенные друг в друга пути дважды не "
-            "считаются."
-        )
+        self.pick_button = QPushButton()
         self.pick_button.clicked.connect(self._pick_sources)
         row.addWidget(self.pick_button)
 
-        self.add_button = QPushButton("Добавить…")
-        self.add_button.setToolTip(
-            "То же окно, но выбранное добавится к уже набранному. За один "
-            "раз диалог показывает только одну папку, а данные бывают из "
-            "разных мест."
-        )
+        self.add_button = QPushButton()
         self.add_button.clicked.connect(self._add_sources)
         row.addWidget(self.add_button)
 
-        self.drop_button = QPushButton("Убрать")
-        self.drop_button.setToolTip(
-            "Убрать выделенные строки. Ctrl+A выделяет все — так набор "
-            "очищается целиком и можно вернуться к ручному вводу."
-        )
+        self.drop_button = QPushButton()
         self.drop_button.clicked.connect(self._drop_sources)
         row.addWidget(self.drop_button)
 
-        # Кнопки выделения — те же три, что и в диалоге выбора. Клавиатурой всё
-        # это доступно и так, но искать Ctrl+A в таблице, которой обычно не
-        # пользуются, незачем, а «инвертировать» горячей клавиши не имеет вовсе.
+        # Selection buttons — the same three as in the picker. All of this is
+        # reachable from the keyboard anyway, but there is no point hunting
+        # for Ctrl+A in a table that is rarely used, and "invert" has no
+        # shortcut at all.
         self.select_buttons: list[QPushButton] = []
-        for title, tip, slot in (
-            (
-                "Выделить всё",
-                "Выделить все источники. То же делает Ctrl+A.",
-                self.source_table_select_all,
-            ),
-            (
-                "Снять выделение",
-                "Снять выделение со всех строк — «Убрать» после этого "
-                "выключается.",
-                self.source_table_select_none,
-            ),
-            (
-                "Инвертировать",
-                "Выделить всё, кроме выделенного сейчас. Так убирают всё, "
-                "кроме одного-двух нужных источников.",
-                self.source_table_invert,
-            ),
+        for slot in (
+            self.source_table_select_all,
+            self.source_table_select_none,
+            self.source_table_invert,
         ):
-            button = QPushButton(title)
-            button.setToolTip(tip)
+            button = QPushButton()
             button.clicked.connect(slot)
             row.addWidget(button)
             self.select_buttons.append(button)
@@ -348,7 +318,7 @@ class CalcTab(QWidget):
         row.addStretch(1)
         return row
 
-    # --- выделение в таблице источников ------------------------------------
+    # --- selection in the source table ------------------------------------
 
     def source_table_select_all(self) -> None:
         self.source_table.selectAll()
@@ -357,11 +327,11 @@ class CalcTab(QWidget):
         self.source_table.clearSelection()
 
     def source_table_invert(self) -> None:
-        """Перевернуть выделение: выделенные строки снять, остальные выбрать.
+        """Invert the selection: deselect the selected rows, select the rest.
 
-        Toggle по всему прямоугольнику таблицы, а не обход строк с selectRow:
-        та без зажатого Ctrl сбрасывает предыдущее выделение, и от инверсии
-        осталась бы одна последняя строка.
+        Toggle over the whole table rectangle, not a walk over rows with
+        selectRow: without Ctrl held down, selectRow drops the previous
+        selection, and only the last row would remain of the inversion.
         """
         rows, columns = self.source_table.rowCount(), self.source_table.columnCount()
         if not rows or not columns:
@@ -378,11 +348,9 @@ class CalcTab(QWidget):
         self.source_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.source_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.source_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.source_table.setToolTip(
-            "Что принёс каждый источник. Строки идут в порядке выбора."
-        )
-        # Порядок строк — порядок выбора; сортировка тут только запутала бы,
-        # потому что удалять надо ровно ту строку, на которую смотрят.
+        # Row order is the order of selection; sorting would only confuse
+        # here, because the row to remove must be exactly the one being looked
+        # at.
         setup_table(self.source_table, sortable=False, min_rows=3)
         self.source_table.itemSelectionChanged.connect(self._refresh_drop_button)
         self._apply_source_headers()
@@ -391,14 +359,16 @@ class CalcTab(QWidget):
     def _apply_source_headers(self) -> None:
         self.source_table.setHorizontalHeaderLabels(
             [
-                title + (unit_suffix(self._unit) if is_bytes else "")
+                tr(title) + (unit_suffix(self._unit) if is_bytes else "")
                 for title, is_bytes, _tip in SOURCE_COLUMNS
             ]
         )
-        set_header_tooltips(self.source_table, [tip for _t, _b, tip in SOURCE_COLUMNS])
+        set_header_tooltips(
+            self.source_table, [tr(tip) for _t, _b, tip in SOURCE_COLUMNS]
+        )
 
     def _build_params_group(self) -> QGroupBox:
-        group = QGroupBox("Параметры")
+        group = self.params_group = QGroupBox()
         form = QFormLayout(group)
 
         self.cluster_combo = QComboBox()
@@ -412,44 +382,33 @@ class CalcTab(QWidget):
         self.cluster_combo.setMaximumWidth(
             self.cluster_combo.lineEdit().maximumWidth() + 34
         )
-        self.cluster_combo.setToolTip(
-            "Шаг, которым файловая система выдаёт место: файл в 1 байт "
-            "занимает целый кластер, файл в 4097 при кластере 4096 — два.\n"
-            "На одном большом файле выбор почти ничего не меняет, на 500 "
-            "мелких — 2 MiB против 32 MiB.\n"
-            "Кластеры есть в любой файловой системе, но метаданные мы мерили "
-            "только на NTFS."
-        )
         self.cluster_combo.currentTextChanged.connect(self.recalculate)
-        form.addRow("Размер кластера, B:", self.cluster_combo)
+        self.cluster_label = QLabel()
+        self.cluster_label.setBuddy(self.cluster_combo)
+        form.addRow(self.cluster_label, self.cluster_combo)
 
         self.safety_spin = QSpinBox()
         self.safety_spin.setRange(0, 1024)
         self.safety_spin.setValue(DEFAULT_SAFETY_BYTES // MIB)
         self.safety_spin.setSuffix(" MiB")
-        self.safety_spin.setToolTip(
-            "Запас поверх расчёта — на случай, если модели чуть промахнулись."
-        )
         self.safety_spin.setMaximumWidth(110)
         self.safety_spin.valueChanged.connect(self.recalculate)
         self.safety_spin.valueChanged.connect(self.safetyChanged.emit)
 
         safety_row = QHBoxLayout()
         safety_row.addWidget(self.safety_spin)
-        self.auto_safety = QCheckBox("Авто")
-        self.auto_safety.setToolTip(
-            "Считать запас под этот размер и число файлов, а не держать одно "
-            "число на все расчёты."
-        )
-        # Состояние выставляется до подключения сигнала: toggled на этапе
-        # сборки дёрнул бы recalculate, когда половины виджетов ещё нет.
+        self.auto_safety = QCheckBox()
+        # The state is set before the signal is connected: toggled during
+        # building would fire recalculate while half the widgets do not exist
+        # yet.
         self.auto_safety.setChecked(self._safety is not None)
         self.auto_safety.setEnabled(self._safety is not None)
         self.safety_spin.setReadOnly(self.auto_safety.isChecked())
         self.auto_safety.toggled.connect(self._on_auto_toggled)
         safety_row.addWidget(self.auto_safety)
         safety_row.addStretch(1)
-        form.addRow("Страховочный запас:", safety_row)
+        self.safety_label = QLabel()
+        form.addRow(self.safety_label, safety_row)
 
         self.safety_note = QLabel()
         self.safety_note.setWordWrap(True)
@@ -464,7 +423,7 @@ class CalcTab(QWidget):
         self.recalculate()
 
     def set_safety_mib(self, value: int) -> None:
-        """Принять значение, выставленное на вкладке «Модель»."""
+        """Take the value set on the Model tab."""
         if self.safety_spin.value() != value:
             self.safety_spin.blockSignals(True)
             self.safety_spin.setValue(value)
@@ -487,8 +446,7 @@ class CalcTab(QWidget):
         row.addWidget(self.result_units)
         row.addStretch(1)
 
-        self.copy_button = QPushButton("Копировать")
-        self.copy_button.setToolTip("Скопировать число MiB для ввода в VeraCrypt.")
+        self.copy_button = QPushButton()
         self.copy_button.clicked.connect(self._copy_result)
         row.addWidget(self.copy_button)
 
@@ -499,12 +457,7 @@ class CalcTab(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionMode(QTableWidget.NoSelection)
-        self.table.setToolTip(
-            "Из чего сложился Container init. Строки идут в порядке "
-            "сложения, поэтому не сортируются.\n"
-            "Наведите на строку — там написано, откуда взялось слагаемое."
-        )
-        # Порядок строк здесь и есть содержание, поэтому без сортировки.
+        # Row order here is the content itself, hence no sorting.
         setup_table(self.table, sortable=False)
         self._apply_breakdown_headers()
         self._columns_fitted = False
@@ -512,16 +465,21 @@ class CalcTab(QWidget):
 
     def _apply_breakdown_headers(self) -> None:
         self.table.setHorizontalHeaderLabels(
-            ["Слагаемое", "Байт", self._secondary_unit().label]
+            [
+                tr("calc.col.component"),
+                tr("calc.col.bytes"),
+                self._secondary_unit().label,
+            ]
         )
-        set_header_tooltips(self.table, BREAKDOWN_TIPS)
+        set_header_tooltips(self.table, [tr(tip) for tip in BREAKDOWN_TIPS])
 
     def _secondary_unit(self) -> Unit:
-        """Единица третьего столбца разложения.
+        """The unit of the breakdown's third column.
 
-        Второй столбец всегда в байтах — это колонка для сверки. Поэтому
-        выбор «B» в третьем столбце дал бы два одинаковых числа, и он
-        отображается на MiB, как было до появления переключателя.
+        The second column is always in bytes — it is the column for
+        reconciliation. So choosing "B" for the third column would give two
+        identical numbers, and it is mapped to MiB, as it was before the
+        switch appeared.
         """
         return UNIT_MIB if self._unit.factor <= 1 else self._unit
 
@@ -543,14 +501,15 @@ class CalcTab(QWidget):
         self.notes_label.setMinimumHeight(48)
         return self.notes_label
 
-    # --- источник данных ---------------------------------------------------
+    # --- data source -------------------------------------------------------
 
     def _ask_paths(self) -> list[str]:
-        """Показать диалог выбора; состояние он правит на месте.
+        """Show the picker; it edits the state in place.
 
-        Начальную папку выбирает само состояние, а не выбранный путь. Брать её
-        из выбранного нельзя: выбрав в папке 1 папку 2, следующий показ уезжал
-        внутрь папки 2 — и так на уровень вглубь с каждым разом.
+        The starting folder is chosen by the state itself, not by the selected
+        path. It cannot be taken from the selection: after selecting folder 2
+        inside folder 1, the next showing moved inside folder 2 — and so one
+        level deeper every time.
         """
         return ask_paths(self, self._picker)
 
@@ -566,14 +525,14 @@ class CalcTab(QWidget):
 
     @property
     def picker_state(self) -> PickerState:
-        """Состояние диалога выбора. Читает и пишет главное окно."""
+        """The picker's state. The main window reads and writes it."""
         return self._picker
 
     def set_picker_state(self, state: PickerState) -> None:
         self._picker = state
 
     def _drop_sources(self) -> None:
-        """Убрать выделенные источники и пересчитать по оставшимся."""
+        """Remove the selected sources and recalculate from the rest."""
         rows = {index.row() for index in self.source_table.selectionModel().selectedRows()}
         if not rows:
             return
@@ -591,10 +550,11 @@ class CalcTab(QWidget):
         return self._scan.paths if self._scan else []
 
     def _rescan(self, paths: Sequence[str]) -> None:
-        """Обойти выбранное и заполнить поля.
+        """Scan the selection and fill in the fields.
 
-        Обход синхронный: даже на сотнях тысяч файлов os.scandir укладывается в
-        секунды, а фоновый поток здесь стоил бы больше, чем экономил.
+        The scan is synchronous: even on hundreds of thousands of files
+        os.scandir finishes in seconds, and a background thread would cost
+        more here than it saved.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
@@ -611,31 +571,32 @@ class CalcTab(QWidget):
         self.recalculate()
 
     def _clear_sources(self) -> None:
-        """Убрали всё — обнулить и поля, а не только таблицу.
+        """Everything removed — reset the fields too, not only the table.
 
-        Иначе от снятого источника остаётся его размер и число файлов, и
-        расчёт продолжает считать по тому, чего в наборе больше нет:
-        подпись говорит «источник не выбран», а Container init стоит
-        прежний. Отличить это от ручного ввода нечем — там те же поля.
+        Otherwise a removed source leaves its size and file count behind,
+        and the calculation keeps counting what is no longer in the set: the
+        label says "no source selected", while Container init stays as it
+        was. There is no way to tell this from manual input — it uses the
+        same fields.
         """
         self._scan = None
         self.size_edit.clear()
-        # Единица, а не ноль: меньше одного файла набора не бывает, и
-        # нижняя граница поля это уже говорит.
+        # One, not zero: a data set has no fewer than one file, and the
+        # field's lower bound already says so.
         self.count_spin.blockSignals(True)
         self.count_spin.setValue(self.count_spin.minimum())
         self.count_spin.blockSignals(False)
         self.recalculate()
 
-    # --- перетаскивание ----------------------------------------------------
+    # --- drag and drop -----------------------------------------------------
 
     @staticmethod
     def _dropped_paths(mime: QMimeData) -> list[str]:
-        """Пути из брошенного. Всё, за чем нет файла на диске, отбрасываем.
+        """Dropped paths. Anything without a file on disk is thrown away.
 
-        Бросают не только из Проводника: ссылка из браузера и вложение из
-        почты приходят тем же mime-типом, но пути за ними нет, а источником
-        бывает только путь.
+        Drops come not only from Explorer: a link from a browser and an
+        attachment from mail arrive with the same mime type, but there is no
+        path behind them, and only a path can be a source.
         """
         if not mime.hasUrls():
             return []
@@ -643,21 +604,22 @@ class CalcTab(QWidget):
         return [path for path in paths if path and os.path.exists(path)]
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Принять перетаскивание, если за ним стоят пути на диске."""
+        """Accept the drag if there are paths on disk behind it."""
         if self._dropped_paths(event.mimeData()):
             event.acceptProposedAction()
 
-    #: Согласие подтверждается и на каждом движении курсора: базовая
-    #: реализация dragMoveEvent не делает ничего, и без неё курсор над
-    #: вкладкой показывал бы запрет.
+    #: Acceptance is confirmed on every cursor move too: the base
+    #: dragMoveEvent implementation does nothing, and without this the cursor
+    #: over the tab would show a "forbidden" sign.
     dragMoveEvent = dragEnterEvent
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """Брошенное дополняет набор, а не заменяет его.
+        """What is dropped adds to the set, it does not replace it.
 
-        Замена — это кнопка «Выбрать…», и она показывает диалог. Бросок не
-        спрашивает ничего, а молча потерять набранное нельзя: лишний
-        источник убирается одной кнопкой, потерянный набирается заново.
+        Replacing is the Select… button, and it shows a dialog. A drop asks
+        nothing, and silently losing what was gathered is not allowed: an
+        extra source is removed with one button, a lost one has to be
+        gathered again.
         """
         paths = self._dropped_paths(event.mimeData())
         if not paths:
@@ -666,23 +628,27 @@ class CalcTab(QWidget):
         self._rescan(self._current_paths() + paths)
 
     def _on_manual_edit(self, *_args) -> None:
-        """Ручная правка отвязывает расчёт от просканированных путей."""
+        """A manual edit detaches the calculation from the scanned paths."""
         self._scan = None
         self.recalculate()
 
-    # --- разбивка по источникам -------------------------------------------
+    # --- per-source split -------------------------------------------------
 
     def _refresh_drop_button(self) -> None:
         selected = bool(self.source_table.selectionModel().selectedRows())
         self.drop_button.setEnabled(selected)
 
     def _refresh_sources(self) -> None:
-        """Таблица источников и сводка по ним. Прячется, когда выбирать нечего."""
+        """The source table and its summary.
+
+        Hidden when there is nothing to select.
+        """
         sources = self._scan.sources if self._scan else []
         self.source_box.setVisible(bool(sources))
         self.drop_button.setVisible(bool(sources))
-        # Кнопки выделения прячутся вместе с таблицей: выделять в спрятанной
-        # нечего, а строка кнопок при ручном вводе была бы пустым шумом.
+        # The selection buttons hide together with the table: there is nothing
+        # to select in a hidden one, and a row of buttons during manual input
+        # would be empty noise.
         for button in self.select_buttons:
             button.setVisible(bool(sources))
 
@@ -691,7 +657,7 @@ class CalcTab(QWidget):
         for row, source in enumerate(sources):
             cells = (
                 source.name,
-                "папка" if source.is_dir else "файл",
+                tr("calc.kind.folder") if source.is_dir else tr("calc.kind.file"),
                 fmt_bytes(source.file_count),
                 fmt_bytes(source.dir_count) if source.is_dir else DASH,
                 fmt_table_cell(source.logical_bytes, self._unit),
@@ -699,7 +665,9 @@ class CalcTab(QWidget):
             )
             tooltip = source.path
             if source.errors:
-                tooltip += f"{LINE_BREAK}Не прочитано путей: {len(source.errors)}."
+                tooltip += LINE_BREAK + tr(
+                    "calc.src.unread", count=len(source.errors)
+                )
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if column:
@@ -715,39 +683,51 @@ class CalcTab(QWidget):
 
     def _refresh_source_label(self, cluster: int) -> None:
         if self._scan is None:
-            self.source_label.setText(NO_SOURCE_HINT)
+            self.source_label.setText(tr(NO_SOURCE_HINT))
             return
 
         stats = self._scan.stats(cluster)
         parts = [
-            f"Выбрано: {stats.sources} "
-            f"({stats.folders} папок, {stats.files} файлов).",
-            f"Внутри файлов: {fmt_bytes(stats.file_count)}, "
-            f"вложенных папок: {fmt_bytes(stats.dir_count)}.",
-            f"Логический размер {fmt_bytes(stats.logical_bytes)} B, "
-            f"по кластерам {fmt_bytes(stats.alloc_bytes)} B "
-            f"(хвост {fmt_bytes(stats.cluster_tail)} B).",
+            tr(
+                "calc.source.selected",
+                sources=stats.sources,
+                folders=stats.folders,
+                files=stats.files,
+            ),
+            tr(
+                "calc.source.inside",
+                files=fmt_bytes(stats.file_count),
+                folders=fmt_bytes(stats.dir_count),
+            ),
+            tr(
+                "calc.source.sizes",
+                logical=fmt_bytes(stats.logical_bytes),
+                alloc=fmt_bytes(stats.alloc_bytes),
+                tail=fmt_bytes(stats.cluster_tail),
+            ),
         ]
         if stats.file_count:
             parts.append(
-                f"Файл: самый большой {fmt_bytes(stats.largest_bytes)} B, "
-                f"самый малый {fmt_bytes(stats.smallest_bytes)} B, "
-                f"в среднем {fmt_bytes(stats.average_bytes)} B."
+                tr(
+                    "calc.source.file_sizes",
+                    largest=fmt_bytes(stats.largest_bytes),
+                    smallest=fmt_bytes(stats.smallest_bytes),
+                    average=fmt_bytes(stats.average_bytes),
+                )
             )
         if stats.empty_files:
             parts.append(
-                f"Пустых файлов: {fmt_bytes(stats.empty_files)} — места по "
-                f"кластерам не занимают, но запись MFT каждому нужна."
+                tr("calc.source.empty_files", count=fmt_bytes(stats.empty_files))
             )
         self.source_label.setText(" ".join(parts))
 
-    # --- отдача наружу -----------------------------------------------------
+    # --- handing out -------------------------------------------------------
 
     def current_payload(self) -> Payload | None:
-        """Что сейчас посчитано на вкладке — для переноса в запись.
+        """What the tab has calculated right now — for carrying into a record.
 
-        Отдаётся целиком, вместе с alloc_bytes: для папки из многих файлов
-        только он и описывает реальный занимаемый объём.
+        Handed out whole, together with alloc_bytes: for a folder of many
+        files only it describes the space actually taken.
         """
         payload = self._payload()
         if payload is None or payload.logical_bytes <= 0:
@@ -755,48 +735,51 @@ class CalcTab(QWidget):
         return payload
 
     def current_container_mib(self) -> int | None:
-        """Посчитанный Container init — чтобы не вбивать его в запись руками."""
+        """The calculated Container init.
+
+        So it need not be typed into a record by hand.
+        """
         value = parse_bytes(self.result_label.text())
         return value or None
 
     def current_safety_mib(self) -> int:
-        """Сколько страховки заложено в этот расчёт.
+        """How much safety margin is built into this calculation.
 
-        Уходит в запись вместе с обещанием: без неё промах не разложить на
-        погрешность моделей и намеренный запас, а разложить надо — занижение,
-        прикрытое страховкой, выглядит здоровым ровно до того дня, когда
-        страховки не хватит.
+        Goes into the record together with the prediction: without it the
+        miss cannot be split into model error and deliberate margin, and it
+        must be split — an underestimate covered by the safety margin looks
+        healthy right up to the day the safety margin is not enough.
         """
         return self.safety_spin.value()
 
     def current_sources(self) -> list[str]:
-        """Пути, с которых снят payload. Пусто — размер введён вручную.
+        """Paths the payload came from. Empty — the size was typed by hand.
 
-        Список, а не один путь: источников теперь бывает несколько, и
-        возвращать из них первый значило бы врать о втором.
+        A list, not a single path: there can now be several sources, and
+        returning the first of them would lie about the second.
         """
         return self._current_paths()
 
     def current_stats(self):
-        """Статистика по выбранному — None при ручном вводе."""
+        """Statistics on the selection — None with manual input."""
         return self._scan.stats(self._cluster()) if self._scan else None
 
     def current_solution(self) -> Solution | None:
-        """Показанное сейчас разложение — для графика-полосы."""
+        """The breakdown shown right now — for the bar chart."""
         return self._solution
 
-    def current_file_sizes(self) -> list[str]:
-        """Размеры выбранных файлов. Пусто — размер введён руками.
+    def current_file_sizes(self) -> list[int]:
+        """Sizes of the selected files. Empty — the size was typed by hand.
 
-        График кластерного хвоста единственный считается по настоящим файлам,
-        а не по модели, и без их размеров ему нечего показывать.
+        The cluster tail chart is the only one computed from the real files,
+        not from the model, and without their sizes it has nothing to show.
         """
         return list(self._scan.sizes) if self._scan else []
 
     def current_cluster(self) -> int:
         return self._cluster()
 
-    # --- расчёт ------------------------------------------------------------
+    # --- calculation -------------------------------------------------------
 
     def _cluster(self) -> int:
         value = parse_bytes(self.cluster_combo.currentText())
@@ -820,22 +803,17 @@ class CalcTab(QWidget):
         )
 
     def _advise_safety(self, payload: Payload, ntfs, slack) -> None:
-        """Подобрать страховку под этот расчёт и выставить её в поле.
+        """Fit the safety margin to this calculation and put it in the field.
 
-        Совет зависит от размера тома, а том — от страховки, поэтому сначала
-        решаем с тем, что стоит сейчас, а потом уточняем. Второй проход не
-        нужен: страховка меняет том на единицы мегабайт, а совет считается по
-        отрезку между замерами шириной в гигабайты.
+        `fit_safety` starts from a fixed seed, not from the field: the field
+        holds the previous calculation's answer, and seeding with it gave one
+        input two answers in turn.
         """
         if self._safety is None or not self.auto_safety.isChecked():
             return
-        probe = solve_container_mib(
-            payload, ntfs=ntfs, slack=slack,
-            safety_bytes=self.safety_spin.value() * MIB,
-        )
-        self._advice = self._safety().advise(probe.volume_bytes, payload.file_count)
-        # Напрямую, без set_safety_mib: тот перезапускает recalculate, а нас
-        # уже вызвали изнутри него.
+        self._advice = fit_safety(payload, ntfs, slack, self._safety())
+        # Directly, without set_safety_mib: that one restarts recalculate, and
+        # we have already been called from inside it.
         if self.safety_spin.value() != self._advice.total_mib:
             self.safety_spin.blockSignals(True)
             self.safety_spin.setValue(self._advice.total_mib)
@@ -871,40 +849,48 @@ class CalcTab(QWidget):
         self.calculationChanged.emit()
 
     def _refresh_safety_note(self) -> None:
-        """Объяснить, откуда взялось число, а не просто показать его."""
+        """Explain where the number came from, not just show it."""
         if not self.auto_safety.isChecked():
-            self.safety_note.setText("Задан вручную.")
+            self.safety_note.setText(tr("calc.safety.manual"))
             return
         if self._safety is None or self._advice is None:
-            self.safety_note.setText("Подбирается по записям — расчёт пока пуст.")
+            self.safety_note.setText(tr("calc.safety.empty"))
             return
 
         advice = self._advice
         parts = [
-            f"NTFS {fmt_both(advice.ntfs_bytes)} — {advice.ntfs_reason};",
-            f"копирование {fmt_both(advice.slack_bytes)} — {advice.slack_reason}.",
+            tr(
+                "calc.safety.metadata",
+                size=fmt_both(advice.metadata_bytes),
+                reason=advice.ntfs_reason,
+            ),
+            tr(
+                "calc.safety.slack",
+                size=fmt_both(advice.slack_bytes),
+                reason=advice.slack_reason,
+            ),
         ]
         if advice.basis:
-            parts.append("Записи рядом: " + ", ".join(advice.basis) + ".")
+            parts.append(tr("calc.safety.basis", names=", ".join(advice.basis)))
         self.safety_note.setText(" ".join(parts))
 
     def _fill_breakdown(self, solution) -> None:
         rows = [
-            ("Полезные данные (по кластерам)", solution.payload_alloc),
-            ("    в том числе кластерный хвост", solution.cluster_tail),
-            ("Заголовок VeraCrypt", solution.vc_header),
-            ("Метаданные NTFS", solution.ntfs_bytes),
-            ("Запас на копирование", solution.copy_slack),
-            ("Страховочный запас", solution.safety_bytes),
-            ("Итого контейнер", solution.container_bytes),
-            ("Ожидаемый остаток (Left space)", solution.predicted_left_bytes),
+            ("calc.row.payload", solution.payload_alloc),
+            ("calc.row.cluster_tail", solution.cluster_tail),
+            ("calc.row.vc_header", solution.vc_header),
+            ("calc.row.metadata", solution.metadata_bytes),
+            ("calc.row.copy_slack", solution.copy_slack),
+            ("calc.row.safety", solution.safety_bytes),
+            ("calc.row.total", solution.container_bytes),
+            ("calc.row.left", solution.predicted_left_bytes),
         ]
 
         self.table.setRowCount(len(rows))
-        for row, (name, value) in enumerate(rows):
-            tooltip = BREAKDOWN_ROW_TIPS.get(name, "")
-            title = QTableWidgetItem(name)
-            if name.startswith("Итого"):
+        for row, (key, value) in enumerate(rows):
+            tooltip = tr(BREAKDOWN_ROW_TIPS[key])
+            title = QTableWidgetItem(tr(key))
+            if key == "calc.row.total":
                 font = QFont(title.font())
                 font.setBold(True)
                 title.setFont(font)
@@ -926,40 +912,33 @@ class CalcTab(QWidget):
         notes: list[str] = []
 
         if solution.ntfs_extrapolated:
-            notes.append(
-                "Размер вне диапазона замеров, метаданные NTFS посчитаны "
-                "экстраполяцией. Снимите замер рядом с этим размером — хватит "
-                "пустого контейнера."
-            )
+            notes.append(tr("calc.note.extrapolated"))
         if solution.slack_unverified:
             notes.append(
-                f"Запас на копирование для {payload.file_count} файлов "
-                f"({fmt_both(solution.copy_slack)}) взят по умолчанию: "
-                f"записей с несколькими файлами пока нет."
+                tr_n(
+                    "calc.note.slack_default",
+                    payload.file_count,
+                    size=fmt_both(solution.copy_slack),
+                )
             )
         if self._scan is None and payload.file_count > 1:
-            notes.append(
-                "Размер введён вручную для нескольких файлов. Округление "
-                "до кластера посчитано один раз на всю сумму, а не на каждый "
-                "файл, поэтому на деле выйдет больше. Выберите папку — "
-                "посчитаем точно."
-            )
+            notes.append(tr("calc.note.manual_many"))
         errors = self._scan.errors if self._scan else []
         if errors:
             shown = "<br>".join(errors[:5])
             more = (
-                f"<br>…и ещё {len(errors) - 5}"
+                tr("calc.note.unread.more", count=len(errors) - 5)
                 if len(errors) > 5
                 else ""
             )
-            notes.append(f"Часть данных не прочитана, расчёт занижен:<br>{shown}{more}")
+            notes.append(tr("calc.note.unread", shown=shown, more=more))
 
         self.notes_label.setText(
             "<br><br>".join(f"⚠ {note}" for note in notes) if notes else ""
         )
 
     def _copy_result(self) -> None:
-        """В буфер уходит голое число MiB — его вводят в VeraCrypt как есть."""
+        """Clipboard gets the bare MiB number — typed into VeraCrypt as is."""
         value = parse_bytes(self.result_label.text())
         if value is not None:
             QGuiApplication.clipboard().setText(str(value))

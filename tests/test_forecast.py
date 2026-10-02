@@ -1,7 +1,7 @@
-"""Проверка прогноза постфактум: что расчёт обещал и что вышло.
+"""Checking the prediction after the fact: what was promised, what came out.
 
-Величина, ради которой программа и существует. Проверяется без Qt: минимум
-выводится из замеров записи, а обещание в ней хранится.
+The value the program exists for. Checked without Qt: the minimum is derived
+from the record's measurements, and the prediction is stored in the record.
 """
 
 import tempfile
@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from containerhelper.factory import FactorySample, factory_data
-from containerhelper.model import MIB, VC_HEADER_BYTES
+from containerhelper.model import MIB, VC_HEADERS_BYTES
 from containerhelper.records import (
     Record,
     Store,
@@ -21,15 +21,16 @@ from containerhelper.records import (
 )
 
 from tests import reference
+from tests.reference import HEADERS_AND_TAIL
 
 
 def copied(**changes) -> Record:
-    """Запись о копировании: том, данные и остаток — всё, что нужно сверке."""
+    """A copy record: volume, data and left space — all the check needs."""
     base = Record(
         id="Проба",
         container_mib=1024,
-        mounted_bytes=1024 * MIB - VC_HEADER_BYTES,
-        empty_free_bytes=1024 * MIB - VC_HEADER_BYTES - 18 * MIB,
+        mounted_bytes=1024 * MIB - HEADERS_AND_TAIL,
+        empty_free_bytes=1024 * MIB - HEADERS_AND_TAIL - 18 * MIB,
         file_bytes=900 * MIB,
         file_count=10,
         file_alloc_bytes=900 * MIB,
@@ -39,14 +40,14 @@ def copied(**changes) -> Record:
 
 
 class MinimumTests(unittest.TestCase):
-    """Наименьший контейнер, в который данные всё-таки влезли бы."""
+    """The smallest container the data would still have fitted into."""
 
     def test_it_matches_the_minimum_worked_out_by_hand(self):
-        """Числа из tests/reference.py посчитаны до появления этого свойства.
+        """The numbers in tests/reference.py predate this property.
 
-        Они же названы в SPEC как «истинный минимум» по измеренному Left
-        space, и совпадение с ними — единственная привязка новой величины к
-        настоящим контейнерам.
+        SPEC also names them the "true minimum" from the measured Left space,
+        and matching them is the only tie between the new value and real
+        containers.
         """
         for record in reference.ALL:
             expected = reference.TRUE_MINIMUM_MIB.get(record.id)
@@ -57,9 +58,9 @@ class MinimumTests(unittest.TestCase):
 
     def test_it_is_the_occupied_space_plus_the_header(self):
         record = copied()
-        occupied = record.mounted_bytes - record.left_bytes
+        occupied = record.volume_bytes - record.left_bytes
         self.assertEqual(
-            record.minimum_mib, -(-(occupied + VC_HEADER_BYTES) // MIB)
+            record.minimum_mib, -(-(occupied + VC_HEADERS_BYTES) // MIB)
         )
 
     def test_without_a_leftover_there_is_nothing_to_derive_it_from(self):
@@ -69,21 +70,20 @@ class MinimumTests(unittest.TestCase):
         point = Record(
             id="Калибровка",
             container_mib=1024,
-            mounted_bytes=1024 * MIB - VC_HEADER_BYTES,
+            mounted_bytes=1024 * MIB - HEADERS_AND_TAIL,
             empty_free_bytes=1000 * MIB,
         )
         self.assertIsNone(point.minimum_mib)
 
     def test_the_estimate_errs_towards_alarm(self):
-        """Контейнер поменьше дал бы и метаданных поменьше.
+        """A smaller container would also have had less metadata.
 
-        Значит настоящий минимум чуть ниже, а промах — чуть больше
-        показанного. Метрика ошибается в сторону тревоги, и это правильная
-        сторона.
+        So the real minimum is a little lower, and the miss a little larger
+        than shown. The metric errs towards alarm, and that is the right side.
         """
         record = copied()
-        occupied = record.mounted_bytes - record.left_bytes
-        self.assertGreaterEqual(record.minimum_mib * MIB, occupied)
+        occupied = record.volume_bytes - record.left_bytes
+        self.assertGreaterEqual(record.minimum_mib * MIB, occupied + VC_HEADERS_BYTES)
 
 
 class MissTests(unittest.TestCase):
@@ -93,7 +93,7 @@ class MissTests(unittest.TestCase):
         self.assertEqual(record.miss_mib, 1024 - record.minimum_mib)
 
     def test_a_promise_below_the_minimum_is_the_dangerous_case(self):
-        """Минус означает, что данные не влезли бы, — ради него всё и делается."""
+        """Negative: the data would not have fitted — what all this is for."""
         record = copied(predicted_mib=10, predicted_safety_mib=0)
         self.assertLess(record.miss_mib, 0)
 
@@ -102,7 +102,7 @@ class MissTests(unittest.TestCase):
         self.assertEqual(record.model_miss_mib, record.miss_mib - 4)
 
     def test_a_near_miss_hidden_by_safety_shows_up_in_the_model_miss(self):
-        """Ровно то, ради чего страховка хранится отдельным полем."""
+        """Exactly why the safety margin is stored as a separate field."""
         record = copied()
         record = replace(
             record,
@@ -135,7 +135,7 @@ class ForecastSummaryTests(unittest.TestCase):
         self.assertFalse(report.any_short)
 
     def test_the_worst_case_is_the_smallest_miss(self):
-        """Худшее — самое малое: минус опаснее плюса."""
+        """Worst means smallest: negative is more dangerous than positive."""
         report = forecast(
             [
                 copied(predicted_mib=1024, predicted_safety_mib=4),
@@ -162,7 +162,7 @@ class ForecastSummaryTests(unittest.TestCase):
 
 
 class StorageTests(unittest.TestCase):
-    """Обещание хранится, потому что задним числом не вычислимо."""
+    """The prediction is stored: it cannot be computed after the fact."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -180,7 +180,7 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(loaded.miss_mib, record.miss_mib)
 
     def test_an_absent_promise_is_not_written(self):
-        """Вычислимое не хранится, а незаполненное — тем более."""
+        """Computable values are not stored, and unfilled ones even less so."""
         stored = copied().to_json()
         self.assertNotIn("predicted_mib", stored)
         self.assertNotIn("predicted_safety_mib", stored)
@@ -193,12 +193,12 @@ class StorageTests(unittest.TestCase):
 
 
 class SlackStorageTests(unittest.TestCase):
-    """Оба рода машинных замеров живут в одном файле и не мешают друг другу."""
+    """Both kinds of machine measurements share one file and do not clash."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.path = Path(self._dir.name) / "records.json"
-        self.volume = 1024 * MIB - VC_HEADER_BYTES
+        self.volume = 1024 * MIB - HEADERS_AND_TAIL
         self.point = Record(
             id="Калибровка 1 GiB",
             container_mib=1024,
@@ -227,7 +227,7 @@ class SlackStorageTests(unittest.TestCase):
         self.assertEqual(store.slack_measurements(), [self.sample])
 
     def test_a_new_point_replaces_only_a_point(self):
-        """Общий ключ по mounted_bytes выбивал бы замер запаса заодно."""
+        """One mounted_bytes key would knock out the slack measurement too."""
         store = self.store(self.point, replace(self.sample, mounted_bytes=self.volume))
         store.put_calibration(replace(self.point, id="Пересняли"))
         self.assertEqual(len(store.calibration_points()), 1)
@@ -247,11 +247,11 @@ class SlackStorageTests(unittest.TestCase):
         self.assertEqual(len(store.slack_measurements()), 2)
 
     def test_two_sets_with_the_same_file_count_both_survive(self):
-        """Ровно на их сверке держится «запас от размера файлов не зависит».
+        """Comparing them is what backs "slack does not depend on file size".
 
-        На первом настоящем прогоне ключ по числу файлов молча съел замер
-        набора «Один файл 64 MiB» замером «Один файл 4 GiB» — вместе с его
-        точкой NTFS.
+        On the first real run a key by file count silently let the measurement
+        of the "One file 4 GiB" set eat that of the "One file 64 MiB" set —
+        together with its NTFS point.
         """
         store = self.store(replace(self.sample, fileset="one", file_count=1))
         store.put_calibration(
@@ -263,17 +263,17 @@ class SlackStorageTests(unittest.TestCase):
         )
 
     def test_hand_made_samples_still_go_by_file_count(self):
-        """Два ручных замера на одном n — это два замера одного и того же."""
+        """Two hand-made measurements at one n measure the same thing twice."""
         hand = replace(self.sample, fileset="")
         store = self.store(hand)
         store.put_calibration(replace(hand, id="Пересняли"))
         self.assertEqual(len(store.slack_measurements()), 1)
 
     def test_a_slack_measurement_feeds_both_models(self):
-        """Пустой том меряется до записи файлов — точка NTFS достаётся даром."""
+        """The empty volume is measured before the files: a free NTFS point."""
         store = self.store(self.sample)
         ntfs, slack = store.models()
-        self.assertIn(self.sample.mounted_bytes, dict(ntfs.points))
+        self.assertIn(self.sample.volume_bytes, dict(ntfs.points))
         self.assertIn(
             (self.sample.file_count, self.sample.copy_slack_measured),
             slack_samples(store.all_for_model()),
@@ -288,10 +288,10 @@ class SlackStorageTests(unittest.TestCase):
 
 
 class FactorySlackTests(unittest.TestCase):
-    """Заводские замеры запаса — по образцу заводских точек."""
+    """Factory copy-slack measurements, modelled on the factory points."""
 
     def sample(self, count=500) -> FactorySample:
-        volume = 1024 * MIB - VC_HEADER_BYTES
+        volume = 1024 * MIB - HEADERS_AND_TAIL
         return FactorySample(
             fileset="small-500",
             title="500 файлов по 1 KiB",
@@ -306,12 +306,12 @@ class FactorySlackTests(unittest.TestCase):
         )
 
     def test_the_shipped_samples_cover_several_file_counts(self):
-        """Ради этого они и снимались: по одному n наклон не считается вовсе."""
+        """That is why they were taken: with one n there is no slope at all."""
         counts = {sample.file_count for sample in factory_data().samples}
         self.assertGreaterEqual(len(counts), 4)
 
     def test_the_shipped_samples_are_plausible(self):
-        """Битые числа приехали бы в модель под видом измерений."""
+        """Broken numbers would reach the model disguised as measurements."""
         for sample in factory_data().samples:
             with self.subTest(sample.fileset):
                 self.assertGreater(sample.copy_slack_bytes, 0)
@@ -320,7 +320,7 @@ class FactorySlackTests(unittest.TestCase):
                 self.assertFalse(factory_slack_record(sample).is_calibration_point)
 
     def test_two_shipped_sets_share_a_file_count_but_not_a_size(self):
-        """Сверка «запас зависит от числа файлов, а не от их размера»."""
+        """Checks "slack depends on the file count, not on the file size"."""
         singles = [s for s in factory_data().samples if s.file_count == 1]
         self.assertEqual(len(singles), 2)
         self.assertEqual(len({s.file_bytes for s in singles}), 2)

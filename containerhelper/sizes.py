@@ -1,4 +1,4 @@
-"""Измерение исходных данных и смонтированных томов."""
+"""Measuring the source data and mounted volumes."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .i18n import tr
 from .model import DEFAULT_CLUSTER_BYTES, Payload
 
 IS_WINDOWS = sys.platform == "win32"
@@ -17,19 +18,20 @@ IS_WINDOWS = sys.platform == "win32"
 
 @dataclass
 class SourceStat:
-    """Один выбранный источник: файл или папка целиком.
+    """One selected source: a file or a whole folder.
 
-    Размеры файлов держатся списком, а не суммой: смена размера кластера
-    пересчитывает объём по кластерам, и обходить дерево заново ради этого не
-    нужно. По той же причине источники не сливаются в одну кучу — в таблице
-    видно, сколько принёс каждый.
+    File sizes are kept as a list, not a sum: a change of cluster size
+    recalculates the cluster-rounded size, and there is no need to walk the
+    tree again for that. For the same reason the sources are not merged into
+    one heap — the table shows how much each one brought.
     """
 
     path: str
     is_dir: bool
     sizes: list[int] = field(default_factory=list)
-    #: Вложенные каталоги. Места они почти не занимают, но объясняют, откуда
-    #: берётся разница между числом файлов и числом выбранных элементов.
+    #: Nested folders. They take almost no space, but they explain where the
+    #: difference between the file count and the number of selected items
+    #: comes from.
     dir_count: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -46,16 +48,16 @@ class SourceStat:
 
     @property
     def name(self) -> str:
-        """Короткое имя для таблицы. Полный путь уходит в подсказку."""
+        """Short name for the table. The full path goes into the tooltip."""
         return os.path.basename(self.path.rstrip("\\/")) or self.path
 
 
 @dataclass
 class SourceStats:
-    """Сводка по всему выбранному — то, из чего складывается расчёт.
+    """Summary of everything selected — what the calculation is made of.
 
-    Считается здесь, а не в интерфейсе: сумма по нескольким источникам это
-    арифметика, а не отображение, и проверять её надо без Qt.
+    Computed here, not in the interface: a sum over several sources is
+    arithmetic, not display, and it has to be tested without Qt.
     """
 
     sources: int
@@ -73,7 +75,7 @@ class SourceStats:
 
     @property
     def cluster_tail(self) -> int:
-        """Что доплачивается за округление каждого файла до кластера."""
+        """What is paid extra for rounding each file up to a cluster."""
         return self.alloc_bytes - self.logical_bytes
 
 
@@ -81,11 +83,11 @@ class SourceStats:
 class ScanResult:
     payload: Payload
     errors: list[str]
-    #: Размеры отдельных файлов. Нужны, чтобы пересчитать payload при смене
-    #: размера кластера, не обходя дерево заново.
+    #: Sizes of the individual files. Needed to recalculate the payload when
+    #: the cluster size changes, without walking the tree again.
     sizes: list[int] = field(default_factory=list)
-    #: Разбивка по выбранным элементам. Один элемент — обычный случай, но
-    #: выбрать можно и несколько файлов вперемешку с папками.
+    #: Split by selected items. One item is the usual case, but several files
+    #: mixed with folders can be selected too.
     sources: list[SourceStat] = field(default_factory=list)
 
     @property
@@ -125,8 +127,8 @@ class ScanResult:
             alloc_bytes=self.with_cluster(cluster_bytes).alloc_bytes,
             largest_bytes=max(sizes) if sizes else 0,
             smallest_bytes=min(sizes) if sizes else 0,
-            # Целочисленно, как и всё остальное: дробный «средний байт» смысла
-            # не имеет, а округлять вниз честнее.
+            # Integer, like everything else: a fractional "average byte" makes
+            # no sense, and rounding down is more honest.
             average_bytes=logical // count if count else 0,
             empty_files=sum(1 for size in sizes if size == 0),
             unreadable=len(self.errors),
@@ -137,13 +139,14 @@ def scan_paths(
     paths: Iterable[str | os.PathLike[str]],
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> ScanResult:
-    """Обойти несколько выбранных файлов и папок разом.
+    """Walk several selected files and folders at once.
 
-    Вложенные пути отбрасываются: выбранная папка и лежащий в ней файл дали бы
-    этот файл дважды, а от двойного счёта расчёт завышается молча.
+    Nested paths are dropped: a selected folder and a file inside it would
+    give that file twice, and double counting silently inflates the
+    calculation.
 
-    Недоступные элементы не прерывают обход: они собираются в errors, а расчёт
-    остаётся возможным по тому, что удалось прочитать.
+    Inaccessible items do not interrupt the walk: they are collected in
+    errors, and the calculation stays possible from what could be read.
     """
     sources = [_scan_one(Path(path)) for path in unique_roots(paths)]
     sizes: list[int] = []
@@ -158,15 +161,15 @@ def scan_path(
     path: str | os.PathLike[str],
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> ScanResult:
-    """Посчитать кластерный размер и число файлов для файла или папки."""
+    """Count cluster-rounded size and file count for a file or folder."""
     return scan_paths([path], cluster_bytes)
 
 
 def unique_roots(paths: Iterable[str | os.PathLike[str]]) -> list[str]:
-    """Убрать повторы и пути, лежащие внутри других выбранных папок.
+    """Remove repeats and paths lying inside other selected folders.
 
-    Порядок выбора сохраняется: в таблице источники стоят так, как их назвал
-    пользователь, а не так, как их удобнее было сравнивать между собой.
+    The selection order is kept: in the table the sources stand the way the
+    user named them, not the way it was more convenient to compare them.
     """
     ordered: list[str] = []
     for raw in paths:
@@ -176,8 +179,8 @@ def unique_roots(paths: Iterable[str | os.PathLike[str]]) -> list[str]:
 
     parents: list[str] = []
     accepted: set[str] = set()
-    # Родитель всегда короче вложенного и потому встаёт раньше него: строковый
-    # порядок здесь и есть порядок вложенности.
+    # A parent is always shorter than a nested path and so sorts before it:
+    # string order here is exactly nesting order.
     for text in sorted(ordered, key=os.path.normcase):
         key = os.path.normcase(text).rstrip("\\/")
         if any(key.startswith(parent) for parent in parents):
@@ -189,15 +192,16 @@ def unique_roots(paths: Iterable[str | os.PathLike[str]]) -> list[str]:
 
 def _scan_one(target: Path) -> SourceStat:
     if not target.exists():
-        return SourceStat(str(target), False, [], 0, [f"Путь не найден: {target}"])
+        return SourceStat(
+            str(target), False, [], 0, [tr("sizes.path.missing", path=target)]
+        )
 
     if target.is_file():
         try:
             size = target.stat().st_size
         except OSError as exc:
-            return SourceStat(
-                str(target), False, [], 0, [f"Нет доступа к {target}: {exc}"]
-            )
+            error = tr("sizes.path.denied", path=target, error=exc)
+            return SourceStat(str(target), False, [], 0, [error])
         return SourceStat(str(target), False, [size])
 
     sizes: list[int] = []
@@ -207,11 +211,11 @@ def _scan_one(target: Path) -> SourceStat:
 
 
 def _walk(directory: Path, sizes: list[int], errors: list[str]) -> int:
-    """Собрать размеры файлов; вернуть число пройденных вложенных каталогов."""
+    """Collect file sizes; return the number of nested folders walked."""
     try:
         entries = list(os.scandir(directory))
     except OSError as exc:
-        errors.append(f"Нет доступа к {directory}: {exc}")
+        errors.append(tr("sizes.path.denied", path=directory, error=exc))
         return 0
 
     dirs = 0
@@ -224,19 +228,19 @@ def _walk(directory: Path, sizes: list[int], errors: list[str]) -> int:
             elif entry.is_file():
                 sizes.append(entry.stat().st_size)
         except OSError as exc:
-            errors.append(f"Нет доступа к {entry.path}: {exc}")
+            errors.append(tr("sizes.path.denied", path=entry.path, error=exc))
     return dirs
 
 
 def volume_usage(drive: str) -> tuple[int, int]:
-    """Ёмкость и свободное место тома в байтах."""
+    """Volume capacity and free space in bytes."""
     root = _root_path(drive)
     usage = shutil.disk_usage(root)
     return usage.total, usage.free
 
 
 def cluster_size(drive: str) -> int | None:
-    """Размер кластера тома. None, если определить не удалось."""
+    """Cluster size of the volume. None if it could not be determined."""
     if not IS_WINDOWS:
         return None
 
@@ -261,7 +265,7 @@ def cluster_size(drive: str) -> int | None:
 
 
 def mounted_drives() -> list[str]:
-    """Буквы смонтированных томов, например ['C:', 'E:']."""
+    """Letters of the mounted volumes, for example ['C:', 'E:']."""
     if not IS_WINDOWS:
         return []
 
@@ -276,7 +280,7 @@ def mounted_drives() -> list[str]:
 
 
 def _root_path(drive: str) -> str:
-    """Привести 'E', 'E:' или 'E:\\' к корневому пути тома."""
+    """Turn 'E', 'E:' or 'E:\\' into the root path of the volume."""
     cleaned = drive.strip().rstrip("\\/")
     if not cleaned.endswith(":"):
         cleaned = f"{cleaned[:1]}:"
@@ -284,24 +288,24 @@ def _root_path(drive: str) -> str:
 
 
 def volume_root(drive: str) -> Path:
-    """Корень тома как путь — туда пишется набор при замере запаса.
+    """Volume root as a path — the copy-slack file set is written there.
 
-    Отдельной функцией, потому что это единственное место, где приложение
-    пишет на том, а не читает его: в тестах она подменяется временной папкой,
-    и генерация набора проверяется без VeraCrypt.
+    A separate function, because this is the only place where the application
+    writes to the volume rather than reading it: in tests it is replaced with
+    a temporary folder, and file set generation is tested without VeraCrypt.
     """
     return Path(_root_path(drive))
 
 
-#: Каталоги, которые NTFS заводит на томе сама. Место они занимают настоящее и
-#: попадают в «занято», но полезными данными не являются, поэтому в сверке
-#: показываются отдельной строкой, а не считаются расхождением.
+#: Folders that NTFS creates on the volume by itself. The space they take is
+#: real and lands in "used", but they are not payload, so in the reconciliation
+#: they are shown as a separate row rather than counted as a discrepancy.
 SERVICE_DIRS = ("System Volume Information", "$RECYCLE.BIN", "found.000")
 
 
 @dataclass
 class VolumeScan:
-    """Что лежит на смонтированном томе — для сверки с тем, что копировали."""
+    """What is on the mounted volume — to reconcile with what was copied."""
 
     payload: Payload
     service_dirs: list[str]
@@ -316,10 +320,10 @@ def scan_volume(
     drive: str,
     cluster_bytes: int = DEFAULT_CLUSTER_BYTES,
 ) -> VolumeScan:
-    """Обойти корень тома, отделив служебные каталоги NTFS от полезных данных.
+    """Walk the volume root, separating the NTFS service folders from payload.
 
-    Служебные каталоги обычно ещё и недоступны на чтение, поэтому их
-    пропускают до обхода: иначе они наполнили бы errors шумом.
+    Service folders are usually unreadable as well, so they are skipped
+    before the walk: otherwise they would fill errors with noise.
     """
     root = Path(_root_path(drive))
     sizes: list[int] = []
@@ -330,7 +334,9 @@ def scan_volume(
         entries = list(os.scandir(root))
     except OSError as exc:
         return VolumeScan(
-            Payload.for_files((), cluster_bytes), [], [f"Нет доступа к {root}: {exc}"]
+            Payload.for_files((), cluster_bytes),
+            [],
+            [tr("sizes.path.denied", path=root, error=exc)],
         )
 
     for entry in entries:
@@ -345,19 +351,19 @@ def scan_volume(
             elif entry.is_file():
                 sizes.append(entry.stat().st_size)
         except OSError as exc:
-            errors.append(f"Нет доступа к {entry.path}: {exc}")
+            errors.append(tr("sizes.path.denied", path=entry.path, error=exc))
 
     return VolumeScan(Payload.for_files(sizes, cluster_bytes), service, errors)
 
 
-#: Единственная файловая система, под которую сняты калибровочные записи.
-#: У exFAT и FAT32 накладные расходы устроены иначе, и модель метаданных на
-#: них не просто неточна — она про другое.
+#: The only filesystem the calibration records were taken for. exFAT and
+#: FAT32 have their overhead arranged differently, and the metadata model on
+#: them is not just inaccurate — it is about something else.
 SUPPORTED_FS = "NTFS"
 
 
 def volume_filesystem(drive: str) -> str:
-    """Имя файловой системы тома: 'NTFS', 'exFAT', 'FAT32'. Пусто — не удалось."""
+    """Volume filesystem name: 'NTFS', 'exFAT', 'FAT32'. Empty — it failed."""
     if not IS_WINDOWS:
         return ""
 

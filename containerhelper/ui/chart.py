@@ -1,18 +1,19 @@
-"""Виджет графика на QPainter. Вся арифметика — в `plot.py`, здесь только холст.
+"""QPainter chart widget: the canvas only. All arithmetic is in `plot.py`.
 
-Своё рисование, а не библиотека, выбрано ради трёх вещей, которых у готовых
-нет: подписи следуют выбранной в окне единице (B/KiB/MiB/GiB), цвета берутся из
-палитры окна, то есть тема получается та же, что у всей программы, а сама
-арифметика графика лежит слоем ниже и проверяется без Qt — как и всё остальное,
-что считает числа.
+Own drawing, not a library, was chosen for three things ready-made ones lack:
+labels follow the unit chosen in the window (B/KiB/MiB/GiB), colours come from
+the window palette, so the theme is the same as in the rest of the program,
+and the chart arithmetic itself lives one layer below and is tested without
+Qt — like everything else that computes numbers.
 
-Один и тот же `_render` рисует и на экран, и в файл: иначе сохранённая картинка
-однажды разошлась бы с показанной, и заметить это было бы нечем.
+One and the same `_render` draws both to the screen and to a file: otherwise
+the saved image would one day drift from the one shown, and there would be
+nothing to notice it by.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFontMetricsF,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DEFAULT_UNIT, Unit
+from ..i18n import tr
 from ..plot import (
     KIND_BARS,
     KIND_LINE,
@@ -53,88 +55,93 @@ from ..plot import (
     value_label,
 )
 
-#: Тона серий. Палитра окна тут не годится: различимых цветов в ней нет — там
-#: фон, текст и выделение, а серий бывает до шести. Поэтому берутся оттенки, а
-#: насыщенность и яркость подбираются под тему, чтобы линии не светились на
-#: тёмном фоне и не выцветали на светлом.
+#: Series tones. The window palette won't do here: it has no distinguishable
+#: colours — it holds the background, the text and the highlight, and there
+#: can be up to six series. So hues are taken, and saturation and brightness
+#: are matched to the theme, so that lines don't glow on a dark background and
+#: don't fade on a light one.
 TONE_HUES = (210, 25, 145, 275, 45, 320)
 
-#: Поля вокруг поля графика сверх места под подписи.
+#: Margins around the plot area on top of the room for labels.
 PADDING = 10
 DOT_RADIUS = 3.5
 LEGEND_BOX = 11
 LEGEND_GAP = 16
 
-#: Насколько зумит одна ступенька колеса.
+#: How much one wheel notch zooms.
 WHEEL_STEP = 0.82
 
-#: Меньше этого рамка считается промахом, а не выделением: иначе любой щелчок
-#: по точке заодно зумил бы в неё до предела.
+#: Below this the rubber band counts as a slip, not a selection: otherwise any
+#: click on a point would also zoom into it all the way.
 DRAG_THRESHOLD = 8
 
-#: Подписи кнопки отсоединения. Словами, а не значком: значок пришлось бы
-#: объяснять подсказкой, а подсказку — навести. Коротко, потому что кнопки
-#: стоят в одной строке с заголовком и отнимают у него ширину: «Отсоединить»
-#: съедало у графика в сетке треть заголовка. Полная фраза — в подсказке и в
-#: меню, где места сколько угодно.
-DETACH_TEXT = "В окно"
-RETURN_TEXT = "Вернуть"
+#: Labels of the detach button. Words, not an icon: an icon would need a
+#: tooltip to explain it, and the tooltip would need hovering over. Short,
+#: because the buttons sit on one line with the title and take width from it:
+#: «Отсоединить» ate a third of the title of a chart in the grid. The full
+#: phrase is in the tooltip and in the menu, where there is room to spare.
+#: Catalog keys, translated where shown.
+DETACH_TEXT = "chart.detach"
+RETURN_TEXT = "chart.return"
 
-#: Кнопки перестановки — стрелками: слов «раньше» и «позже» в углу не
-#: разместить, а стрелка на месте, куда график и правда уедет, объясняет себя
-#: сама. В столбце их две, в сетке четыре: там «выше» и «левее» — разные
-#: движения, и одной парой стрелок их не выразить.
+#: Reorder buttons are arrows: the words "earlier" and "later" don't fit in the
+#: corner, and an arrow pointing where the chart will actually go explains
+#: itself. The column layout has two of them, the grid four: there "up" and
+#: "left" are different moves, and one pair of arrows can't express them.
 MOVE_LEFT = "←"
 MOVE_RIGHT = "→"
 MOVE_UP = "↑"
 MOVE_DOWN = "↓"
 
-#: Меньше этого поле графика перестаёт быть полем: подписи делений сходятся
-#: друг к другу, а кривая становится штрихом. Ленте и полосе этот минимум не
-#: годится — им по вертикали откладывать нечего, и он не даёт им ужаться до
-#: собственной высоты.
+#: Below this the plot area stops being an area: tick labels run into each
+#: other, and the curve turns into a short stroke. This minimum does not suit
+#: the breakdown bar — it has nothing to plot vertically, and the minimum
+#: would keep it from shrinking to its own height.
 MIN_WIDTH = 320
 MIN_HEIGHT = 220
 
-#: Сколько строк отводится под подпись оси Y. Две, а не одна: «Измерено минус
-#: модель, B» — это 288 пикселей, а поле графика в окне на три графика высотой
-#: 186, и подпись обрезалась ровно посередине слова. Три строки съели бы уже
-#: заметную часть ширины.
+#: How many lines the Y axis label gets. Two, not one:
+#: «Измерено минус модель, B» is 288 pixels, while the plot area in a
+#: three-chart window is 186 high, and the label was cut off right in the
+#: middle of a word. Three lines would already eat a noticeable part of the
+#: width.
 Y_CAPTION_LINES = 2
 
 
 class ChartView(QWidget):
-    """Один график: оси, серии, легенда, подсказка и зум."""
+    """One chart: axes, series, legend, tooltip and zoom."""
 
-    #: Точка, по которой щёлкнули: её ключ и готовое описание. Ключ — чтобы
-    #: окно знало, о какой записи речь; описание — чтобы не собирать его
-    #: второй раз там, где данных уже нет.
+    #: The point that was clicked: its key and its ready-made description. The
+    #: key, so the window knows which record this is about; the description, so
+    #: it need not be built a second time where the data is no longer at hand.
     pointPicked = Signal(object, str)
 
-    #: Масштаб изменился: зумом, панорамой или сбросом. По нему графики с
-    #: общей осью X держатся вместе.
+    #: The zoom changed: by zooming, panning or a reset. Charts with a shared X
+    #: axis keep together through it.
     rangeChanged = Signal()
 
-    #: Курсор встал на значение по X — или ушёл с графика (второй сигнал).
-    #: По ним перекрестье повторяется на соседних графиках с общей осью:
-    #: горб остатков и ступень наклона стоят на одном и том же размере тома, и
-    #: увидеть это можно только одной линией через оба графика.
+    #: The cursor settled on an X value — or left the chart (the second
+    #: signal). Through them the crosshair is repeated on neighbouring charts
+    #: with a shared axis: the hump in the residuals and the step in the slope
+    #: sit at the same volume size, and the only way to see that is one line
+    #: through both charts.
     cursorMoved = Signal(float)
     cursorLeft = Signal()
 
-    #: Просьба отсоединить график в своё окно или вернуть обратно. Решает
-    #: окно: виджет не знает, где он живёт и куда его возвращать.
+    #: A request to detach the chart into its own window or to return it. The
+    #: window decides: the widget doesn't know where it lives or where to
+    #: return it to.
     detachRequested = Signal()
 
-    #: Просьба переставить график: −1 — раньше, +1 — позже. Порядок держит
-    #: окно, график знает только, что его просят подвинуть.
+    #: A request to move the chart: −1 is earlier, +1 is later. The window
+    #: keeps the order; the chart only knows it is being asked to move.
     moveRequested = Signal(int)
 
     def __init__(self, chart: Chart | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._chart = chart
         self._unit: Unit = DEFAULT_UNIT
-        #: Ручной масштаб. None — по данным; так же выглядит и сброс.
+        #: Manual zoom. None means fitted to the data; a reset looks the same.
         self._x: Span | None = None
         self._y: Span | None = None
         self._hidden: set[str] = set()
@@ -142,35 +149,40 @@ class ChartView(QWidget):
         self._band: QRubberBand | None = None
         self._press: QPointF | None = None
         self._pan: QPointF | None = None
-        #: Где стоит курсор. None — он ушёл с виджета, перекрестья нет.
+        #: Where the cursor is. None means it left the widget and there is no
+        #: crosshair.
         self._cursor: QPointF | None = None
-        #: Значение по X, пришедшее от соседнего графика с общей осью. Рисуется
-        #: одной вертикальной линией: своего курсора здесь нет.
+        #: The X value that came from a neighbouring chart with a shared axis.
+        #: Drawn as a single vertical line: there is no cursor of its own here.
         self._linked_x: float | None = None
-        #: Сколько точек осталось за кадром после обновления данных. Ноль —
-        #: сказать нечего.
+        #: How many points ended up out of frame after a data update. Zero
+        #: means there is nothing to say.
         self._outside = 0
-        #: Живёт ли график в своём окне и можно ли его туда отправить. Ставит
-        #: окно; здесь — только текст кнопки и пункта меню.
+        #: Whether the chart lives in its own window and whether it can be sent
+        #: there. The window sets these; here they only drive the button text
+        #: and the menu item.
         self.detached = False
         self.detachable = False
+        #: The last `set_place` arguments: the move tooltips depend on the
+        #: layout, and a language switch has to word them again.
+        self._place: tuple[int, int, int] | None = None
 
-        # Кнопки, а не только пункты меню: меню надо сначала найти — двойным
-        # щелчком или средней кнопкой, — а переставить и отсоединить график
-        # это первое, что с ним делают в окне на четыре штуки.
-        #: Куда двигать и на сколько мест. Шаг ставит окно: оно одно знает,
-        #: сколько графиков в ряду, — а «вверх» в сетке это два места назад,
-        #: а не одно.
+        # Buttons, not only menu items: the menu has to be found first — by a
+        # double click or the middle button — while moving and detaching a
+        # chart is the first thing done with it in a window of four.
+        #: Where to move and by how many places. The window sets the step: it
+        #: alone knows how many charts are in a row — and "up" in the grid is
+        #: two places back, not one.
         self._steps: dict[str, int] = {}
         self.left_button = self._move_button(MOVE_LEFT, "left")
         self.right_button = self._move_button(MOVE_RIGHT, "right")
         self.up_button = self._move_button(MOVE_UP, "up")
         self.down_button = self._move_button(MOVE_DOWN, "down")
         self.detach_button = self._corner_button(
-            DETACH_TEXT, "", self.detachRequested.emit
+            tr(DETACH_TEXT), "", self.detachRequested.emit
         )
-        #: Порядок в углу слева направо. Отсоединение крайнее справа: оно
-        #: уводит график из окна, а перестановка оставляет его в нём.
+        #: Order in the corner, left to right. Detach is rightmost: it takes
+        #: the chart out of the window, while moving keeps it there.
         self._corner = (
             self.left_button,
             self.right_button,
@@ -182,21 +194,22 @@ class ChartView(QWidget):
         self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
-        # Правая кнопка занята сдвигом, и меню по ней открываться не должно:
-        # иначе оно выскакивает поверх графика на каждой панораме.
+        # The right button is taken by panning, and the menu must not open on
+        # it: otherwise it pops up over the chart on every pan.
         self.setContextMenuPolicy(Qt.PreventContextMenu)
-        # График может прийти и в конструктор, а не только через set_chart:
-        # минимум высоты зависит от разметки, и ставить его надо в обоих путях.
+        # The chart can also come into the constructor, not only through
+        # set_chart: the minimum height depends on the chart's layout, and it
+        # has to be set on both paths.
         self._apply_minimum()
 
-    # --- кнопки в углу -----------------------------------------------------
+    # --- corner buttons ----------------------------------------------------
 
     def _corner_button(self, text: str, tip: str, slot) -> QToolButton:
         button = QToolButton(self)
         button.setAutoRaise(True)
         button.setFocusPolicy(Qt.NoFocus)
-        # Поля по умолчанию рассчитаны на панель инструментов: одна стрелка
-        # занимала 44 пикселя, а три кнопки — треть ширины графика в сетке.
+        # The default padding is meant for a toolbar: one arrow took 44
+        # pixels, and three buttons a third of a chart's width in the grid.
         button.setStyleSheet("QToolButton { padding: 0px 4px; }")
         button.setText(text)
         if tip:
@@ -206,15 +219,16 @@ class ChartView(QWidget):
         return button
 
     def _move_button(self, text: str, where: str) -> QToolButton:
-        # `clicked` приходит с булевым «нажата ли», и без пустого первого
-        # параметра он подставляется в `where`: кнопка нажимается, а не
-        # делает ничего — молча, потому что направления «False» просто нет.
+        # `clicked` comes with a boolean "is it checked", and without an empty
+        # first parameter it lands in `where`: the button gets pressed but
+        # does nothing — silently, because there is simply no direction
+        # "False".
         button = self._corner_button(
             text, "", lambda _checked=False, name=where: self._move(name)
         )
-        # Ширина по самой стрелке, а не по тому, что QToolButton считает
-        # приличным для панели инструментов: четыре стрелки по её мерке
-        # съедали у заголовка в сетке двести пикселей.
+        # Width fitted to the arrow itself, not to what QToolButton considers
+        # decent for a toolbar: four arrows by its measure ate two hundred
+        # pixels of the title in the grid.
         metrics = QFontMetricsF(button.font())
         button.setFixedWidth(int(metrics.horizontalAdvance(text)) + 10)
         return button
@@ -225,15 +239,17 @@ class ChartView(QWidget):
             self.moveRequested.emit(step)
 
     def set_place(self, place: int, count: int, columns: int = 1) -> None:
-        """Где график стоит в окне и как оно разложено.
+        """Where the chart stands in the window and how that is laid out.
 
-        Отсюда видно, куда его можно двигать. В столбце это «выше» и «ниже» на
-        одно место; в сетке «выше» — это на целый ряд назад, а «левее» — на
-        одно, и путать их нельзя: пара стрелок, ходившая по порядку, в сетке
-        меняла график то с соседом справа, то с концом прошлого ряда.
+        From this it follows where the chart can move. In the column layout
+        that is "up" and "down" by one place; in the grid "up" is a whole row
+        back, while "left" is one place, and the two must not be confused: a
+        pair of arrows that walked the order swapped a chart in the grid now
+        with its right-hand neighbour, now with the end of the previous row.
 
-        Отсоединённый не двигается вовсе — в окне его нет.
+        A detached chart does not move at all — it is not in the window.
         """
+        self._place = (place, count, columns)
         row_place = place % columns
         self._steps = {
             "left": -1,
@@ -250,10 +266,10 @@ class ChartView(QWidget):
             "down": place + columns < count,
         }
         wording = {
-            "left": "Поменять местами с графиком слева.",
-            "right": "Поменять местами с графиком справа.",
-            "up": "Поменять местами с графиком выше." if grid else "Переставить выше.",
-            "down": "Поменять местами с графиком ниже." if grid else "Переставить ниже.",
+            "left": "chart.move.left",
+            "right": "chart.move.right",
+            "up": "chart.move.up.grid" if grid else "chart.move.up.column",
+            "down": "chart.move.down.grid" if grid else "chart.move.down.column",
         }
         for where, button in (
             ("left", self.left_button),
@@ -261,12 +277,12 @@ class ChartView(QWidget):
             ("up", self.up_button),
             ("down", self.down_button),
         ):
-            # Влево и вправо в столбце не показываются вовсе: там нет соседей
-            # по горизонтали, и выключенная кнопка обещала бы движение,
-            # которого не бывает.
+            # Left and right are not shown in the column layout at all: there
+            # are no horizontal neighbours there, and a disabled button would
+            # promise a move that never happens.
             button.setVisible(movable and (grid or where in ("up", "down")))
             button.setEnabled(allowed[where])
-            button.setToolTip(wording[where])
+            button.setToolTip(tr(wording[where]))
         self._place_buttons()
         self.updateGeometry()
         self.update()
@@ -280,13 +296,9 @@ class ChartView(QWidget):
         self._refresh_button()
 
     def _refresh_button(self) -> None:
-        self.detach_button.setText(RETURN_TEXT if self.detached else DETACH_TEXT)
+        self.detach_button.setText(tr(RETURN_TEXT if self.detached else DETACH_TEXT))
         self.detach_button.setToolTip(
-            "Поставить график обратно на своё место в общем окне. То же "
-            "делает закрытие этого окна."
-            if self.detached
-            else "Показать этот график в отдельном окне. Масштаб и спрятанные "
-            "серии переезжают вместе с ним."
+            tr("chart.return.tip" if self.detached else "chart.detach.tip")
         )
         self.detach_button.setVisible(self.detachable or self.detached)
         self._place_buttons()
@@ -294,11 +306,12 @@ class ChartView(QWidget):
         self.update()
 
     def _place_buttons(self) -> None:
-        """Кнопки стоят в правом верхнем углу, в полосе заголовка.
+        """The buttons sit in the top right corner, in the title band.
 
-        `isVisibleTo`, а не `isVisible`: у невидимого пока виджета скрыты и
-        дети, и кнопка, выставленная до первого показа, осталась бы в углу
-        (0, 0) — переставить её было бы уже нечем, размер-то не менялся.
+        `isVisibleTo`, not `isVisible`: while the widget is not yet visible,
+        its children are hidden too, and a button placed before the first
+        show would stay in the corner at (0, 0) — nothing would move it
+        afterwards, since the size never changed.
         """
         right = self.width() - PADDING // 2
         for button in reversed(self._corner):
@@ -309,7 +322,7 @@ class ChartView(QWidget):
             button.move(max(right, 0), 1)
 
     def _button_width(self) -> float:
-        """Сколько ширины занято кнопками. Ноль — их нет."""
+        """How much width the buttons take. Zero means there are none."""
         return float(
             sum(
                 button.width()
@@ -319,7 +332,7 @@ class ChartView(QWidget):
         )
 
     def _head_height(self) -> float:
-        """Высота полосы над полем графика: заголовок и кнопки стоят в ней."""
+        """Band height above the plot area: the title and buttons sit in it."""
         line = self._metrics().height() if (self._chart and self._chart.title) else 0.0
         buttons = [
             float(button.height())
@@ -328,23 +341,41 @@ class ChartView(QWidget):
         ]
         return max([line, *buttons])
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 — имя от Qt
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt's name
         self._place_buttons()
         super().resizeEvent(event)
 
-    # --- содержимое --------------------------------------------------------
+    def retranslate(self) -> None:
+        """Word the corner buttons again; the painted text follows on the
+        next paint, and the menu is built anew each time anyway.
+
+        The chart itself — title, series, axes — is data: the window brings
+        a fresh one built in the new language.
+        """
+        self._refresh_button()
+        if self._place is not None:
+            self.set_place(*self._place)
+        self.update()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    # --- content -----------------------------------------------------------
 
     def set_chart(self, chart: Chart | None, keep_view: bool = False) -> None:
-        """Заменить данные.
+        """Replace the data.
 
-        Спрятанные серии берутся у самого графика: он один знает, какая из них
-        по умолчанию мешает. Пересчитывать их тут заново — значит помнить про
-        каждый график в двух местах.
+        Hidden series are taken from the chart itself: it alone knows which
+        of them gets in the way by default. Working them out again here would
+        mean remembering every chart in two places.
 
-        `keep_view` — обновление теми же данными, только свежими: масштаб и
-        спрятанные серии остаются. Без этого каждый новый замер сбрасывал
-        окно к полному виду, и разглядывать участок кривой во время сбора
-        было нельзя вовсе — картинка прыгала на каждом шаге.
+        `keep_view` is an update with the same data, only fresher: the zoom
+        and the hidden series stay. Without it every new measurement reset
+        the window to the full view, and examining a stretch of the curve
+        during collection was impossible altogether — the picture jumped on
+        every step.
         """
         previous = tuple(self._chart.series) if self._chart else ()
         self._chart = chart
@@ -353,49 +384,54 @@ class ChartView(QWidget):
         else:
             self._x = self._y = None
             self._hidden = {
-                item.name for item in (chart.series if chart else ()) if not item.visible
+                item.key for item in (chart.series if chart else ()) if not item.visible
             }
         self._apply_minimum()
         self._outside = self._count_outside()
         if self._outside and not self._points_in_view():
-            # В кадре не осталось ни одной точки: держать масштаб больше не за
-            # что — он показывает пустое поле, и отличить это от «замеров нет»
-            # нечем.
+            # Not a single point is left in frame: there is nothing to hold the
+            # zoom to any more — it shows an empty area, and there is no way
+            # to tell that from "no measurements".
             self._x = self._y = None
             self._outside = 0
         self.updateGeometry()
         self.update()
 
     def _apply_minimum(self) -> None:
-        """Ленте и полосе — своя высота, остальным — общий минимум поля.
+        """Breakdown bar: own height; the rest: the common plot-area minimum.
 
-        Явный минимум виджета сильнее `minimumSizeHint`, и с общими 220
-        пикселями лента не могла ужаться до нужных ей 156: разделитель отдавал
-        ей ровно столько же, сколько настоящему графику.
+        An explicit widget minimum is stronger than `minimumSizeHint`: with
+        the common 220 pixels a compact chart cannot shrink to its own height,
+        and the splitter gives it exactly as much as a real chart. That showed
+        on the coverage strip, since removed, which needed only 156.
         """
         chart = self._chart
         compact = chart is not None and chart.layout == LAYOUT_STACK
         self.setMinimumHeight(self.sizeHint().height() if compact else MIN_HEIGHT)
 
     def _keep_hidden(self, previous: tuple[Series, ...], chart: Chart | None) -> None:
-        """Перенести спрятанные серии на новые данные.
+        """Carry the hidden series over to the new data.
 
-        Спрятанное щелчком остаётся спрятанным; появившаяся серия приходит с
-        тем, что о ней думает сам график. Иначе «край диапазона» вылезал бы
-        обратно на каждом обновлении — или, наоборот, спрятанная руками серия
-        не пряталась бы, будь она у графика видимой по умолчанию.
+        What was hidden by a click stays hidden; a series that appears comes
+        with what the chart itself thinks of it. Otherwise «край диапазона»
+        would crawl back out on every update — or, the other way round, a
+        series hidden by hand would not stay hidden if the chart showed it by
+        default.
+
+        By the series key, not its name: the name changes with the language,
+        and a switch would bring every hidden series back.
         """
-        known = {item.name for item in previous}
+        known = {item.key for item in previous}
         fresh = tuple(chart.series) if chart else ()
-        names = {item.name for item in fresh}
-        self._hidden = {name for name in self._hidden if name in names} | {
-            item.name
+        keys = {item.key for item in fresh}
+        self._hidden = {key for key in self._hidden if key in keys} | {
+            item.key
             for item in fresh
-            if not item.visible and item.name not in known
+            if not item.visible and item.key not in known
         }
 
     def _count_outside(self) -> int:
-        """Сколько точек не попадает в нынешний масштаб."""
+        """How many points fall outside the current zoom."""
         if self._x is None and self._y is None:
             return 0
         x_span, y_span = self._x, self._y
@@ -431,21 +467,22 @@ class ChartView(QWidget):
         return self._x is not None or self._y is not None
 
     def x_span(self) -> Span | None:
-        """Ручной масштаб по X. None — по данным."""
+        """Manual zoom on X. None means fitted to the data."""
         return self._x
 
     def set_linked_cursor(self, value: float | None) -> None:
-        """Показать перекрестье соседа: одну вертикаль на его значении X."""
+        """Show a neighbour's crosshair: one vertical line at its X value."""
         if self._linked_x == value:
             return
         self._linked_x = value
         self.update()
 
     def apply_x(self, span: Span | None) -> None:
-        """Взять масштаб по X у соседнего графика, не отвечая своим сигналом.
+        """Take the X zoom from a neighbour without emitting a signal back.
 
-        Без молчания графики с общей осью зациклились бы: первый сообщил бы
-        второму, второй первому, и так до переполнения стека.
+        Without the silence, charts with a shared axis would loop: the first
+        would tell the second, the second the first, and so on until the
+        stack overflows.
         """
         if self._x == span:
             return
@@ -453,25 +490,25 @@ class ChartView(QWidget):
         self.update()
 
     def series(self) -> tuple[Series, ...]:
-        """Серии с учётом выключенных щелчком по легенде."""
+        """Series, accounting for those switched off by a legend click."""
         if self._chart is None:
             return ()
         return tuple(
-            item.with_visible(item.name not in self._hidden)
+            item.with_visible(item.key not in self._hidden)
             for item in self._chart.series
         )
 
-    # --- геометрия ---------------------------------------------------------
+    # --- geometry ----------------------------------------------------------
 
     def _metrics(self) -> QFontMetricsF:
         return QFontMetricsF(self.font())
 
     def frame(self) -> Frame | None:
-        """Поле графика в пикселях вместе с диапазонами по осям.
+        """The plot area in pixels together with the axis ranges.
 
-        Левое поле меряется по самой широкой подписи, а не берётся на глаз:
-        подобранное на глаз обрежет «1 099 511 627 776» ровно тогда, когда оно
-        появится.
+        The left margin is measured by the widest label, not chosen by eye:
+        one chosen by eye will cut off "1 099 511 627 776" exactly when that
+        number appears.
         """
         chart = self._chart
         if chart is None:
@@ -485,9 +522,8 @@ class ChartView(QWidget):
         y_ticks = ticks(chart.y, y_span.lo, y_span.hi, self._unit)
         widest = max((metrics.horizontalAdvance(t.text) for t in y_ticks), default=0.0)
 
-        # Межстрочный интервал, а не высота шрифта: в две строки подпись
-        # занимает на пару пикселей больше, и на них она налезала бы на
-        # подписи делений.
+        # Line spacing, not font height: on two lines the label takes a couple
+        # of pixels more, and by those it would run over the tick labels.
         left = (
             PADDING
             + widest
@@ -512,16 +548,16 @@ class ChartView(QWidget):
         return Frame(left, top, width, height, x_span, y_span)
 
     def _y_caption_room(self) -> float:
-        """Сколько места по вертикали есть у повёрнутой подписи оси Y.
+        """How much vertical room the rotated Y axis label has.
 
-        Меряется по всему виджету, а не по полю графика: подпись стоит сбоку
-        и полю не принадлежит, а поле в окне на три графика вдвое ниже своей
-        же подписи.
+        Measured against the whole widget, not the plot area: the label
+        stands to the side and does not belong to the area, and in a
+        three-chart window the area is half as tall as its own label.
         """
         return max(self.height() - PADDING * 2, 1.0)
 
     def _y_caption_lines(self, chart: Chart, y_span: Span) -> int:
-        """В сколько строк ляжет подпись оси Y: одна строка или две."""
+        """How many lines the Y axis label takes: one line or two."""
         caption = axis_caption(chart.y, y_span.lo, y_span.hi, self._unit)
         if not caption:
             return 0
@@ -530,7 +566,7 @@ class ChartView(QWidget):
         return Y_CAPTION_LINES
 
     def _spans(self, chart: Chart, series: tuple[Series, ...]) -> tuple[Span, Span]:
-        """Диапазоны по осям: ручные, если зумили, иначе по данным."""
+        """Axis ranges: manual if zoomed, otherwise from the data."""
         if self._x is not None and self._y is not None:
             return self._x, self._y
 
@@ -540,7 +576,8 @@ class ChartView(QWidget):
             x_lo, x_hi = -0.5, max(len(chart.categories) - 0.5, 0.5)
         else:
             x_lo, x_hi = padded(x_lo, x_hi, chart.x.log)
-        # Столбики растут от нуля, и обрезать его — соврать о их длине.
+        # Bars grow from zero, and cutting zero off would lie about their
+        # length.
         with_zero = chart.zero_line or any(s.kind == KIND_BARS for s in series)
         y_lo, y_hi = padded(y_lo, y_hi, chart.y.log, include_zero=with_zero)
         return (
@@ -548,7 +585,7 @@ class ChartView(QWidget):
             self._y or Span(y_lo, y_hi, chart.y.log),
         )
 
-    # --- цвета -------------------------------------------------------------
+    # --- colours -----------------------------------------------------------
 
     def _dark(self) -> bool:
         return self.palette().window().color().lightness() < 128
@@ -566,9 +603,9 @@ class ChartView(QWidget):
         colour.setAlpha(alpha)
         return colour
 
-    # --- рисование ---------------------------------------------------------
+    # --- drawing -----------------------------------------------------------
 
-    def paintEvent(self, event) -> None:  # noqa: N802 — имя от Qt
+    def paintEvent(self, event) -> None:  # noqa: N802 — Qt's name
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.fillRect(self.rect(), self.palette().window())
@@ -576,11 +613,12 @@ class ChartView(QWidget):
         painter.end()
 
     def _render(self, painter: QPainter, live: bool = False) -> None:
-        """Нарисовать график. `live` — то, чего не должно быть в файле.
+        """Draw the chart. `live` covers what must not end up in a file.
 
-        Перекрестье и подсветка точки под курсором — состояние мыши, а не
-        график: в скопированной картинке они означали бы, что там что-то
-        измерено, хотя это просто место, где стоял курсор.
+        The crosshair and the highlight of the point under the cursor are
+        mouse state, not the chart: in a copied image they would mean that
+        something was measured there, though it is just where the cursor
+        happened to be.
         """
         chart = self._chart
         frame = self.frame()
@@ -590,16 +628,17 @@ class ChartView(QWidget):
         metrics = self._metrics()
         painter.setPen(self._ink())
         if chart.title:
-            # Полоса заголовка отсчитывается от верхнего края виджета, а не
-            # вверх от отступа: с `PADDING - height` она начиналась на два
-            # пикселя выше нуля, и у букв срезало верх — на глаз это выглядело
-            # как наползающий сверху разделитель между графиками.
+            # The title band is measured from the top edge of the widget, not
+            # upwards from the padding: with `PADDING - height` it started two
+            # pixels above zero, and the tops of the letters were cut off — by
+            # eye it looked like the splitter between charts creeping over it
+            # from above.
             #
-            # Заголовок стоит по центру того, что осталось от кнопок, а не
-            # по центру виджета: ужимать ширину с обеих сторон значило бы
-            # отдать кнопкам вдвое больше места, чем они занимают, — в сетке
-            # графики вдвое уже, и заголовок начинал прятаться под многоточие
-            # на ровном месте.
+            # The title is centred in what the buttons leave, not in the
+            # widget: narrowing the width on both sides would give the buttons
+            # twice the room they take — in the grid the charts are half as
+            # wide, and the title started hiding behind an ellipsis for no
+            # reason.
             room = max(self.width() - self._button_width() - PADDING, 40.0)
             painter.drawText(
                 QRectF(0, 0, room, PADDING + self._head_height()),
@@ -612,7 +651,7 @@ class ChartView(QWidget):
             painter.drawText(
                 QRectF(0, 0, self.width(), self.height()),
                 Qt.AlignCenter,
-                "Замеров пока нет — рисовать нечего.",
+                tr("chart.empty"),
             )
             return
 
@@ -658,7 +697,8 @@ class ChartView(QWidget):
             painter.drawLine(QPointF(x, frame.top), QPointF(x, bottom))
 
         if chart.zero_line and frame.y.lo <= 0 <= frame.y.hi:
-            # Ноль на остатках — это и есть модель, поэтому он заметнее сетки.
+            # Zero on the residuals is the model itself, so it stands out more
+            # than the grid lines.
             zero = QPen(self._ink(170))
             zero.setWidthF(1.4)
             painter.setPen(zero)
@@ -694,19 +734,21 @@ class ChartView(QWidget):
         lines = self._y_caption_lines(chart, frame.y)
         room = self._y_caption_room()
         if lines > 1:
-            # Не влезает в строку — переносим по словам. Обрезка была бы
-            # честнее молчания, но «Измерено минус моде» не объясняет ничего.
+            # Doesn't fit on one line — wrap at words. Cutting it would be more
+            # honest than silence, but «Измерено минус моде» explains nothing.
             caption = metrics.elidedText(caption, Qt.ElideRight, room * lines)
         painter.save()
-        # Центр виджета, а не поля: подпись стоит сбоку от поля и его высотой
-        # не ограничена, а поля сверху и снизу заняты заголовком и легендой.
+        # The centre of the widget, not of the plot area: the label stands
+        # beside the area and is not limited by its height, while the margins
+        # above and below are taken by the title and the legend.
         painter.translate(PADDING, self.height() / 2)
         painter.rotate(-90)
         spacing = metrics.lineSpacing() * lines
-        # Прямоугольник растёт от точки поворота **вправо**, а не влево:
-        # после rotate(-90) координата y уходит в экранный x, и с `-spacing`
-        # подпись рисовалась левее отступа — в одну строку у неё срезало
-        # край, а вторая строка не попадала в виджет вовсе.
+        # The rectangle grows from the rotation point to the **right**, not
+        # to the left: after rotate(-90) the y coordinate becomes screen x,
+        # and with `-spacing` the label was drawn left of the padding — on one
+        # line its edge was cut off, and a second line did not land in the
+        # widget at all.
         painter.drawText(
             QRectF(-room / 2, 0, room, spacing),
             Qt.TextWordWrap | Qt.AlignCenter,
@@ -748,10 +790,10 @@ class ChartView(QWidget):
             return
 
         if item.kind == KIND_STEMS:
-            # Стебель до нуля, а не столбик: ноль тут не край шкалы, а сама
-            # модель, и от неё отсчитывается промах. Толщина меньше столбика —
-            # величина остаётся точкой, стебель только показывает, куда она
-            # отклонилась.
+            # A stem down to zero, not a bar: zero here is not the edge of the
+            # scale but the model itself, and the miss is counted from it.
+            # Thinner than a bar — the value stays a point, and the stem only
+            # shows which way it deviated.
             stem = QPen(colour)
             stem.setWidthF(1.4)
             painter.setPen(stem)
@@ -765,12 +807,11 @@ class ChartView(QWidget):
             painter.drawEllipse(spot, DOT_RADIUS, DOT_RADIUS)
         painter.setBrush(Qt.NoBrush)
 
-    def sizeHint(self):  # noqa: N802 — имя от Qt
-        """Полосе и ленте высота не нужна: у них нет величины по вертикали.
+    def sizeHint(self):  # noqa: N802 — Qt's name
+        """The breakdown bar needs no height: it has no quantity vertically.
 
-        Без этого разделитель отдаёт им половину окна, и под полосой висит
-        пустое поле в две трети экрана. У ленты покрытия по вертикали отложено
-        состояние — три ряда, — и делить с ней высоту поровну незачем.
+        Without this the splitter gives it half the window, and under the
+        bar hangs an empty area two thirds of the screen tall.
         """
         chart = self._chart
         if chart is None:
@@ -782,18 +823,18 @@ class ChartView(QWidget):
             return QSize(self.minimumWidth(), int(height))
         return super().sizeHint()
 
-    def minimumSizeHint(self):  # noqa: N802 — имя от Qt
+    def minimumSizeHint(self):  # noqa: N802 — Qt's name
         chart = self._chart
         if chart is not None and chart.layout == LAYOUT_STACK:
             return self.sizeHint()
         return super().minimumSizeHint()
 
     def _render_stack(self, painter: QPainter, chart: Chart, frame: Frame) -> None:
-        """Одна полоса во всю ширину: слагаемые в долях от целого.
+        """One full-width bar: the components as shares of the whole.
 
-        Легенда тут не украшение, а единственный способ прочитать тонкие
-        слагаемые: заголовок VeraCrypt на терабайтном контейнере занимает
-        меньше пикселя, и навести на него курсор нельзя никак.
+        The legend here is not decoration but the only way to read the thin
+        components: the VeraCrypt header on a terabyte container takes less
+        than a pixel, and there is no way at all to put the cursor on it.
         """
         series = chart.series[0]
         total = sum(max(point.y, 0.0) for point in series.points)
@@ -841,7 +882,7 @@ class ChartView(QWidget):
 
         self._legend_boxes = []
         for item, width in zip(chart.series, widths):
-            hidden = item.name in self._hidden
+            hidden = item.key in self._hidden
             box = QRectF(x, y + 2, LEGEND_BOX, LEGEND_BOX)
             colour = self._tone(item.tone)
             painter.setPen(QPen(self._ink(90)))
@@ -854,15 +895,16 @@ class ChartView(QWidget):
                 Qt.AlignLeft | Qt.AlignVCenter,
                 item.name,
             )
-            self._legend_boxes.append((QRectF(x, y, width, line + 4), item.name))
+            self._legend_boxes.append((QRectF(x, y, width, line + 4), item.key))
             x += width + LEGEND_GAP
 
     def _render_crosshair(self, painter: QPainter, chart: Chart, frame: Frame) -> None:
-        """Линии от курсора до осей и значения на них.
+        """Lines from the cursor to the axes, and the values on them.
 
-        Своё перекрестье рисуется полностью, пришедшее от соседа — одной
-        вертикалью: горизонталь означала бы, что у соседнего графика такое же
-        значение по Y, а у него и величина другая, и размах.
+        The chart's own crosshair is drawn in full; one that came from a
+        neighbour, as a single vertical line: a horizontal one would mean the
+        neighbouring chart has the same Y value, while it has both a different
+        quantity and a different range.
         """
         if chart.layout == LAYOUT_STACK:
             return
@@ -915,8 +957,8 @@ class ChartView(QWidget):
 
         found = nearest(frame, self.series(), position.x(), position.y())
         if found is not None:
-            # Кольцо, а не заливка: точка под ним остаётся своего цвета, и
-            # видно, какой она серии.
+            # A ring, not a fill: the point under it keeps its colour, and you
+            # can see which series it belongs to.
             ring = QPen(self._tone(found.series.tone).darker(120))
             ring.setWidthF(1.6)
             painter.setPen(ring)
@@ -935,10 +977,10 @@ class ChartView(QWidget):
         y: float,
         centred: bool,
     ) -> None:
-        """Значение на оси под линией перекрестья, на подложке.
+        """The axis value under the crosshair line, on a backing.
 
-        Подложка нужна: без неё подпись ложится поверх делений оси и читается
-        как ещё одно деление.
+        The backing is needed: without it the label lies over the axis ticks
+        and reads as one more tick.
         """
         if not text:
             return
@@ -959,16 +1001,16 @@ class ChartView(QWidget):
         painter.drawText(box, Qt.AlignCenter, text)
 
     def _render_outside(self, painter: QPainter, frame: Frame) -> None:
-        """Сказать, что часть свежих данных не попала в удержанный масштаб.
+        """Say that part of the fresh data fell outside the zoom being held.
 
-        Молчать нельзя: масштаб держится нарочно, и без подписи «ничего не
-        изменилось» после нового замера выглядит поломкой, а не тем, что
-        замер лёг за кадром.
+        Silence is not an option: the zoom is held on purpose, and without a
+        label "nothing changed" after a new measurement looks like a breakage,
+        not like the measurement landing out of frame.
         """
         if not self._outside:
             return
         metrics = self._metrics()
-        text = f"вне кадра: {self._outside}"
+        text = tr("chart.outside", n=self._outside)
         painter.setPen(self._ink(150))
         painter.drawText(
             QRectF(
@@ -982,11 +1024,11 @@ class ChartView(QWidget):
         )
 
     def _note_height(self, chart: Chart | None) -> float:
-        """Сколько строк займёт подпись при этой ширине окна.
+        """How tall the note is, in pixels, wrapped to this widget's width.
 
-        Меряется, а не считается за одну строку: подписи тут длинные, и та,
-        что объясняет спрятанную серию, на узком окне обрезалась ровно на
-        полуслове — «и промах там на порядки бо».
+        Measured, not assumed to be one line: the notes here are long, and
+        the one explaining the hidden series was cut off mid-word in a narrow
+        window — «и промах там на порядки бо».
         """
         if chart is None or not chart.note:
             return 0.0
@@ -1012,7 +1054,7 @@ class ChartView(QWidget):
             chart.note,
         )
 
-    # --- мышь --------------------------------------------------------------
+    # --- mouse -------------------------------------------------------------
 
     def _hit(self, position: QPointF):
         frame = self.frame()
@@ -1027,27 +1069,27 @@ class ChartView(QWidget):
         return found.point if found else None
 
     def tip_at(self, x: float, y: float) -> str:
-        """Текст подсказки для этой точки экрана. Пусто — показывать нечего."""
+        """Tooltip text for this screen point. Empty means nothing to show."""
         point = self._hit(QPointF(x, y))
         return point.tip if point is not None else ""
 
     def legend_at(self, x: float, y: float) -> str:
-        """Имя серии, на чью запись в легенде показывают. Пусто — мимо."""
-        for box, name in self._legend_boxes:
+        """Key of the series whose legend entry is pointed at. Empty: none."""
+        for box, key in self._legend_boxes:
             if box.contains(QPointF(x, y)):
-                return name
+                return key
         return ""
 
-    def toggle_series(self, name: str) -> None:
-        """Спрятать серию или вернуть её. Легенда — единственный переключатель."""
-        if name in self._hidden:
-            self._hidden.discard(name)
+    def toggle_series(self, key: str) -> None:
+        """Hide a series or bring it back. The legend is the only toggle."""
+        if key in self._hidden:
+            self._hidden.discard(key)
         else:
-            self._hidden.add(name)
+            self._hidden.add(key)
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        """Левая — рамка и легенда, правая — сдвиг, средняя — меню."""
+        """Left: rubber band and legend; right: pan; middle: menu."""
         position = event.position()
         if event.button() == Qt.RightButton:
             self._pan = position
@@ -1057,9 +1099,9 @@ class ChartView(QWidget):
             return
         if event.button() != Qt.LeftButton:
             return
-        name = self.legend_at(position.x(), position.y())
-        if name:
-            self.toggle_series(name)
+        key = self.legend_at(position.x(), position.y())
+        if key:
+            self.toggle_series(key)
             return
         frame = self.frame()
         if frame is not None and frame.contains(position.x(), position.y()):
@@ -1085,7 +1127,7 @@ class ChartView(QWidget):
             QToolTip.hideText()
 
     def _track(self, position: QPointF | None) -> None:
-        """Запомнить курсор и сказать о нём соседям с общей осью."""
+        """Remember the cursor and tell the neighbours with a shared axis."""
         self._cursor = position
         frame = self.frame()
         inside = (
@@ -1100,7 +1142,7 @@ class ChartView(QWidget):
         self.update()
 
     def leaveEvent(self, event) -> None:  # noqa: N802
-        """Курсор ушёл — перекрестья быть не должно ни здесь, ни у соседей."""
+        """The cursor left — no crosshair must remain here or on neighbours."""
         self._track(None)
         super().leaveEvent(event)
 
@@ -1117,7 +1159,8 @@ class ChartView(QWidget):
         position = event.position()
         far = abs(position.x() - start.x()) + abs(position.y() - start.y())
         if far < DRAG_THRESHOLD:
-            # Не рамка, а щелчок: отдать наружу точку, если в неё попали.
+            # Not a rubber band but a click: hand the point out, if one was
+            # hit.
             point = self._hit(position)
             if point is not None:
                 self.pointPicked.emit(point.key, point.tip)
@@ -1125,10 +1168,11 @@ class ChartView(QWidget):
         self._zoom_to(start, position)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
-        """Двойной правой — полный вид, двойной левой — меню.
+        """Right double click: full view; left double click: menu.
 
-        Сброс ушёл с левой кнопки на правую вслед за сдвигом: одной рукой
-        держат правую и возят по графику, ей же и возвращают полный вид.
+        Reset moved from the left button to the right one, following panning:
+        the same hand holds the right button to pan the chart and uses it to
+        bring the full view back.
         """
         if event.button() == Qt.RightButton:
             self.reset_zoom()
@@ -1188,10 +1232,10 @@ class ChartView(QWidget):
         self.update()
         self.rangeChanged.emit()
 
-    # --- вывод наружу ------------------------------------------------------
+    # --- export ------------------------------------------------------------
 
     def image(self, scale: float = 2.0) -> QPixmap:
-        """Картинка графика. Удвоенный масштаб — чтобы не мылилась при вставке."""
+        """Image of the chart. Double scale, so it doesn't blur when pasted."""
         pixmap = QPixmap(int(self.width() * scale), int(self.height() * scale))
         pixmap.setDevicePixelRatio(scale)
         pixmap.fill(self.palette().window().color())
@@ -1205,17 +1249,18 @@ class ChartView(QWidget):
         QGuiApplication.clipboard().setPixmap(self.image())
 
     def save_image(self, path: str = "") -> str:
-        """Сохранить картинку. Пустой путь — спросить у человека.
+        """Save the image. An empty path means ask the person.
 
-        SVG и PDF рисуются тем же `_render`, что и экран: у QPainter один
-        интерфейс на растр и на вектор, и расходиться им негде.
+        SVG and PDF are drawn by the same `_render` as the screen: QPainter
+        has one interface for raster and vector, and there is nowhere for
+        them to diverge.
         """
         if not path:
             path, _filter = QFileDialog.getSaveFileName(
                 self,
-                "Сохранить график",
-                f"{(self._chart.title if self._chart else 'график')}.png",
-                "Картинка PNG (*.png);;Вектор SVG (*.svg);;Документ PDF (*.pdf)",
+                tr("chart.save.title"),
+                f"{(self._chart.title if self._chart else tr('chart.save.name'))}.png",
+                tr("chart.save.filter"),
             )
         if not path:
             return ""
@@ -1248,8 +1293,8 @@ class ChartView(QWidget):
         writer.setPageSize(QPageSize(QPageSize.A5))
         writer.setResolution(300)
         painter = QPainter(writer)
-        # Растянуть на страницу тем же кодом: масштабирование делает QPainter,
-        # а не отдельная ветка рисования.
+        # Stretch to the page with the same code: QPainter does the scaling,
+        # not a separate drawing branch.
         scale = min(
             writer.width() / max(self.width(), 1), writer.height() / max(self.height(), 1)
         )
@@ -1258,9 +1303,9 @@ class ChartView(QWidget):
         painter.end()
 
     def build_menu(self) -> QMenu:
-        """Меню графика. Собирается заново: пункты зависят от состояния."""
+        """The chart menu. Built anew each time: the items depend on state."""
         menu = QMenu(self)
-        reset = menu.addAction("Сбросить масштаб")
+        reset = menu.addAction(tr("chart.reset"))
         reset.setEnabled(self.zoomed)
         reset.triggered.connect(self.reset_zoom)
         for where, button in (
@@ -1276,13 +1321,13 @@ class ChartView(QWidget):
             action.triggered.connect(lambda _=False, name=where: self._move(name))
         if self.detachable or self.detached:
             detach = menu.addAction(
-                "Вернуть в общее окно" if self.detached else "Отсоединить в своё окно"
+                tr("chart.menu.return" if self.detached else "chart.menu.detach")
             )
             detach.setToolTip(self.detach_button.toolTip())
             detach.triggered.connect(self.detachRequested.emit)
         menu.addSeparator()
-        menu.addAction("Копировать картинку").triggered.connect(self.copy_image)
-        menu.addAction("Сохранить картинку…").triggered.connect(lambda: self.save_image())
+        menu.addAction(tr("chart.copy")).triggered.connect(self.copy_image)
+        menu.addAction(tr("chart.save")).triggered.connect(lambda: self.save_image())
         return menu
 
     def _show_menu(self, where) -> None:

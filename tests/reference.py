@@ -1,14 +1,22 @@
-"""Три записи, снятые вручную с реальных контейнеров.
+"""Three records taken by hand from real containers.
 
-Значения взяты из свойств тома в Проводнике. Хранятся только измеренные поля —
-заголовок VeraCrypt, метаданные NTFS и запас на копирование выводятся из них.
+The values come from the volume properties in Explorer. Only the measured
+fields are stored — the VeraCrypt header, the NTFS metadata and the copy slack
+are derived from them.
 
-Cache 2 намеренно оставлена как есть: её left_bytes физически невозможен
-(занято выходит меньше самого файла), и на ней проверяется, что валидация это
-ловит, но точку для модели NTFS из неё всё равно берёт.
+Cache 2 is deliberately kept as is: its left_bytes is physically impossible
+(the used space comes out smaller than the file itself), and it is used to
+check that validation catches this but still takes the point for the NTFS
+model from it.
 """
 
+from containerhelper.model import DEFAULT_CLUSTER_BYTES, VC_HEADERS_BYTES
 from containerhelper.records import Record
+
+#: Container minus volume capacity on NTFS with a 4 KiB cluster: the VeraCrypt
+#: headers plus the one-cluster filesystem tail. The 266 240 B measured on all
+#: three records below; tests build a realistic capacity with it.
+HEADERS_AND_TAIL = VC_HEADERS_BYTES + DEFAULT_CLUSTER_BYTES
 
 CACHE_1 = Record(
     id="Cache 1",
@@ -45,22 +53,24 @@ CACHE_4 = Record(
 
 ALL = [CACHE_1, CACHE_2, CACHE_4]
 
-#: Метаданные NTFS, выведенные как mounted - empty_free.
+#: NTFS metadata, derived as volume - empty_free: what Explorer showed as
+#: capacity minus free space, plus the one-cluster filesystem tail the
+#: capacity leaves out.
 EXPECTED_NTFS = {
-    "Cache 1": 40_316_928,
-    "Cache 2": 36_573_184,
-    "Cache 4": 34_074_624,
+    "Cache 1": 40_316_928 + DEFAULT_CLUSTER_BYTES,
+    "Cache 2": 36_573_184 + DEFAULT_CLUSTER_BYTES,
+    "Cache 4": 34_074_624 + DEFAULT_CLUSTER_BYTES,
 }
 
-#: Запас на копирование, выведенный как (empty_free - left) - alloc(file).
-#: Обе записи с одним файлом. Cache 2 отсутствует: там величина отрицательна.
+#: Copy slack, derived as (empty_free - left) - alloc(file).
+#: Both records hold one file. Cache 2 is missing: there the value is negative.
 EXPECTED_SLACK = {
     "Cache 1": 143_360,
     "Cache 4": 114_688,
 }
 
-#: Наименьший размер контейнера, которого хватило бы: фактически заданный
-#: минус измеренный остаток, округлённый вниз до целых MiB.
+#: The smallest container size that would have been enough: the one actually
+#: set minus the measured left space, rounded down to whole MiB.
 TRUE_MINIMUM_MIB = {
     "Cache 1": 11057,
     "Cache 4": 8020,

@@ -1,4 +1,4 @@
-"""Проверка схемы записей, валидации и хранилища."""
+"""Tests of the record schema, validation and the store."""
 
 import json
 import tempfile
@@ -6,15 +6,17 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from containerhelper.model import MIB, VC_HEADERS_BYTES
 from containerhelper.records import (
     SCHEMA_VERSION,
-    SCOPE_NTFS,
+    SCOPE_METADATA,
     SCOPE_SLACK,
     Record,
     Store,
     StoreError,
+    VolumeProfile,
     is_usable,
-    ntfs_points,
+    metadata_points,
     slack_samples,
     validate,
 )
@@ -32,16 +34,16 @@ class ValidationTests(unittest.TestCase):
                 self.assertEqual(validate(record), [])
 
     def test_impossible_left_space_is_caught(self):
-        """Cache 2: занято меньше самого файла. Ошибка ручного ввода."""
+        """Cache 2: less is used than the file itself. A manual entry error."""
         self.assertIn("consumed_lt_file", codes(reference.CACHE_2))
 
     def test_impossible_left_space_only_invalidates_slack(self):
-        """Точка для модели NTFS в такой записи по-прежнему годная."""
-        self.assertTrue(is_usable(reference.CACHE_2, SCOPE_NTFS))
+        """The point for the NTFS model in such a record is still good."""
+        self.assertTrue(is_usable(reference.CACHE_2, SCOPE_METADATA))
         self.assertFalse(is_usable(reference.CACHE_2, SCOPE_SLACK))
 
     def test_truncated_ntfs_value_is_caught(self):
-        """36 573 вместо 36 573 184 — потеря разрядов при переписывании."""
+        """36 573 instead of 36 573 184 — digits lost when copied by hand."""
         broken = replace(
             reference.CACHE_2,
             empty_free_bytes=reference.CACHE_2.mounted_bytes - 36_573,
@@ -49,24 +51,98 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("ntfs_range", codes(broken))
 
     def test_large_volume_ntfs_is_not_falsely_flagged(self):
-        """На 100 GiB метаданные под сотню мегабайт — это норма."""
+        """At 100 GiB, metadata of nearly a hundred megabytes is normal."""
         volume = 100 * 1024**3
         record = Record(
             id="big",
-            container_mib=(volume + 266_240) // (1024 * 1024),
+            container_mib=(volume + reference.HEADERS_AND_TAIL) // (1024 * 1024),
             mounted_bytes=volume,
             empty_free_bytes=volume - 100 * 1024 * 1024,
         )
         self.assertNotIn("ntfs_range", codes(record))
 
     def test_wrong_container_size_is_caught(self):
-        """Заголовок VeraCrypt — константа, отклонение выдаёт опечатку."""
+        """The NTFS tail is one cluster; a deviation gives away a typo."""
         broken = replace(reference.CACHE_1, container_mib=11131)
-        self.assertIn("header_unusual", codes(broken))
+        self.assertIn("tail_unusual", codes(broken))
 
     def test_volume_larger_than_container_is_caught(self):
         broken = replace(reference.CACHE_1, container_mib=1)
-        self.assertIn("header", codes(broken))
+        self.assertIn("tail_negative", codes(broken))
+
+
+class TailTests(unittest.TestCase):
+    """The filesystem tail: the volume size minus the measured capacity.
+
+    It used to hide inside a single 266 240 B header constant, which also kept
+    every volume other than NTFS with a 4 KiB cluster out of the calibration —
+    by accident, through a header that "came out wrong". The checks below say
+    it on purpose.
+    """
+
+    def test_the_parts_add_up_to_the_container(self):
+        for record in reference.ALL:
+            with self.subTest(record.id):
+                self.assertEqual(
+                    VC_HEADERS_BYTES + record.metadata_bytes + record.empty_free_bytes,
+                    record.container_bytes,
+                )
+
+    def test_the_metadata_does_not_follow_the_capacity(self):
+        """FAT leaves its tables out of the capacity; the volume size stays."""
+        short = replace(
+            reference.CACHE_1, mounted_bytes=reference.CACHE_1.mounted_bytes - MIB
+        )
+        self.assertEqual(short.metadata_bytes, reference.CACHE_1.metadata_bytes)
+
+    def test_another_ntfs_cluster_stays_out_of_the_default_profile(self):
+        """The model is taken on 4 KiB; a 64 KiB point is another curve's node.
+
+        It used to be flagged by a "cluster" check of its own. The profile
+        keeps it apart now, and the record stays valid for its own profile.
+        """
+        big = replace(
+            reference.CACHE_1,
+            cluster_bytes=65536,
+            mounted_bytes=reference.CACHE_1.volume_bytes - 65536,
+        )
+        self.assertEqual(codes(big), set())
+        self.assertEqual(metadata_points([big]), [])
+        self.assertEqual(len(metadata_points([big], VolumeProfile("NTFS", 65536))), 1)
+
+    def test_an_unmeasured_ntfs_cluster_has_its_tail_unchecked(self):
+        """One cluster at 64 KiB is expected, not measured: no false alarm."""
+        big = replace(reference.CACHE_1, cluster_bytes=65536)
+        self.assertNotIn("tail_unusual", codes(big))
+
+    def test_an_unread_cluster_counts_as_the_default(self):
+        point = Record(
+            id="Точка",
+            container_mib=1024,
+            cluster_bytes=0,
+            mounted_bytes=1024 * MIB - reference.HEADERS_AND_TAIL,
+            empty_free_bytes=1000 * MIB,
+        )
+        self.assertEqual(codes(point), set())
+
+    def test_the_tail_is_not_checked_off_ntfs(self):
+        """What exFAT keeps back is not measured yet."""
+        fat = replace(
+            reference.CACHE_1,
+            filesystem="exFAT",
+            mounted_bytes=reference.CACHE_1.mounted_bytes - MIB,
+        )
+        self.assertEqual(codes(fat), set())
+
+    def test_the_metadata_range_is_not_checked_off_ntfs(self):
+        """A small exFAT volume may spend less than a mebibyte on metadata."""
+        fat = replace(
+            reference.CACHE_1,
+            filesystem="exFAT",
+            empty_free_bytes=reference.CACHE_1.volume_bytes - 512 * 1024,
+        )
+        self.assertEqual(codes(fat), set())
+        self.assertIn("ntfs_range", codes(replace(fat, filesystem="NTFS")))
 
     def test_free_space_above_capacity_is_caught(self):
         broken = replace(
@@ -83,13 +159,13 @@ class ValidationTests(unittest.TestCase):
 
     def test_flagged_record_is_excluded_everywhere(self):
         flagged = replace(reference.CACHE_1, flagged=True)
-        self.assertFalse(is_usable(flagged, SCOPE_NTFS))
+        self.assertFalse(is_usable(flagged, SCOPE_METADATA))
         self.assertFalse(is_usable(flagged, SCOPE_SLACK))
 
 
 class CalibrationInputTests(unittest.TestCase):
     def test_all_three_records_give_ntfs_points(self):
-        points = ntfs_points(reference.ALL)
+        points = metadata_points(reference.ALL)
         self.assertEqual(len(points), 3)
         self.assertEqual(
             sorted(overhead for _, overhead in points),
@@ -105,14 +181,14 @@ class CalibrationInputTests(unittest.TestCase):
         )
 
     def test_record_without_copy_data_still_calibrates_ntfs(self):
-        """Пустой контейнер без копирования — полноценная точка для NTFS."""
+        """An empty container with no copying is a full-fledged NTFS point."""
         empty = Record(
             id="probe",
             container_mib=reference.CACHE_1.container_mib,
             mounted_bytes=reference.CACHE_1.mounted_bytes,
             empty_free_bytes=reference.CACHE_1.empty_free_bytes,
         )
-        self.assertEqual(len(ntfs_points([empty])), 1)
+        self.assertEqual(len(metadata_points([empty])), 1)
         self.assertEqual(len(slack_samples([empty])), 0)
 
 
@@ -138,7 +214,14 @@ class StoreTests(unittest.TestCase):
         Store(path=self.path, records=[reference.CACHE_1]).save()
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         stored = raw["records"][0]
-        for forbidden in ("ntfs_bytes", "vc_header", "consumed_bytes", "container_bytes"):
+        for forbidden in (
+            "metadata_bytes",
+            "vc_header",
+            "tail_bytes",
+            "volume_bytes",
+            "consumed_bytes",
+            "container_bytes",
+        ):
             self.assertNotIn(forbidden, stored)
 
     def test_missing_optional_fields_are_omitted(self):
@@ -192,11 +275,11 @@ class MeasurementRoutingTests(unittest.TestCase):
 
 
 class PayloadAllocTests(unittest.TestCase):
-    """Объём по кластерам: измеренный важнее выведенного.
+    """Cluster-rounded payload: the measured value beats the derived one.
 
-    Для папки из многих файлов Σ ceil(size_i / c) × c больше, чем
-    ceil(Σ size_i / c) × c, и вся разница иначе уехала бы в запас на
-    копирование.
+    For a folder of many files Σ ceil(size_i / c) × c is larger than
+    ceil(Σ size_i / c) × c, and otherwise the whole difference would end up
+    in copy slack.
     """
 
     def test_derived_from_file_bytes_when_not_measured(self):
@@ -243,12 +326,12 @@ class PayloadAllocTests(unittest.TestCase):
             reference.CACHE_1, file_alloc_bytes=12_290, file_bytes=10_000
         )
         self.assertFalse(is_usable(record, SCOPE_SLACK))
-        self.assertTrue(is_usable(record, SCOPE_NTFS))
+        self.assertTrue(is_usable(record, SCOPE_METADATA))
 
 
 class SchemaCompatibilityTests(unittest.TestCase):
     def test_schema_1_file_still_loads(self):
-        """Файлы, снятые до появления file_alloc_bytes, читаются как были."""
+        """Files taken before file_alloc_bytes existed load as they were."""
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "old.json"
             path.write_text(
@@ -272,7 +355,8 @@ class SchemaCompatibilityTests(unittest.TestCase):
             store = Store.load(path)
             self.assertEqual(len(store.records), 1)
             self.assertIsNone(store.records[0].file_alloc_bytes)
-            # без измеренного alloc поведение прежнее — округление суммы
+            # without a measured alloc the behaviour is as before: the sum
+            # is rounded
             self.assertEqual(store.records[0].payload_alloc, 11_553_255_424)
 
     def test_saving_writes_the_current_schema(self):
@@ -304,7 +388,7 @@ class SchemaCompatibilityTests(unittest.TestCase):
             self.assertEqual(Store.load(path).records[0].file_alloc_bytes, 2_048_000)
 
     def test_absent_alloc_is_not_written(self):
-        """Правило схемы: в файл идёт только измеренное."""
+        """Schema rule: only what was measured goes into the file."""
         payload = Record(id="one", container_mib=1024, file_bytes=10_000).to_json()
         self.assertNotIn("file_alloc_bytes", payload)
 

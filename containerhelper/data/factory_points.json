@@ -5,156 +5,182 @@
     {
       "container_mib": 512,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 536604672,
       "empty_free_bytes": 519413760
     },
     {
       "container_mib": 768,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 805040128,
       "empty_free_bytes": 787496960
     },
     {
       "container_mib": 1024,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 1073475584,
       "empty_free_bytes": 1055596544
     },
     {
       "container_mib": 1536,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 1610346496,
       "empty_free_bytes": 1591312384
     },
     {
       "container_mib": 2048,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 2147217408,
       "empty_free_bytes": 2127495168
     },
     {
       "container_mib": 3072,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 3220959232,
       "empty_free_bytes": 3199860736
     },
     {
       "container_mib": 4096,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 4294701056,
       "empty_free_bytes": 4270129152
     },
     {
       "container_mib": 6144,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 6442184704,
       "empty_free_bytes": 6412763136
     },
     {
       "container_mib": 8192,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 8589668352,
       "empty_free_bytes": 8555397120
     },
     {
       "container_mib": 12288,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 12884635648,
       "empty_free_bytes": 12840665088
     },
     {
       "container_mib": 16384,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 17179602944,
       "empty_free_bytes": 17125949440
     },
     {
       "container_mib": 20480,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 21474570240,
       "empty_free_bytes": 21413314560
     },
     {
       "container_mib": 24576,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 25769537536,
       "empty_free_bytes": 25702776832
     },
     {
       "container_mib": 32768,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 34359472128,
       "empty_free_bytes": 34281717760
     },
     {
       "container_mib": 40960,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 42949406720,
       "empty_free_bytes": 42860658688
     },
     {
       "container_mib": 49152,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 51539341312,
       "empty_free_bytes": 51440582656
     },
     {
       "container_mib": 65536,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 68719210496,
       "empty_free_bytes": 68619722752
     },
     {
       "container_mib": 81920,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 85899079680,
       "empty_free_bytes": 85799067648
     },
     {
       "container_mib": 102400,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 107373916160,
       "empty_free_bytes": 107273248768
     },
     {
       "container_mib": 153600,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 161061007360,
       "empty_free_bytes": 160958337024
     },
     {
       "container_mib": 204800,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 214748098560,
       "empty_free_bytes": 214643789824
     },
     {
       "container_mib": 262144,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 274877640704,
       "empty_free_bytes": 274770944000
     },
     {
       "container_mib": 393216,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 412316594176,
       "empty_free_bytes": 412204371968
     },
     {
       "container_mib": 524288,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 549755547648,
       "empty_free_bytes": 549636468736
     },
     {
       "container_mib": 786432,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 824633454592,
       "empty_free_bytes": 824503324672
     },
     {
       "container_mib": 1048576,
       "cluster_bytes": 4096,
+      "filesystem": "NTFS",
       "mounted_bytes": 1099511361536,
       "empty_free_bytes": 1099368849408
     }

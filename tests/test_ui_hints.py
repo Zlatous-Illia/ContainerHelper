@@ -1,10 +1,11 @@
-"""Подсказки интерфейса и 64-битный сигнал вкладки «Калибровка»."""
+"""Interface tooltips and the 64-bit signal of the Calibration tab."""
 
 import os
 import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -18,19 +19,20 @@ QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.formatting import UNIT_GIB  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.model import MIB, DEFAULT_CLUSTER_BYTES  # noqa: E402
+from containerhelper.model import volume_of as model_volume_of  # noqa: E402
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.measure_dialog import MeasureDialog  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
 
-#: Размеры, на которых снят замер. 4 GiB и выше не влезают в 32-битный int —
-#: ровно там кнопки «К заводскому» и «Вернуть своё» и переставали работать.
+#: Sizes that have a measurement. 4 GiB and above do not fit a 32-bit int —
+#: exactly where the Use factory and Restore own buttons stopped working.
 SIZES_GIB = (1, 2, 4, 8, 16, 32, 100)
 
 
 def volume_of(gib: int) -> int:
-    return gib * 1024 * MIB - VC_HEADER_BYTES
+    return model_volume_of(gib * 1024 * MIB)
 
 
 def seeded(path: Path) -> None:
@@ -40,7 +42,7 @@ def seeded(path: Path) -> None:
             Record(
                 id=f"Своя {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=volume_of(gib),
+                mounted_bytes=volume_of(gib) - DEFAULT_CLUSTER_BYTES,
                 empty_free_bytes=volume_of(gib) - 20 * MIB,
             )
             for gib in SIZES_GIB
@@ -64,17 +66,17 @@ class WindowFixture(unittest.TestCase):
     def disabled_at(self, gib: int):
         volume = volume_of(gib)
         for record in self.window.records_tab.store.calibration:
-            if record.mounted_bytes == volume:
+            if record.volume_bytes == volume:
                 return record.disabled
         return None
 
 
 class BigVolumeSignalTests(WindowFixture):
-    """Размер тома — величина 64-битная, и сигнал обязан её донести.
+    """A volume size is a 64-bit value, and the signal must carry it whole.
 
-    Qt-шный int — это C++ int в четыре байта. Всё от 4 GiB и выше в нём
-    переполнялось, обрезанное значение не совпадало ни с одним замером, и
-    кнопка молча не срабатывала.
+    Qt's int is a four-byte C++ int. Everything from 4 GiB up overflowed in
+    it, the truncated value matched no measurement, and the button silently
+    did nothing.
     """
 
     def toggle(self, gib: int, disabled: bool) -> None:
@@ -103,7 +105,7 @@ class BigVolumeSignalTests(WindowFixture):
         self.assertEqual(seen, [volume_of(gib) for gib in SIZES_GIB])
 
     def test_emitting_warns_about_nothing(self):
-        """Переполнение shiboken приходит предупреждением, а не исключением."""
+        """A shiboken overflow arrives as a warning, not as an exception."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             for gib in SIZES_GIB:
@@ -118,13 +120,13 @@ class BigVolumeSignalTests(WindowFixture):
     def test_the_switch_reaches_the_file(self):
         self.toggle(32, True)
         again = Store.load(self.path)
-        stored = [r for r in again.calibration if r.mounted_bytes == volume_of(32)]
+        stored = [r for r in again.calibration if r.volume_bytes == volume_of(32)]
         self.assertTrue(stored[0].disabled)
 
 
 class MeasureDialogTests(unittest.TestCase):
     def test_it_takes_the_caller_s_wording(self):
-        """Диалог зовут из двух мест, и замеряют они разное."""
+        """Called from two places, and they measure different things."""
         dialog = MeasureDialog(prompt="Смонтируйте пустой контейнер.")
         self.assertEqual(dialog.prompt.text(), "Смонтируйте пустой контейнер.")
 
@@ -132,8 +134,33 @@ class MeasureDialogTests(unittest.TestCase):
         dialog = MeasureDialog()
         self.assertIn("Пустой том", dialog.prompt.text())
 
+    def details(self, filesystem, cluster):
+        """The dialog's text for one volume, read from substituted sizes."""
+        module = "containerhelper.ui.measure_dialog"
+        with (
+            mock.patch(f"{module}.mounted_drives", return_value=["X:\\"]),
+            mock.patch(f"{module}.volume_usage", return_value=(1024 * MIB, 512 * MIB)),
+            mock.patch(f"{module}.volume_filesystem", return_value=filesystem),
+            mock.patch(f"{module}.cluster_size", return_value=cluster),
+        ):
+            dialog = MeasureDialog()
+        return dialog.details.text()
+
+    def test_another_profile_is_named(self):
+        """The measurement is kept, not rejected: it goes to its own profile."""
+        text = self.details("exFAT", 32768)
+        self.assertIn("профиль exFAT, 32 KiB", text)
+        self.assertIn("NTFS, 4 KiB", text)
+
+    def test_another_ntfs_cluster_is_another_profile(self):
+        self.assertIn("профиль NTFS, 64 KiB", self.details("NTFS", 65536))
+
+    def test_the_default_profile_has_no_warning(self):
+        self.assertNotIn("профиль", self.details("NTFS", 4096))
+        self.assertNotIn("профиль", self.details("", None))
+
     def test_the_record_dialog_can_open_it(self):
-        """Кнопки «Измерить том» и «Замерить остаток» передают свой текст."""
+        """Measure volume and Measure left space pass their own wording."""
         dialog = RecordDialog()
         opened = []
         dialog._ask_volume = lambda prompt: opened.append(prompt)
@@ -144,7 +171,7 @@ class MeasureDialogTests(unittest.TestCase):
 
 
 class HeaderTooltipTests(WindowFixture):
-    """У каждого столбца своя подсказка: заголовки коротки поневоле."""
+    """Each column has its own tooltip: headers are short by necessity."""
 
     def tips_of(self, table):
         return [
@@ -160,7 +187,7 @@ class HeaderTooltipTests(WindowFixture):
                 self.assertTrue(all(self.tips_of(table)))
 
     def test_they_survive_a_change_of_units(self):
-        """setHorizontalHeaderLabels заводит элементы заголовка заново."""
+        """setHorizontalHeaderLabels creates the header items anew."""
         self.window.unit_combo.setCurrentIndex(
             self.window.unit_combo.findData(UNIT_GIB.key)
         )
@@ -204,7 +231,7 @@ class WidgetTooltipTests(WindowFixture):
                 self.assertTrue(getattr(dialog, name).toolTip())
 
     def test_calibration_rows_name_the_volume_behind_them(self):
-        """Ключ замера — размер тома, а в строке он не показан."""
+        """A measurement's key is the volume size; the row does not show it."""
         table = self.window.calibration_tab.table
         tooltip = table.item(0, 0).toolTip()
         self.assertIn("том", tooltip)

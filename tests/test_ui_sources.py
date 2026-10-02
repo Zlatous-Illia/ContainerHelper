@@ -1,4 +1,4 @@
-"""Универсальный выбор источников: сложение файлов и папок и статистика."""
+"""Universal source selection: adding up files and folders, and statistics."""
 
 import ctypes
 import os
@@ -30,7 +30,7 @@ _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
-from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
+from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
 from containerhelper.sizes import scan_paths, unique_roots  # noqa: E402
 from containerhelper.ui.calc_tab import SOURCE_COLUMNS, CalcTab  # noqa: E402
 from containerhelper.ui.path_picker import (  # noqa: E402
@@ -42,11 +42,11 @@ from containerhelper.ui.path_picker import (  # noqa: E402
 
 
 def default_models():
-    return NtfsModel(), CopySlackModel()
+    return MetadataModel(), CopySlackModel()
 
 
 class TreeFixture(unittest.TestCase):
-    """Две независимые папки и отдельный файл — обычный случай выбора."""
+    """Two independent folders and a separate file: the usual selection."""
 
     def setUp(self):
         self._first = tempfile.TemporaryDirectory()
@@ -82,7 +82,10 @@ class MultiScanTests(TreeFixture):
         self.assertEqual(single.alloc_bytes(4096), 8192)
 
     def test_a_path_inside_a_chosen_folder_is_not_counted_twice(self):
-        """Иначе выбор папки вместе с её файлом молча завышал бы расчёт."""
+        """Otherwise the calculation would be silently inflated.
+
+        That is what choosing a folder together with its own file would do.
+        """
         together = scan_paths([self.first, self.first / "nested" / "a.bin"], 4096)
         alone = scan_paths([self.first], 4096)
         self.assertEqual(together.payload.file_count, alone.payload.file_count)
@@ -104,7 +107,7 @@ class MultiScanTests(TreeFixture):
         )
 
     def test_unrelated_neighbours_are_both_kept(self):
-        """«C:\\a\\b» лежит не внутри «C:\\ab», хотя строкой похоже."""
+        """`C:\\a\\b` is not inside `C:\\ab`, though the strings look alike."""
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "ab").mkdir()
@@ -144,7 +147,7 @@ class StatsTests(TreeFixture):
         self.assertEqual(stats.average_bytes, (5000 + 1 + 4097) // 3)
 
     def test_empty_files_are_counted_separately(self):
-        """Кластера не занимают, а запись MFT каждому всё равно нужна."""
+        """They take no cluster, but each one still needs an MFT record."""
         (self.first / "zero.bin").write_bytes(b"")
         stats = scan_paths([self.first], 4096).stats(4096)
         self.assertEqual(stats.empty_files, 1)
@@ -168,7 +171,7 @@ class CalcTabSourceTests(TreeFixture):
         )
 
     def test_the_full_path_lives_in_the_tooltip(self):
-        """В ячейке имя: полный путь растянул бы столбец на весь экран."""
+        """The cell has the name; a full path would stretch it screen-wide."""
         self.tab._rescan([str(self.second / "c.bin")])
         self.assertEqual(self.tab.source_table.item(0, 0).text(), "c.bin")
         self.assertEqual(
@@ -196,10 +199,11 @@ class CalcTabSourceTests(TreeFixture):
         self.assertFalse(self.tab.source_box.isVisibleTo(self.tab))
 
     def test_dropping_everything_zeroes_the_fields(self):
-        """Иначе расчёт продолжает считать по снятому источнику.
+        """Otherwise the calculation keeps working from a removed source.
 
-        Подпись уже говорит «источник не выбран», а размер и Container init
-        стоят прежние, и отличить это от ручного ввода нечем.
+        The label already says "no source selected", while the size and
+        Container init stay as they were, and nothing tells this apart from
+        manual entry.
         """
         self.tab._rescan([str(self.first)])
         self.tab.source_table.selectAll()
@@ -209,7 +213,7 @@ class CalcTabSourceTests(TreeFixture):
         self.assertEqual(self.tab.result_label.text(), "—")
 
     def test_dropping_the_last_row_zeroes_the_fields_too(self):
-        """Последняя строка убирается кнопкой так же, как все разом."""
+        """The button removes the last row the same way as all rows at once."""
         self.tab._rescan([str(self.second / "c.bin")])
         self.tab.source_table.selectRow(0)
         self.tab._drop_sources()
@@ -264,7 +268,7 @@ class CalcTabSourceTests(TreeFixture):
         self.assertEqual(self.selected_rows(), [])
 
     def test_inverting_swaps_chosen_and_unchosen(self):
-        """Построчный selectRow оставил бы одну строку: он сбрасывает прежнее."""
+        """Row-by-row selectRow leaves one row: it clears what came before."""
         self.tab._rescan([str(self.first), str(self.second / "c.bin")])
         self.tab.source_table.selectRow(0)
         self.tab.source_table_invert()
@@ -287,14 +291,14 @@ class CalcTabSourceTests(TreeFixture):
 
 
 class DragAndDropTests(TreeFixture):
-    """Бросок мышью — то же «Добавить…», только без диалога."""
+    """A mouse drop does what the Add… button does, only without a dialog."""
 
     def setUp(self):
         super().setUp()
         self.tab = CalcTab(default_models)
 
     def _drop(self, *paths, text=""):
-        """Собрать бросок и отдать его вкладке. Возвращает само событие."""
+        """Build a drop and hand it to the tab. Returns the event itself."""
         mime = QMimeData()
         if paths:
             mime.setUrls([QUrl.fromLocalFile(path) for path in paths])
@@ -313,21 +317,21 @@ class DragAndDropTests(TreeFixture):
         self.assertEqual(self.tab.count_spin.value(), 2)
 
     def test_a_drop_adds_instead_of_replacing(self):
-        """Замена — это кнопка с диалогом; бросок не спрашивает ничего."""
+        """Replacing is the button with a dialog; a drop asks nothing."""
         self.tab._rescan([str(self.first)])
         self._drop(str(self.second / "c.bin"))
         self.assertEqual(self.tab.source_table.rowCount(), 2)
         self.assertEqual(self.tab.count_spin.value(), 3)
 
     def test_a_url_without_a_file_is_thrown_away(self):
-        """Ссылка из браузера приходит тем же mime-типом, что и файл."""
+        """A link from a browser arrives with the same MIME type as a file."""
         mime = QMimeData()
         mime.setUrls(
             [QUrl.fromLocalFile(str(self.first)), QUrl("https://example.com/x")]
         )
         kept = self.tab._dropped_paths(mime)
-        # QUrl отдаёт путь с прямыми слэшами; к обратным его приводит уже
-        # unique_roots, через который проходит любой источник.
+        # QUrl gives the path with forward slashes; it is unique_roots, which
+        # every source passes through, that turns them into backslashes.
         self.assertEqual(
             [os.path.normcase(os.path.abspath(path)) for path in kept],
             [os.path.normcase(str(self.first))],
@@ -339,7 +343,7 @@ class DragAndDropTests(TreeFixture):
         self.assertIsNone(self.tab._scan)
 
     def test_no_input_field_swallows_the_drop(self):
-        """QLineEdit принял бы бросок сам и вставил путь текстом в размер."""
+        """A QLineEdit would take the drop and paste the path into the size."""
         self.assertTrue(self.tab.acceptDrops())
         greedy = [
             field
@@ -350,7 +354,7 @@ class DragAndDropTests(TreeFixture):
 
 
 class PathPickerTests(unittest.TestCase):
-    """Кнопка выбора одна на файлы и папки — иначе делить их нечем."""
+    """One pick button for files and folders: nothing else can split them."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -368,7 +372,7 @@ class PathPickerTests(unittest.TestCase):
         self._dir.cleanup()
 
     def select_names(self, *names):
-        """Выделить в списке строки с этими именами — как это делает мышь."""
+        """Select the rows with these names in the list, as the mouse does."""
         view = self.picker._active_view()
         _app.processEvents()
         model = view.model()
@@ -383,7 +387,7 @@ class PathPickerTests(unittest.TestCase):
         _app.processEvents()
 
     def test_it_does_not_use_the_native_dialog(self):
-        """Родные диалоги Windows умеют либо файлы, либо одну папку."""
+        """Native Windows dialogs handle either files or a single folder."""
         self.assertTrue(self.picker.testOption(PathPicker.DontUseNativeDialog))
 
     def test_a_folder_is_accepted_instead_of_entered(self):
@@ -409,17 +413,18 @@ class PathPickerTests(unittest.TestCase):
         self.assertNotEqual(self.picker.result(), QDialog.Accepted)
 
     def test_a_vanished_path_is_dropped(self):
-        """Имя набирают руками, и файла за ним может уже не быть."""
+        """The name is typed by hand, and the file behind it may be gone."""
         self.picker._name_edit.setText("gone")
         self.picker.selectedFiles = lambda: [str(self.root / "gone")]
         self.picker.accept()
         self.assertNotEqual(self.picker.result(), QDialog.Accepted)
 
     def test_the_mouse_draws_a_rubber_band_instead_of_dragging(self):
-        """Qt ставит видам диалога InternalMove, и протяжка начинает перенос.
+        """Qt gives the dialog's views InternalMove, and a drag starts a move.
 
-        С ним выделить мышью несколько имён нельзя вовсе — остаются только Ctrl
-        и Shift, а это и выглядит как «мышкой не выделяется».
+        With it, several names cannot be selected with the mouse at all; only
+        Ctrl and Shift remain, and that is exactly what looks like "the mouse
+        does not select".
         """
         for name in FILE_VIEWS:
             view = self.picker.findChild(QAbstractItemView, name)
@@ -432,7 +437,7 @@ class PathPickerTests(unittest.TestCase):
                 )
 
     def test_the_sidebar_keeps_its_drag(self):
-        """В боковую панель перетаскиванием складывают закладки."""
+        """Bookmarks are added to the sidebar by dragging."""
         sidebar = self.picker.findChild(QAbstractItemView, "sidebar")
         self.assertIsNotNone(sidebar)
         self.assertTrue(sidebar.dragEnabled())
@@ -472,11 +477,11 @@ class PathPickerTests(unittest.TestCase):
         self.assertEqual(model.rowCount(view.rootIndex()), visible + 1)
 
     def test_the_context_menu_and_the_checkbox_are_one_switch(self):
-        """У QFileDialog тот же переключатель есть в контекстном меню списка.
+        """QFileDialog has the same switch in the list's context menu.
 
-        Фильтр он правит по triggered, а галочка слушала бы toggled — тот
-        приходит раньше, видит ещё старое состояние и переключает пункт второй
-        раз: нажатие в меню не делало бы ничего.
+        It changes the filter on triggered, while the checkbox would listen to
+        toggled: that one arrives earlier, still sees the old state and flips
+        the item a second time, so a click in the menu would do nothing.
         """
         action = self.picker._hidden_action
         self.assertIsNotNone(action)
@@ -488,7 +493,7 @@ class PathPickerTests(unittest.TestCase):
         self.assertFalse(self.picker.hidden_check.isChecked())
 
     def test_the_checkbox_starts_where_it_was_left(self):
-        """Диалог живёт один показ; состояние приходит снаружи и уходит наружу."""
+        """A dialog lives one showing; state is handed in and handed back."""
         opened = PathPicker(
             state=PickerState(directory=str(self.root), show_hidden=True)
         )
@@ -497,11 +502,11 @@ class PathPickerTests(unittest.TestCase):
         opened.deleteLater()
 
     def test_it_opens_where_it_was_shown_not_where_the_choice_was(self):
-        """Выбрав в папке 1 папку 2, второй раз надо открыться снова в папке 1.
+        """After folder 2 is chosen in folder 1, it must reopen in folder 1.
 
-        Начальная папка, взятая из выбранного пути, уводила на уровень вглубь
-        на каждый показ: рядом с выбранным лежит и следующее, а внутри него —
-        уже ничего.
+        A start folder taken from the chosen path went one level deeper on
+        every showing: the next thing to choose lies next to the chosen one,
+        and inside it there is nothing.
         """
         nested = self.root / "folder"
         self.picker.selectFile(str(nested))
@@ -517,7 +522,7 @@ class PathPickerTests(unittest.TestCase):
         self.assertEqual(Path(self.picker.store_state().directory), nested)
 
     def test_without_the_checkbox_it_starts_at_the_computer(self):
-        """Список дисков, а не папка программы: данные лежат где угодно."""
+        """The drive list, not the program folder: the data can be anywhere."""
         state = PickerState(directory=str(self.root), remember_dir=False)
         self.assertEqual(state.start_directory(), COMPUTER)
         opened = PathPicker(state=state)
@@ -525,19 +530,20 @@ class PathPickerTests(unittest.TestCase):
         opened.deleteLater()
 
     def test_the_dialog_carries_no_tooltip_of_its_own(self):
-        """Иначе её показывает наведение на любой файл в списке.
+        """Otherwise hovering over any file in the list shows it.
 
-        Подсказка диалога наследуется всеми детьми без своей, и под курсором
-        над именем файла появлялся тот же текст, что и так написан внизу.
+        The dialog's tooltip is inherited by every child without one of its
+        own, and with the cursor over a file name the same text appeared that
+        is already written at the bottom.
         """
         self.assertEqual(self.picker.toolTip(), "")
 
     def test_clearing_the_selection_empties_the_chosen_line(self):
-        """Иначе «Выбрать» добавляет файлы, которых никто уже не выделял.
+        """Otherwise the Select button adds files nobody has selected any more.
 
-        Строка наполняется в обход сигналов: на правку текста диалог отвечает
-        автодополнением и сам же выделяет подходящее имя — а проверить надо
-        свою уборку, а не его.
+        The line is filled bypassing signals: the dialog answers a text edit
+        with autocompletion and selects a matching name itself, and what must
+        be checked is our own cleanup, not the dialog's.
         """
         edit = self.picker._name_edit
         self.select_names()
@@ -555,7 +561,7 @@ class PathPickerTests(unittest.TestCase):
         self.assertEqual(self.picker.chosen_paths(), [])
 
     def test_inverting_twice_hands_out_nothing(self):
-        """Инверсия из пустоты выделяет всё, вторая — снимает всё."""
+        """Inverting from empty selects all; a second inversion clears all."""
         self.select_names()
         self.picker._invert_selection()
         _app.processEvents()
@@ -576,7 +582,7 @@ class PathPickerTests(unittest.TestCase):
 
 
 class ChosenLineTests(unittest.TestCase):
-    """Строка «Выбрано» и выделение обязаны говорить одно и то же."""
+    """The "Selected" line and the selection must say the same thing."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -599,7 +605,7 @@ class ChosenLineTests(unittest.TestCase):
         return sorted(Path(path).name for path in self.picker.selected_paths())
 
     def test_the_line_lists_folders_too(self):
-        """Диалог кладёт туда только файлы: папку он считает дорогой вглубь."""
+        """The dialog puts only files there: it sees a folder as a way in."""
         self.picker._select_all()
         _app.processEvents()
         text = self.picker._name_edit.text()
@@ -608,7 +614,7 @@ class ChosenLineTests(unittest.TestCase):
                 self.assertIn(name, text)
 
     def test_inverting_keeps_alternating(self):
-        """Вторая инверсия подряд работала уже над не тем набором, что показан."""
+        """A second inversion in a row worked on a different set than shown."""
         self.picker._select_all()
         _app.processEvents()
         self.assertEqual(len(self.names()), 4)
@@ -626,7 +632,7 @@ class ChosenLineTests(unittest.TestCase):
         self.assertEqual(self.picker._name_edit.text(), "")
 
     def test_a_stale_line_hands_out_nothing(self):
-        """Папка могла перечитаться, а имена в строке остаться."""
+        """The folder may be reread while the names stay in the line."""
         edit = self.picker._name_edit
         self.picker._select_none()
         edit.blockSignals(True)
@@ -646,7 +652,7 @@ class ChosenLineTests(unittest.TestCase):
         )
 
     def test_the_accept_button_follows_the_selection(self):
-        """Диалог включает её по правке строки, а строка у нас молчит."""
+        """The dialog enables it on a line edit, and our line stays silent."""
         button = self.picker._accept_button
         self.assertIsNotNone(button)
         self.picker._select_none()
@@ -658,11 +664,12 @@ class ChosenLineTests(unittest.TestCase):
 
 
 class DialogSizeTests(unittest.TestCase):
-    """Размер окна запоминается двумя числами, а не saveGeometry.
+    """The window size is stored as two numbers, not with saveGeometry.
 
-    `restoreGeometry` сверяет ширину экрана, на котором геометрию сохранили, с
-    нынешней, и при расхождении больше четверти возвращает false, ничего не
-    сделав, — а дальше QDialog подгоняет окно под содержимое.
+    `restoreGeometry` compares the width of the screen the geometry was saved
+    on with the current one, and if they differ by more than a quarter it
+    returns false having done nothing; QDialog then fits the window to its
+    contents.
     """
 
     def setUp(self):
@@ -699,7 +706,7 @@ class DialogSizeTests(unittest.TestCase):
         second.close()
 
     def test_an_unknown_size_leaves_the_dialog_alone(self):
-        """Первый показ: размер выбирает сам диалог."""
+        """First showing: the dialog picks the size itself."""
         self.assertFalse(PickerState().sized)
         dialog = PathPicker(state=PickerState(directory=self._dir.name))
         dialog.show()

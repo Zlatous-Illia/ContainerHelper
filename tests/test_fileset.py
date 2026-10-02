@@ -1,4 +1,4 @@
-"""Наборы файлов: арифметика набора и его генерация на томе."""
+"""File sets: the arithmetic of a set and its generation on the volume."""
 
 import tempfile
 import unittest
@@ -28,7 +28,7 @@ MIXED = FileSet(
 
 class ArithmeticTests(unittest.TestCase):
     def test_alloc_rounds_every_file_separately(self):
-        """Иначе полтора мегабайта на пятистах файлах уехали бы в запас."""
+        """Otherwise 1.5 megabytes over 500 files would end up in slack."""
         five_hundred = FileSet("x", "x", (Group(500, KIB),))
         self.assertEqual(five_hundred.logical_bytes, 500 * KIB)
         self.assertEqual(five_hundred.alloc_bytes(4096), 500 * 4096)
@@ -43,27 +43,27 @@ class ArithmeticTests(unittest.TestCase):
         self.assertEqual(MIXED.alloc_bytes(4096), 5 * 4096 + 25 * 4096)
 
     def test_payload_does_not_materialise_every_size(self):
-        """Десять тысяч чисел ради суммы, которая считается умножением."""
+        """Ten thousand numbers for a sum that one multiplication gives."""
         payload = FILE_SETS[-1].payload(4096)
         self.assertEqual(payload.file_count, FILE_SETS[-1].file_count)
         self.assertEqual(payload.alloc_bytes, FILE_SETS[-1].alloc_bytes(4096))
 
 
 class CatalogueTests(unittest.TestCase):
-    """Состав набора решает, что вообще можно откалибровать."""
+    """What the file sets contain decides what can be calibrated at all."""
 
     def test_enough_different_file_counts_to_fit_a_slope(self):
-        """По одному числу файлов наклон не считается вовсе.
+        """With a single file count the slope is not computed at all.
 
-        CopySlackModel.calibrate берёт метод наименьших квадратов только при
-        двух и более различных n, а зависимость ступенчатая — по двум точкам
-        наклон был бы случайным.
+        CopySlackModel.calibrate uses least squares only with two or more
+        distinct n, and the dependence comes in steps — from two points the
+        slope would be random.
         """
         counts = {item.file_count for item in FILE_SETS}
         self.assertGreaterEqual(len(counts), 4)
 
     def test_two_sets_share_a_file_count_but_not_a_size(self):
-        """Проверка предположения «запас зависит только от числа файлов»."""
+        """Tests the assumption "slack depends only on the file count"."""
         singles = [item for item in FILE_SETS if item.file_count == 1]
         self.assertEqual(len(singles), 2)
         sizes = {item.logical_bytes for item in singles}
@@ -79,14 +79,14 @@ class CatalogueTests(unittest.TestCase):
         )
 
     def test_the_smallest_file_still_gets_a_cluster(self):
-        """Файл короче ~700 B NTFS держит в записи MFT, и запас уходит в минус."""
+        """Files under ~700 B sit in the MFT record; slack goes negative."""
         self.assertGreaterEqual(SMALL_FILE, 1024)
 
     def test_unknown_key_is_not_a_set(self):
         self.assertIsNone(fileset_by_key("нет такого"))
 
     def test_calibrating_on_these_counts_separates_the_per_file_part(self):
-        """То, ради чего наборы и заведены."""
+        """The very thing the file sets exist for."""
         samples = [
             (item.file_count, 200_000 + 1000 * item.file_count)
             for item in FILE_SETS
@@ -117,7 +117,7 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(sizes, [KIB] * 5 + [100 * KIB])
 
     def test_names_are_long_enough_to_grow_the_index_honestly(self):
-        """Короткие имена дали бы индекс меньше настоящего, то есть занижение."""
+        """Short names grow the index less than real ones: an underestimate."""
         generate(self.root, TINY)
         self.assertTrue(all(len(name) >= 30 for name in self.files()))
         self.assertEqual(len(set(self.files())), 10)
@@ -141,7 +141,7 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(len(calls), 10)
 
     def test_the_check_stops_the_run_by_raising(self):
-        """Возвращаемое значение не смотрится: молчаливый отказ неотличим от успеха."""
+        """Return values are ignored: a silent refusal looks like success."""
 
         class Enough(Exception):
             pass
@@ -160,7 +160,7 @@ class GenerationTests(unittest.TestCase):
         self.assertTrue(self.root.is_dir())
 
     def test_content_is_not_all_zeroes(self):
-        """Свернуть такое нечему, и зависеть от отсутствия сжатия не приходится."""
+        """Nothing to fold away: no need to rely on compression being off."""
         generate(self.root, TINY)
         data = next(self.root.glob("*")).read_bytes()
         self.assertNotEqual(data, bytes(len(data)))

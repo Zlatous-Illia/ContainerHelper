@@ -1,19 +1,20 @@
-"""Немодальные окна с графиками.
+"""Modeless chart windows.
 
-Окнами, а не пятой вкладкой: вкладки идут порядком работы — «Расчёт», «Записи»,
-«Модель», «Калибровка», — и «Графики» в этот порядок не встают. Отдельное окно
-к тому же растягивается на весь экран, а вкладке пришлось бы делить высоту с
-таблицей.
+Windows, not a fifth tab: the tabs follow the order of work — Calculation,
+Records, Model, Calibration — and "Charts" does not fit into that order. A
+separate window can also be stretched to the full screen, while a tab would
+have to share its height with a table.
 
-Окно ничего не знает о хранилище: графики ему приносят готовыми, а собирает их
-`charts.py`. Поэтому здесь нет ни одной величины в байтах.
+The window knows nothing about the store: charts are brought to it
+ready-made, and `charts.py` builds them. So there is not a single byte
+quantity here.
 """
 
 from __future__ import annotations
 
 from typing import Callable, Sequence
 
-from PySide6.QtCore import QByteArray, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -26,56 +27,62 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DEFAULT_UNIT, Unit
+from ..i18n import tr
 from ..plot import LAYOUT_STACK, Chart
 from .chart import ChartView
+from .language import repeated_change
 
-#: Ключи окон. Ими же именуется сохранённая геометрия, поэтому строки, а не
-#: номера: от перестановки список номеров разъехался бы молча — то же правило,
-#: что и для активной вкладки.
+#: Window keys. The saved geometry is named by them too, hence strings, not
+#: numbers: after a reordering a list of numbers would drift silently — the
+#: same rule as for the active tab.
 CHART_NTFS = "ntfs"
 CHART_SLACK = "slack"
 CHART_FORECAST = "forecast"
 CHART_CALC = "calc"
 
-HINT = (
-    "Рамка левой кнопкой — приблизить, колесо — масштаб, правая кнопка "
-    "зажатой — сдвиг, двойной правой или Esc — сброс. Меню — двойным левым "
-    "щелчком или средней кнопкой. Щелчок по легенде прячет серию, щелчок по "
-    "точке показывает её целиком."
-)
+HINT = "chart.hint"
 
-#: Размер окна при первом показе. Ширина одна на все окна, высота считается
-#: по тому, что внутри: панели разной высоты не бывают редкостью — лента
-#: покрытия вдвое ниже настоящего графика.
+#: Window size on first show. The width is the same for all windows; the
+#: height is computed from what is inside: a chart gets PANEL_HEIGHT, while
+#: the breakdown bar takes only its own height.
 WINDOW_WIDTH = 760
 PANEL_HEIGHT = 260
-#: Кнопки сверху, строка о точке и подсказка снизу.
+#: Buttons at the top, the point line and the hint at the bottom.
 CHROME_HEIGHT = 140
 
-#: Сколько графиков в ряду сетки. Двойка, а не «сколько влезет»: третий в ряду
-#: сжимает график до ширины, на которой подписи делений сходятся друг к другу,
-#: и экономия высоты перестаёт окупаться.
+#: How many charts per grid row. Two, not "as many as fit": a third in the row
+#: squeezes a chart to a width where tick labels run into each other, and the
+#: height saved stops paying off.
 GRID_COLUMNS = 2
 
-#: Подписи переключателя раскладки.
-GRID_TEXT = "Сеткой"
-COLUMN_TEXT = "Столбцом"
+#: Labels of the layout toggle, as catalog keys.
+GRID_TEXT = "chart.grid"
+COLUMN_TEXT = "chart.column"
 
 Builder = Callable[[], Chart]
 
 
 class EvenHandle(QSplitterHandle):
-    """Ручка разделителя, возвращающая равные доли двойным щелчком.
+    """A splitter handle that restores equal shares on a double click.
 
-    Без неё вернуть съехавшие высоты можно только на глаз: разделитель тянут
-    мышью, и попасть обратно в «поровну» руками нельзя.
+    Without it, heights that have drifted can only be restored by eye: the
+    splitter is dragged with the mouse, and hitting "equal" again by hand is
+    impossible.
     """
 
     def __init__(self, orientation, parent) -> None:
         super().__init__(orientation, parent)
-        self.setToolTip("Двойной щелчок делит высоту поровну")
+        self.retranslate()
 
-    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 — имя от Qt
+    def retranslate(self) -> None:
+        self.setToolTip(tr("chart.even.tip"))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 — Qt's name
         splitter = self.splitter()
         if isinstance(splitter, EvenSplitter):
             splitter.even_out()
@@ -83,23 +90,24 @@ class EvenHandle(QSplitterHandle):
 
 
 class EvenSplitter(QSplitter):
-    """Разделитель, чьи ручки умеют возвращать равные доли.
+    """A splitter whose handles can restore equal shares.
 
-    «Поровну» знает не он: полоса разложения и лента покрытия по вертикали
-    ничего не откладывают, и равная доля им не нужна. Кто это знает —
-    подставляет свой расчёт в `equalizer`.
+    It is not the one that knows what "equal" means: the breakdown bar plots
+    nothing vertically, and it needs no equal share. Whoever knows puts their
+    own calculation into `equalizer`.
     """
 
     def __init__(self, orientation, parent=None) -> None:
         super().__init__(orientation, parent)
         self.equalizer = None
-        # Схлопнуть график в ноль нельзя: он не сворачивается в заголовок, он
-        # просто исчезает, и вернуть его можно только попав мышью в ручку
-        # шириной в пять пикселей. Минимум у графика свой, разделитель его
-        # уважает — если ему не разрешать схлопывание.
+        # A chart must not collapse to zero: it does not fold into its title,
+        # it simply disappears, and the only way to get it back is to hit a
+        # handle five pixels wide with the mouse. The chart has its own
+        # minimum, and the splitter respects it — as long as collapsing is
+        # not allowed.
         self.setChildrenCollapsible(False)
 
-    def createHandle(self) -> QSplitterHandle:  # noqa: N802 — имя от Qt
+    def createHandle(self) -> QSplitterHandle:  # noqa: N802 — Qt's name
         return EvenHandle(self.orientation(), self)
 
     def even_out(self) -> None:
@@ -112,15 +120,16 @@ class EvenSplitter(QSplitter):
 
 
 class DetachedChart(QWidget):
-    """Окно одного отсоединённого графика.
+    """The window of one detached chart.
 
-    Виджет графика переезжает сюда целиком, а не рисуется заново: вместе с ним
-    переезжают и масштаб, и спрятанные серии — их не пришлось бы восстанавливать
-    только потому, что окно сменилось.
+    The chart widget moves here whole, not redrawn anew: the zoom and the
+    hidden series move along with it — so they need not be restored merely
+    because the window changed.
     """
 
-    #: Вернуть график в общее окно. Закрытие окна значит то же самое: график —
-    #: не документ, закрывать его отдельно от группы бессмысленно.
+    #: Return the chart to the shared window. Closing the window means the
+    #: same: a chart is not a document, and closing it apart from its group
+    #: makes no sense.
     returned = Signal()
     syncToggled = Signal(bool)
     crossToggled = Signal(bool)
@@ -142,39 +151,30 @@ class DetachedChart(QWidget):
         layout.addWidget(view, 1)
 
         row = QHBoxLayout()
-        # Две галочки, а не одна: масштаб и перекрестье связывают разное.
-        # Общий масштаб заставляет окна показывать один и тот же участок;
-        # общее перекрестье остаётся полезным и при разных участках — линия
-        # ставится по значению, и каждый рисует её в своём масштабе.
-        self.sync_check = QCheckBox("Общий масштаб по X")
-        self.sync_check.setToolTip(
-            "Держать по оси X тот же участок, что и у графиков той же "
-            "группы.\n"
-            "Выключено — окно живёт своим масштабом."
-        )
+        # Two check boxes, not one: the zoom and the crosshair link different
+        # things. A shared zoom makes the windows show the same stretch; a
+        # shared crosshair stays useful even with different stretches — the
+        # line is placed by value, and each chart draws it in its own zoom.
+        self.sync_check = QCheckBox()
         self.sync_check.setChecked(sync)
         self.sync_check.setVisible(link_x)
         self.sync_check.toggled.connect(self.syncToggled.emit)
         row.addWidget(self.sync_check)
 
-        self.cross_check = QCheckBox("Общее перекрестье")
-        self.cross_check.setToolTip(
-            "Показывать на соседних графиках вертикаль под курсором — на том "
-            "же значении по X, каждый в своём масштабе.\n"
-            "Ради этого общая ось и заведена: горб на остатках стоит ровно "
-            "под своей ступенью наклона."
-        )
+        self.cross_check = QCheckBox()
         self.cross_check.setChecked(cross)
         self.cross_check.setVisible(link_x)
         self.cross_check.toggled.connect(self.crossToggled.emit)
         row.addWidget(self.cross_check)
         row.addStretch(1)
-        # Кнопки возврата тут нет: она стоит на самом графике, в углу, и
-        # вторая такая же внизу была бы про то же самое.
+        # There is no return button here: it sits on the chart itself, in the
+        # corner, and a second one at the bottom would say the same thing.
         layout.addLayout(row)
+        self.retranslate()
 
-        #: Сколько в окне занято не графиком. Нужно, чтобы подогнать высоту
-        #: окна под сам график, а не под него плюс неизвестно что.
+        #: How much of the window is taken by things other than the chart.
+        #: Needed to fit the window height to the chart itself, not to the
+        #: chart plus who knows what.
         self.chrome_height = (
             (row.sizeHint().height() if link_x else 0)
             + layout.spacing()
@@ -182,18 +182,37 @@ class DetachedChart(QWidget):
             + layout.contentsMargins().bottom()
         )
 
-    def closeEvent(self, event) -> None:  # noqa: N802 — имя от Qt
-        """Закрыли окно — график возвращается, а не исчезает.
+    def retranslate(self) -> None:
+        """The check boxes. The window title is made of chart data, and the
+        shared window sets it on every refresh."""
+        self.sync_check.setText(tr("chart.sync"))
+        self.sync_check.setToolTip(tr("chart.sync.tip"))
+        self.cross_check.setText(tr("chart.cross"))
+        self.cross_check.setToolTip(tr("chart.cross.tip"))
 
-        Иначе он пропал бы вместе с окном, и вернуть его было бы нечем: список
-        графиков окна задан при сборке и пополняться не умеет.
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        """The window was closed — the chart returns instead of disappearing.
+
+        Otherwise it would vanish with the window, and there would be nothing
+        to bring it back with: the window's list of charts is fixed at
+        construction and cannot grow.
         """
         self.returned.emit()
         event.accept()
 
 
 class ChartWindow(QWidget):
-    """Одно окно с одним или несколькими графиками."""
+    """One window with one or several charts."""
 
     def __init__(
         self,
@@ -205,15 +224,17 @@ class ChartWindow(QWidget):
     ) -> None:
         super().__init__(parent, Qt.Window)
         self.key = key
+        #: A catalog key, translated where shown. Text that is not a key
+        #: shows as it is, untranslated.
         self.title = title
         self._builders = list(builders)
         self._link_x = link_x
         self._unit: Unit = DEFAULT_UNIT
-        #: Ключ точки, показанной в строке под графиками. По нему описание
-        #: обновляется вместе с данными: замер мог измениться, а строка
-        #: рассказывала бы о вчерашних числах.
+        #: Key of the point shown in the line under the charts. By it the
+        #: description is updated along with the data: the measurement may
+        #: have changed, and the line would be telling about yesterday's
+        #: numbers.
         self._picked: object = None
-        self.setWindowTitle(title)
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._build_actions())
@@ -222,48 +243,53 @@ class ChartWindow(QWidget):
         self.splitter.equalizer = self._even_sizes
         self.splitter.splitterMoved.connect(self._on_outer_moved)
         self.views: list[ChartView] = []
-        #: Отсоединённые графики по номеру в списке — и их окна.
+        #: Detached charts by their number in the list — and their windows.
         self._windows: dict[int, DetachedChart] = {}
-        #: Держать ли общий масштаб. У отсоединённого — по галочке в его окне,
-        #: у стоящего в общем окне — всегда: он и так стоит рядом.
+        #: Whether to keep the shared zoom. For a detached chart, per the check
+        #: box in its window; for one in the shared window, always: it stands
+        #: alongside anyway.
         self._sync: list[bool] = []
-        #: Связь перекрестья — отдельно от связи масштаба.
+        #: The crosshair link — separate from the zoom link.
         self._cross: list[bool] = []
-        #: Высота графика в общем окне и геометрия его отдельного окна — две
-        #: разные величины, и путать их нельзя: в общем окне график делит
-        #: высоту с соседями, а в своём занимает всё окно. Обе запоминаются,
-        #: чтобы отсоединение и возврат не переставляли ни ту, ни другую.
+        #: A chart's height in the shared window and the geometry of its own
+        #: window are two different quantities and must not be confused: in
+        #: the shared window the chart shares the height with its neighbours,
+        #: in its own it takes the whole window. Both are remembered so that
+        #: detaching and returning disturb neither.
         self._sections: list[int] = []
         self._geometry: dict[int, QByteArray] = {}
-        #: Порядок графиков в окне — номерами. Переставляется кнопками на
-        #: самих графиках: какой из них нужнее сверху, знает только тот, кто
-        #: смотрит.
+        #: The order of charts in the window, as numbers. Changed by the
+        #: buttons on the charts themselves: only the person looking knows
+        #: which one is more needed on top.
         self._order: list[int] = []
-        #: Раскладка: столбцом или сеткой. У каждой свой размер окна — как у
-        #: графика своя высота в окне и свой размер в отдельном окне: сетке
-        #: нужна ширина, столбцу высота, и одним числом их не описать.
+        #: Layout: column or grid. Each has its own window size — just as a
+        #: chart has its own height in the window and its own size in a
+        #: separate window: the grid needs width, the column height, and one
+        #: number can't describe both.
         self._grid = False
         self._sizes: dict[bool, QSize] = {}
-        #: Сетка: высоты рядов и **общие** ширины столбцов. Ширины одни на все
-        #: ряды: два ряда с разными границами столбцов — это уже не сетка, а
-        #: две отдельные пары, и выравнивание, ради которого сетку и включают,
-        #: пропадает.
+        #: Grid: row heights and the **shared** column widths. The widths are
+        #: one set for all rows: two rows with different column boundaries are
+        #: no longer a grid but two separate pairs, and the alignment the grid
+        #: is switched on for is lost.
         self._rows: list[int] = []
         self._columns: list[int] = []
-        #: Идёт рассылка ширин по рядам — чужие сигналы в это время не слушаем.
+        #: Widths are being sent out to the rows — other rows' signals are
+        #: ignored meanwhile.
         self._syncing = False
-        #: Как собран **нынешний** разделитель: раскладкой и порядком. Не то
-        #: же, что `_grid` и `_order`: между сменой этих полей и пересборкой в
-        #: разделителе ещё стоит прежнее, и снимать с него размеры надо по
-        #: тому, что там есть, а не по тому, что задумано. Иначе высоты
-        #: приписываются уже переставленным графикам — и оба меняются местами
-        #: разом, то есть не меняются вовсе.
+        #: How the **current** splitter is built: layout and order. Not the
+        #: same as `_grid` and `_order`: between a change of those fields and
+        #: the rebuild the splitter still holds the previous arrangement, and
+        #: sizes must be read off it by what is there, not by what is
+        #: intended. Otherwise the heights are credited to charts that have
+        #: already been swapped — and both swap at once, which means they do
+        #: not swap at all.
         self._built_grid = False
         self._built_order: list[int] = []
-        #: Высота общего окна до того, как из него что-то ушло, и высота,
-        #: которую оно получило взамен. Вторая нужна, чтобы отличить «окно
-        #: осталось как мы его ужали» от «человек потянул за край сам»:
-        #: во втором случае возвращать прежнюю высоту нельзя.
+        #: The shared window's height before something left it, and the height
+        #: it got instead. The second is needed to tell "the window is still
+        #: as we shrank it" from "the person dragged the edge themselves": in
+        #: the second case the old height must not be restored.
         self._height_before = 0
         self._shrunk_to = 0
         for index, _builder in enumerate(self._builders):
@@ -289,29 +315,24 @@ class ChartWindow(QWidget):
 
         self.detail = QLabel("")
         self.detail.setWordWrap(True)
-        self.detail.setToolTip(
-            "Что за точка под курсором. Заполняется щелчком по ней — таблица "
-            "с числами живёт в главном окне, и подсвечивать в ней строку "
-            "из-под другого окна было бы некуда смотреть."
-        )
         layout.addWidget(self.detail)
 
-        hint = QLabel(HINT)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
-        layout.addWidget(hint)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: palette(mid);")
+        layout.addWidget(self.hint)
 
-        self._refresh_grid_button()
-        self.refresh()
+        self.retranslate()
         self.resize(self._natural_size())
 
     def _natural_size(self) -> QSize:
-        """Размер под все панели — но не больше экрана.
+        """A size that fits all panels — but no bigger than the screen.
 
-        Высоту нельзя считать числом панелей: полоса разложения занимает своё,
-        а не долю окна, и окно выходило бы длиннее, чем нужно. Экран тоже
-        спрашивается: окно выше него Qt всё равно ужмёт, а разделитель раздаст
-        эту нехватку панелям как придётся.
+        The height can't be counted by the number of panels: the breakdown
+        bar takes its own height, not a share of the window, and the window
+        would come out taller than needed. The screen is asked too: Qt will
+        shrink a window taller than it anyway, and the splitter will hand the
+        shortfall out to the panels any which way.
         """
         heights = [
             view.sizeHint().height() if self._compact(view) else PANEL_HEIGHT
@@ -336,51 +357,64 @@ class ChartWindow(QWidget):
     def _build_actions(self) -> QHBoxLayout:
         row = QHBoxLayout()
 
-        self.reset_button = QPushButton("Сбросить масштаб")
-        self.reset_button.setToolTip(
-            "Вернуть все графики окна к полному виду. То же делает двойной "
-            "щелчок правой кнопкой по графику или Esc."
-        )
+        self.reset_button = QPushButton()
         self.reset_button.clicked.connect(self.reset_zoom)
         row.addWidget(self.reset_button)
 
-        self.grid_button = QPushButton(GRID_TEXT)
+        self.grid_button = QPushButton()
         self.grid_button.clicked.connect(lambda: self.set_grid(not self._grid))
         row.addWidget(self.grid_button)
 
-        self.copy_button = QPushButton("Копировать картинку")
-        self.copy_button.setToolTip(
-            "Положить график в буфер обмена. Копируется тот, на который "
-            "наводили последним."
-        )
+        self.copy_button = QPushButton()
         self.copy_button.clicked.connect(lambda: self.active_view().copy_image())
         row.addWidget(self.copy_button)
 
-        self.save_button = QPushButton("Сохранить картинку…")
-        self.save_button.setToolTip(
-            "PNG, SVG или PDF — по расширению в имени файла. SVG и PDF "
-            "векторные: их можно увеличивать без потери."
-        )
+        self.save_button = QPushButton()
         self.save_button.clicked.connect(lambda: self.active_view().save_image())
         row.addWidget(self.save_button)
 
         row.addStretch(1)
         return row
 
-    # --- раскладка ---------------------------------------------------------
+    def retranslate(self) -> None:
+        """Set the static text, then rebuild the charts in the current
+        language through `refresh` — the zoom stays, as on any update."""
+        self.setWindowTitle(tr(self.title))
+        self.reset_button.setText(tr("chart.reset"))
+        self.reset_button.setToolTip(tr("chart.reset.tip"))
+        self.copy_button.setText(tr("chart.copy"))
+        self.copy_button.setToolTip(tr("chart.copy.tip"))
+        self.save_button.setText(tr("chart.save"))
+        self.save_button.setToolTip(tr("chart.save.tip"))
+        self.detail.setToolTip(tr("chart.detail.tip"))
+        self.hint.setText(tr(HINT))
+        self._refresh_grid_button()
+        self.refresh()
+
+    def event(self, event) -> bool:
+        if repeated_change(self, event):
+            return True
+        return super().event(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    # --- layout ------------------------------------------------------------
 
     def _visible_order(self) -> list[int]:
-        """Номера графиков, стоящих в окне, — в том порядке, в каком они там."""
+        """Numbers of the charts in the window, in the order they stand."""
         return [index for index in self._order if index not in self._windows]
 
     def _rebuild_layout(self) -> None:
-        """Сложить графики в разделитель заново — столбцом или сеткой.
+        """Lay the charts out in the splitter anew — as a column or a grid.
 
-        Пересобирается всё целиком, а не правится по месту: отсоединение,
-        возврат, перестановка и смена раскладки меняют состав одинаково, и
-        четыре разных способа поправить одно и то же разошлись бы на первой же
-        правке. Виджеты при этом переезжают, а не создаются: масштаб и
-        спрятанные серии живут в них.
+        Everything is rebuilt whole, not patched in place: detaching,
+        returning, moving and switching the layout change the composition in
+        the same way, and four different ways of patching the same thing
+        would drift apart at the very first edit. The widgets are moved, not
+        created: the zoom and the hidden series live in them.
         """
         self._remember_layout()
         order = self._visible_order()
@@ -396,8 +430,8 @@ class ChartWindow(QWidget):
             for start in range(0, len(order), GRID_COLUMNS):
                 pack = order[start : start + GRID_COLUMNS]
                 if len(pack) == 1:
-                    # Нечётный последний растягивается на всю ширину: половина
-                    # ряда пустой — это просто выброшенное место.
+                    # An odd last chart stretches to the full width: half a
+                    # row left empty is just wasted space.
                     self.splitter.addWidget(self.views[pack[0]])
                     continue
                 row = EvenSplitter(Qt.Horizontal)
@@ -427,7 +461,7 @@ class ChartWindow(QWidget):
         self._restore_sections()
 
     def _rows_in_grid(self) -> list[EvenSplitter]:
-        """Ряды сетки. Одиночный график, вставленный без ряда, сюда не идёт."""
+        """The grid rows. A single chart inserted without a row is left out."""
         return [
             widget
             for place in range(self.splitter.count())
@@ -439,7 +473,7 @@ class ChartWindow(QWidget):
             self.splitter.setSizes(self._rows)
 
     def _apply_columns(self, skip: EvenSplitter | None = None) -> None:
-        """Разослать общие ширины столбцов по всем рядам."""
+        """Send the shared column widths out to all rows."""
         if not self._columns:
             return
         self._syncing = True
@@ -451,11 +485,11 @@ class ChartWindow(QWidget):
             self._syncing = False
 
     def _on_row_moved(self, row: EvenSplitter) -> None:
-        """Границу столбца потянули в одном ряду — сдвинуть её во всех.
+        """A column boundary was dragged in one row — move it in all of them.
 
-        Иначе ряды разъезжаются и сетка перестаёт быть сеткой: графики одного
-        столбца оказываются разной ширины, и сравнивать их глазом больше
-        нельзя.
+        Otherwise the rows drift apart and the grid stops being a grid: charts
+        in one column end up with different widths, and comparing them by eye
+        is no longer possible.
         """
         if self._syncing or row.count() != GRID_COLUMNS:
             return
@@ -463,7 +497,7 @@ class ChartWindow(QWidget):
         self._apply_columns(skip=row)
 
     def _even_columns(self, total: int, row: EvenSplitter) -> list[int]:
-        """«Поровну» по горизонтали — сразу во всех рядах."""
+        """Equal shares horizontally — in all rows at once."""
         count = max(row.count(), 1)
         sizes = [max(total // count, 1)] * count
         if count == GRID_COLUMNS:
@@ -472,19 +506,20 @@ class ChartWindow(QWidget):
         return sizes
 
     def _on_outer_moved(self, *_args) -> None:
-        """Высоты потянули мышью: в сетке это ряды, в столбце — графики."""
+        """Heights dragged by mouse: rows in the grid, charts in a column."""
         if self._grid:
             self._rows = self.splitter.sizes()
         else:
             self._remember_sections()
 
     def set_grid(self, grid: bool) -> None:
-        """Переключить раскладку, поменяв заодно размер окна.
+        """Switch the layout, changing the window size along the way.
 
-        Размеры у раскладок разные и запоминаются порознь: сетке нужна ширина,
-        столбцу высота. Не менять размер нельзя — в сетке при высоте столбца
-        графики растянутся вдвое, а в столбце при ширине сетки половина уедет
-        за нижний край.
+        The layouts have different sizes, remembered separately: the grid
+        needs width, the column height. Keeping the size is not an option — in
+        the grid at the column's height the charts would stretch twofold, and
+        in the column at the grid's width half of them would slide past the
+        bottom edge.
         """
         if grid == self._grid:
             return
@@ -500,21 +535,18 @@ class ChartWindow(QWidget):
         self.resize(size)
 
     def _refresh_grid_button(self) -> None:
-        self.grid_button.setText(COLUMN_TEXT if self._grid else GRID_TEXT)
+        self.grid_button.setText(tr(COLUMN_TEXT if self._grid else GRID_TEXT))
         self.grid_button.setToolTip(
-            "Поставить графики в столбец, один под другим."
-            if self._grid
-            else "Разложить графики по два в ряд. Окно станет ниже и шире — "
-            "по вертикали место дороже."
+            tr("chart.column.tip" if self._grid else "chart.grid.tip")
         )
         self.grid_button.setVisible(len(self.views) > 1)
 
     def move_view(self, index: int, step: int) -> None:
-        """Поменять график местами с соседним по порядку.
+        """Swap the chart with its neighbour in the order.
 
-        Соседним **в окне**: отсоединённый через это перешагивается, иначе
-        нажатие выглядело бы несработавшим — переставить-то переставили, но
-        видимого порядка это не изменило.
+        The neighbour **in the window**: a detached chart is stepped over,
+        otherwise the press would look as if it failed — the swap did happen,
+        but it did not change the visible order.
         """
         order = self._visible_order()
         if index not in order:
@@ -523,57 +555,67 @@ class ChartWindow(QWidget):
         if not 0 <= place < len(order):
             return
         other = order[place]
-        # Меняются местами графики, а не размеры: высота остаётся при своём
-        # графике, ширины столбцов и высоты рядов — при сетке. Обмен размерами
-        # вдобавок к обмену местами оставлял в памяти одно, на экране другое, и
-        # следующая же смена раскладки раздавала графикам чужие размеры.
+        # The charts swap places, not sizes: a height stays with its chart,
+        # column widths and row heights with the grid. Swapping sizes on top
+        # of swapping places left one thing in memory and another on screen,
+        # and the very next layout switch handed the charts each other's
+        # sizes.
         here, there = self._order.index(index), self._order.index(other)
         self._order[here], self._order[there] = self._order[there], self._order[here]
         self._rebuild_layout()
 
-    # --- данные ------------------------------------------------------------
+    # --- data --------------------------------------------------------------
 
     def refresh(self) -> None:
-        """Пересобрать графики. Зовётся, когда изменились записи или модели.
+        """Rebuild the charts. Called when the records or the models changed.
 
-        Без этого окно молча показывало бы вчерашнюю картинку: замер сняли,
-        модель поехала, а на графике всё по-старому — и отличить свежее от
-        несвежего на глаз нечем.
+        Without this the window would silently show yesterday's picture: a
+        measurement was taken, the model shifted, and the chart is still the
+        same — and there is no way to tell fresh from stale by eye.
 
-        Масштаб, спрятанные серии и выбранная точка при этом остаются: окно
-        открывают, чтобы разглядывать участок, а сбор идёт шагами, и на каждом
-        шаге картинка прыгала бы к полному виду.
+        The zoom, the hidden series and the selected point stay: the window is
+        opened to examine a stretch, while collection goes in steps, and on
+        every step the picture would jump to the full view.
         """
         for view, builder in zip(self.views, self._builders):
             view.set_chart(builder(), keep_view=True)
             view.set_unit(self._unit)
+        # The detached windows are named after their charts, and a fresh
+        # chart may carry a new title — in a new language, too.
+        for index, window in self._windows.items():
+            window.setWindowTitle(self._detached_title(index))
         self._refresh_stretch()
         self._refresh_detail()
 
-    def _compact(self, view: ChartView) -> bool:
-        """Занимает ли график ровно свою высоту, а не долю окна.
+    def _detached_title(self, index: int) -> str:
+        chart = self.views[index].chart()
+        return f"{tr(self.title)} — {chart.title if chart else ''}".strip(" —")
 
-        Полоса разложения по вертикали ничего не откладывает: там слагаемые
-        одной строкой. Растягивать нечего.
+    def _compact(self, view: ChartView) -> bool:
+        """Whether the chart takes its own height exactly, not a window share.
+
+        The breakdown bar plots nothing vertically: its components are in one
+        line. There is nothing to stretch.
         """
         chart = view.chart()
         return chart is not None and chart.layout == LAYOUT_STACK
 
     def _even_sizes(self, total: int) -> list[int]:
-        """Высоты «поровну»: компактным — их собственная, прочим — остаток.
+        """Equal heights: compact charts get their own, others share the rest.
 
-        В сетке считать нечего: в разделителе лежат ряды, и ряды равны по
-        определению.
+        In the grid there is nothing to compute: the splitter holds rows, and
+        rows are equal by definition.
         """
         if self._grid:
             count = self.splitter.count()
             if count < 1:
                 return []
-            # Заодно выровнять столбцы по первому ряду: «поровну» по вертикали
-            # жмут, когда сетка расползлась, и оставить её кривой по
-            # горизонтали значит не сделать того, о чём просили. По первому
-            # ряду, а не поровну: ширины человек мог настроить нарочно, и
-            # ровнять надо ряды между собой, а не всё к середине.
+            # Also align the columns to the first row: "equal" vertically is
+            # pressed when the grid has sprawled, and leaving it crooked
+            # horizontally would mean not doing what was asked. To the first
+            # row, not equally: the person may have set the widths on
+            # purpose, and the rows must be aligned with each other, not
+            # everything pulled to the middle.
             for row in self._rows_in_grid():
                 if row.count() == GRID_COLUMNS and all(row.sizes()):
                     self._columns = row.sizes()
@@ -594,15 +636,17 @@ class ChartWindow(QWidget):
         return [fixed.get(place, share) for place in range(len(places))]
 
     def _refresh_stretch(self) -> None:
-        """Лишнюю высоту окна забирают графики, а не полоса и лента.
+        """Spare window height goes to the charts, not to the breakdown bar.
 
-        Своего минимума им мало: он мешает их **ужать**, а растянуть на треть
-        окна разделитель волен и без спроса. Поэтому высота задаётся явно — но
-        только пока она не та: дальше правка высот принадлежит человеку.
+        Its own minimum is not enough: it stops the bar from being **shrunk**,
+        but the splitter is free to stretch it to a third of the window
+        without asking. So the height is set explicitly — but only while it
+        is wrong: after that, adjusting the heights belongs to the person.
         """
         if self._grid:
-            # В разделителе лежат ряды: они делят высоту поровну, и компактным
-            # графикам внутри ряда это не мешает — у них свой минимум.
+            # The splitter holds rows: they share the height equally, and that
+            # does not hurt compact charts inside a row — they have their own
+            # minimum.
             for place in range(self.splitter.count()):
                 self.splitter.setStretchFactor(place, 1)
             return
@@ -618,11 +662,11 @@ class ChartWindow(QWidget):
                 return
 
     def _refresh_detail(self) -> None:
-        """Обновить описание выбранной точки по свежим данным.
+        """Update the description of the selected point from fresh data.
 
-        По ключу, а не по сохранённому тексту: замер мог измениться, и строка
-        рассказывала бы о вчерашних числах, ничем себя не выдавая. Точка
-        исчезла — строка пустеет.
+        By key, not by the saved text: the measurement may have changed, and
+        the line would tell about yesterday's numbers without giving itself
+        away. If the point is gone, the line empties.
         """
         if self._picked is None:
             return
@@ -645,7 +689,7 @@ class ChartWindow(QWidget):
         for view in self.views:
             view.reset_zoom()
 
-    # --- отсоединение ------------------------------------------------------
+    # --- detaching ---------------------------------------------------------
 
     def detached_indexes(self) -> list[int]:
         return sorted(self._windows)
@@ -657,21 +701,20 @@ class ChartWindow(QWidget):
             self.detach(index)
 
     def detach(self, index: int, geometry: QByteArray | None = None) -> None:
-        """Вынести график в своё окно, забрав у общего его высоту.
+        """Move the chart to its own window, taking its height from this one.
 
-        Виджет переезжает целиком, поэтому масштаб, спрятанные серии и
-        перекрестье остаются при нём. В списке `views` он остаётся на своём
-        месте: обновление, единица измерения и общая ось X ходят по списку, а
-        не по тому, кто где живёт.
+        The widget moves whole, so the zoom, the hidden series and the
+        crosshair stay with it. In the `views` list it keeps its place:
+        updates, the display unit and the shared X axis walk the list, not
+        whoever lives where.
         """
         if index in self._windows or not 0 <= index < len(self.views):
             return
         view = self.views[index]
         height = max(view.height(), view.sizeHint().height())
-        chart = view.chart()
         window = DetachedChart(
             view,
-            f"{self.title} — {chart.title if chart else ''}".strip(" —"),
+            self._detached_title(index),
             self._link_x,
             self._sync[index],
             self._cross[index],
@@ -689,20 +732,22 @@ class ChartWindow(QWidget):
         if remembered is not None and not remembered.isEmpty():
             window.restoreGeometry(remembered)
         else:
-            # Первый раз — по высоте самого графика, а не по высоте общего
-            # окна: в общем он делил её с соседями, а тут занимает всё.
+            # The first time — by the chart's own height, not the shared
+            # window's: there it shared the height with its neighbours, here
+            # it takes all of it.
             window.resize(max(self.width(), 480), height + window.chrome_height)
         window.show()
         self._rebuild_layout()
 
-        # Общее окно ужимается ровно на то, что из него ушло: иначе на месте
-        # отсоединённого графика остаётся пустая полоса в треть экрана.
+        # The shared window shrinks by exactly what left it: otherwise an
+        # empty band a third of the screen tall remains where the detached
+        # chart was.
         if len(self._windows) == 1:
             self._height_before = self.height()
         if self._windows.keys() != set(range(len(self.views))):
-            # Раскладку надо пересчитать до `resize`: пока она думает, что
-            # график всё ещё в окне, её минимум держит прежнюю высоту, и окно
-            # не ужимается вовсе.
+            # The layout must be recomputed before `resize`: while it thinks
+            # the chart is still in the window, its minimum holds the old
+            # height, and the window does not shrink at all.
             self.layout().activate()
             self.resize(
                 self.width(),
@@ -711,29 +756,30 @@ class ChartWindow(QWidget):
             self._shrunk_to = self.height()
 
     def attach(self, index: int) -> None:
-        """Вернуть график на своё место и вернуть окну его высоту."""
+        """Return the chart to its place and the window its height."""
         window = self._windows.pop(index, None)
         if window is None:
             return
-        # Размер отдельного окна запоминается: следующее отсоединение откроет
-        # его таким же, а не заново подогнанным под общее окно.
+        # The separate window's size is remembered: the next detach opens it
+        # the same, not refitted to the shared window.
         self._geometry[index] = window.saveGeometry()
         view = self.views[index]
         view.set_detached(False)
-        # Спрашивать надо до вставки: вставленный график поднимает минимум
-        # раскладки, и окно вырастает само — а нам надо знать, наша ли это
-        # высота или человек потянул за край сам.
+        # Ask before inserting: an inserted chart raises the layout minimum,
+        # and the window grows by itself — while we need to know whether this
+        # is our height or the person dragged the edge themselves.
         ours = bool(self._shrunk_to) and self.height() == self._shrunk_to
-        # На своё место, а не «в конец»: порядок графиков задан списком, и
-        # вернувшийся встаёт туда, откуда уходил.
+        # Into its own place, not "at the end": the chart order is given by
+        # the list, and a returning chart stands where it left from.
         self._rebuild_layout()
         self.layout().activate()
         if not self._windows and ours and self._height_before:
-            # Вернулось всё, и высоту окна с тех пор никто не трогал: вернуть
-            # надо ровно ту, что была до первого отсоединения. Считать её
-            # сложением нельзя — ужать окно мешает минимум раскладки, а расти
-            # обратно ничто не мешает, и за три круга окно уезжало на треть
-            # экрана вниз.
+            # Everything is back, and nobody has touched the window height
+            # since: restore exactly the one it had before the first detach.
+            # It can't be computed by addition — the layout minimum keeps the
+            # window from shrinking, but nothing keeps it from growing back,
+            # and over three rounds the window crept a third of the screen
+            # downwards.
             self.resize(self.width(), self._height_before)
             self._height_before = self._shrunk_to = 0
         window.returned.disconnect()
@@ -741,11 +787,11 @@ class ChartWindow(QWidget):
         window.deleteLater()
 
     def _remember_layout(self) -> None:
-        """Снять размеры с той раскладки, которая стоит прямо сейчас.
+        """Read the sizes off the layout that is in place right now.
 
-        Делается перед каждой пересборкой, а не по сигналу разделителя:
-        `splitterMoved` приходит только от мыши, и всё, что переставлено
-        программно, до памяти не доезжало вовсе.
+        Done before every rebuild, not on a splitter signal: `splitterMoved`
+        comes only from the mouse, and anything rearranged programmatically
+        never reached memory at all.
         """
         if self._built_grid:
             self._remember_grid()
@@ -753,10 +799,10 @@ class ChartWindow(QWidget):
             self._remember_sections()
 
     def _remember_grid(self) -> None:
-        """Высоты рядов и общие ширины столбцов.
+        """Row heights and the shared column widths.
 
-        Ширины берутся у первого полного ряда: они одни на все ряды, и в
-        остальных лежит то же самое.
+        The widths are taken from the first full row: they are one set for
+        all rows, and the others hold the same.
         """
         sizes = self.splitter.sizes()
         if sizes and all(sizes):
@@ -767,10 +813,11 @@ class ChartWindow(QWidget):
                 return
 
     def _remember_sections(self) -> None:
-        """Запомнить, какой высоты каждый график в общем окне.
+        """Remember how tall each chart is in the shared window.
 
-        По номерам графиков, а не списком разделителя: в списке лежат только
-        те, что сейчас в окне, и после возврата он разъехался бы.
+        By chart number, not as the splitter's list: the list holds only the
+        charts now in the window, and after a return it would drift out of
+        line.
         """
         sizes = self.splitter.sizes()
         for place, index in enumerate(self._built_order):
@@ -790,8 +837,8 @@ class ChartWindow(QWidget):
     def _set_sync(self, index: int, enabled: bool) -> None:
         self._sync[index] = enabled
         if enabled:
-            # Только что связали — подтянуть к общему масштабу сразу, а не
-            # ждать следующего движения: иначе галочка выглядит несработавшей.
+            # Just linked — pull it to the shared zoom right away, not on the
+            # next move: otherwise the check box looks as if it did not work.
             for other in self.views:
                 if other is not self.views[index] and self._is_synced(other):
                     self.views[index].apply_x(other.x_span())
@@ -802,7 +849,7 @@ class ChartWindow(QWidget):
         return index not in self._windows or self._sync[index]
 
     def _is_tracked(self, view: ChartView) -> bool:
-        """Связано ли перекрестье. У стоящего в общем окне — всегда."""
+        """Whether the crosshair is linked. Always so in the shared window."""
         index = self.views.index(view)
         return index not in self._windows or self._cross[index]
 
@@ -812,21 +859,21 @@ class ChartWindow(QWidget):
     def _tracked_views(self) -> list[ChartView]:
         return [view for view in self.views if self._is_tracked(view)]
 
-    # --- связь между графиками ---------------------------------------------
+    # --- links between charts ----------------------------------------------
 
     def active_view(self) -> ChartView:
-        """Тот график, на который смотрят. По умолчанию — верхний."""
+        """The chart being looked at. By default, the top one."""
         for view in self.views:
             if view.hasFocus() or view.underMouse():
                 return view
         return self.views[0]
 
     def _on_range_changed(self) -> None:
-        """Держать общую ось X, если графики её делят.
+        """Keep the shared X axis, if the charts share it.
 
-        Общая ось — не украшение: горб на остатках должен стоять ровно под
-        своей ступенькой наклона, иначе два графика читаются порознь и связь
-        между ними теряется.
+        The shared axis is not decoration: the hump in the residuals must
+        stand exactly under its step in the slope, otherwise the two charts
+        read separately and the link between them is lost.
         """
         if not self._link_x:
             return
@@ -839,10 +886,11 @@ class ChartWindow(QWidget):
                 view.apply_x(span)
 
     def _on_cursor_moved(self, value: float) -> None:
-        """Повторить перекрестье на соседях с общей осью.
+        """Repeat the crosshair on the neighbours with a shared axis.
 
-        Одна вертикаль через оба графика — единственный способ увидеть, что
-        горб остатков стоит ровно на том размере тома, где сменился наклон.
+        One vertical line through both charts is the only way to see that the
+        hump in the residuals stands exactly at the volume size where the
+        slope changed.
         """
         if not self._link_x:
             return
@@ -863,13 +911,14 @@ class ChartWindow(QWidget):
         self._picked = key
         self.detail.setText(tip.replace("\n", "   ·   "))
 
-    # --- сохранение расположения -------------------------------------------
+    # --- saving the layout -------------------------------------------------
 
     def save_layout(self, settings) -> None:
-        """Сложить в настройки геометрию окна и всё про отсоединённые.
+        """Save the window geometry and all about detached charts to settings.
 
-        Именем ключа окна, а не номером: то же правило, что и для активной
-        вкладки — от перестановки список номеров разъехался бы молча.
+        By the window's key name, not a number: the same rule as for the
+        active tab — after a reordering a list of numbers would drift
+        silently.
         """
         self._remember_layout()
         settings.setValue(f"chart_{self.key}/geometry", self.saveGeometry())
@@ -903,9 +952,9 @@ class ChartWindow(QWidget):
         if len(sections) == len(self._sections):
             self._sections = [int(value) for value in sections]
         order = [int(value) for value in settings.value(f"chart_{self.key}/order", [], type=list)]
-        # Проверка на состав, а не на длину: в сохранённом порядке могут
-        # оказаться номера от прежнего числа графиков, и раскладка молча
-        # потеряла бы один из них.
+        # Check the composition, not the length: the saved order may hold
+        # numbers from a previous chart count, and the layout would silently
+        # lose one of them.
         if sorted(order) == list(range(len(self.views))):
             self._order = order
         self._rows = [
@@ -930,18 +979,18 @@ class ChartWindow(QWidget):
                 self.detach(index)
         self._restore_sections()
 
-    def closeEvent(self, event) -> None:  # noqa: N802 — имя от Qt
-        """Закрыли общее окно — отсоединённые уходят вместе с ним.
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        """The shared window was closed — the detached charts go with it.
 
-        Иначе они остались бы висеть без хозяина: обновляет их всё равно это
-        окно, а показать его снова нечем — кнопка вкладки поднимет то же
-        самое, уже открытое.
+        Otherwise they would stay hanging without an owner: this window
+        updates them anyway, and nothing would show it again — the tab button
+        raises the same window, the one already open.
         """
         for window in self._windows.values():
             window.hide()
         super().closeEvent(event)
 
-    def showEvent(self, event) -> None:  # noqa: N802 — имя от Qt
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt's name
         for window in self._windows.values():
             window.show()
         super().showEvent(event)

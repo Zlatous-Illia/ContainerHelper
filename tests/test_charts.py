@@ -1,7 +1,7 @@
-"""Содержимое графиков: какие точки на них попали и что сказано в подсказке.
+"""Chart contents: which points ended up on them and what the tooltip says.
 
-Без Qt — сборка графика это данные, а не оформление. Окно для проверки не
-нужно, а нужно оно было бы ровно затем, чтобы смотреть глазами.
+No Qt: building a chart is data, not presentation. The check needs no
+window, and a window would be needed for exactly one thing: to look at it.
 """
 
 import tempfile
@@ -11,7 +11,7 @@ from pathlib import Path
 from containerhelper import charts
 from containerhelper.charts import forecast_misses
 from containerhelper.factory import factory_data
-from containerhelper.model import MIB, Payload, solve_container_mib
+from containerhelper.model import MIB, VC_HEADERS_BYTES, Payload, solve_container_mib
 from containerhelper.plot import (
     KIND_BARS,
     KIND_DOTS,
@@ -24,7 +24,7 @@ from containerhelper.plot import (
 )
 from containerhelper.records import Record, Store
 
-from .reference import CACHE_1, CACHE_4
+from .reference import CACHE_1, CACHE_4, HEADERS_AND_TAIL
 
 
 def empty_store() -> Store:
@@ -44,7 +44,7 @@ def series_named(chart, name):
 
 class NtfsCurveTests(unittest.TestCase):
     def test_a_fresh_copy_draws_the_factory_points(self):
-        """Новая копия считает по заводским — и показывать должна их же."""
+        """A fresh copy calculates from the factory data and must show it."""
         chart = charts.ntfs_curve(empty_store())
         self.assertEqual(len(series_named(chart, "свои замеры").points), 0)
         self.assertEqual(
@@ -53,7 +53,7 @@ class NtfsCurveTests(unittest.TestCase):
         )
 
     def test_an_own_measurement_moves_the_point_to_its_own_series(self):
-        """Свой замер вытесняет заводской, и на графике это должно быть видно."""
+        """An own measurement supersedes factory; the chart must show it."""
         store = empty_store()
         point = factory_data().points[0]
         store.calibration.append(
@@ -73,9 +73,9 @@ class NtfsCurveTests(unittest.TestCase):
         )
 
     def test_the_model_line_is_sampled_not_drawn_through_two_ends(self):
-        """Ось логарифмическая: прямой отрезок на ней становится дугой.
+        """The axis is logarithmic: a straight segment becomes an arc on it.
 
-        Двумя концами модель прошла бы мимо собственных замеров.
+        Drawn through two ends, the model would miss its own measurements.
         """
         line = series_named(charts.ntfs_curve(empty_store()), "модель")
         self.assertEqual(line.kind, KIND_LINE)
@@ -95,7 +95,7 @@ class ResidualTests(unittest.TestCase):
         self.assertTrue(chart.zero_line)
 
     def test_underestimates_and_overestimates_go_to_different_series(self):
-        """Занижение — единственная опасная сторона, и различать надо её."""
+        """Underestimate is the only dangerous side; it must stand apart."""
         chart = charts.ntfs_residuals(empty_store())
         under = series_named(chart, "модель занизила").points
         over = series_named(chart, "модель завысила").points
@@ -104,11 +104,12 @@ class ResidualTests(unittest.TestCase):
         self.assertTrue(under or over)
 
     def test_a_residual_is_not_zero_at_its_own_point(self):
-        """Ради этого и делается проверка исключением.
+        """This is what the leave-one-out check is for.
 
-        Кусочно-линейная модель проходит ровно через свои замеры: без
-        исключения проверяемой точки отклонение везде вышло бы нулевым, и
-        график был бы прямой линией на нуле.
+        The piecewise-linear model passes exactly through its own
+        measurements: without leaving out the point under check, the
+        deviation would come out zero everywhere, and the chart would be a
+        straight line at zero.
         """
         chart = charts.ntfs_residuals(empty_store())
         values = [
@@ -120,11 +121,12 @@ class ResidualTests(unittest.TestCase):
 
 
     def test_the_edge_measurements_are_kept_apart_and_hidden(self):
-        """Без крайних точек модель экстраполирует, и промах там иной величины.
+        """Without the edge points the model extrapolates.
 
-        На настоящих замерах крайняя даёт −433 MiB против долей мегабайта у
-        всех остальных: оставь её в общей серии — и ось растянется так, что
-        весь предмет разговора ляжет на нулевую линию.
+        The miss there is of another magnitude. On real measurements the edge
+        one gives −433 MiB against fractions of a megabyte for all the others:
+        leave it in the common series and the axis stretches so far that
+        everything that matters lies flat on the zero line.
         """
         chart = charts.ntfs_residuals(empty_store())
         edge = series_named(chart, "край диапазона")
@@ -141,7 +143,7 @@ class ResidualTests(unittest.TestCase):
         )
 
     def test_the_note_says_where_the_hidden_points_went(self):
-        """Спрятанное молча — то же самое, что потерянное."""
+        """Hidden silently is the same as lost."""
         note = charts.ntfs_residuals(empty_store()).note
         self.assertIn("Крайние замеры спрятаны", note)
         self.assertIn("легенде", note)
@@ -153,22 +155,23 @@ class SlopeTests(unittest.TestCase):
         chart = charts.ntfs_slopes(store)
         steps = series_named(chart, "отрезки")
         self.assertEqual(steps.kind, KIND_STEPS)
-        # По ступени на отрезок плюс замыкающая точка на последнем замере.
+        # One step per segment plus a closing point at the last measurement.
         expected = len(factory_data().points) + len(factory_data().samples)
         self.assertEqual(len(steps.points), expected)
 
     def test_the_slope_is_a_percentage_of_the_volume(self):
-        """В SPEC они и записаны процентами: 0,215 %, 0,128 %, 0,324 %."""
+        """SPEC records them as percentages too: 0.215 %, 0.128 %, 0.324 %."""
         chart = charts.ntfs_slopes(empty_store())
         values = [point.y for point in series_named(chart, "отрезки").points]
         self.assertTrue(all(0 <= value < 5 for value in values), values[:5])
 
     def test_the_staircase_shows_up_as_flat_steps(self):
-        """Плато с нулевым наклоном — это и есть лестница из SPEC.
+        """A plateau with zero slope is exactly the staircase from SPEC.
 
-        Между 89 и 116 MiB метаданные не растут вовсе, а на следующем отрезке
-        прибавляют разом: $LogFile меняется ступенями на дискретных порогах.
-        Ради этого график и рисуется — на самой кривой такого не разглядеть.
+        Between 89 and 116 MiB the metadata does not grow at all, and on the
+        next segment it jumps at once: $LogFile changes in steps at discrete
+        thresholds. That is why the chart is drawn: on the curve itself this
+        cannot be made out.
         """
         chart = charts.ntfs_slopes(empty_store())
         values = [point.y for point in series_named(chart, "отрезки").points]
@@ -201,7 +204,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(series_named(chart, "перезаклад").kind, KIND_BARS)
 
     def test_the_bar_is_the_miss_and_the_dot_is_the_miss_without_safety(self):
-        """+5 MiB при страховке 5 MiB и +5 при страховке 8 — разные вещи."""
+        """+5 MiB with a 5 MiB safety margin and +5 with 8 differ."""
         chart = charts.forecast_misses(self.store)
         bars = series_named(chart, "перезаклад").points
         dots = series_named(chart, "без страховки").points
@@ -209,7 +212,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(dots[0].y, bars[0].y - 4)
 
     def test_records_without_a_forecast_are_left_out(self):
-        """Обещание не записано — сверять не с чем, и столбик был бы враньём."""
+        """No prediction recorded: nothing to compare, a bar would be a lie."""
         self.store.records.append(Record(**vars(CACHE_4)))
         self.assertEqual(len(charts.forecast_misses(self.store).categories), 2)
 
@@ -224,10 +227,10 @@ class BreakdownTests(unittest.TestCase):
         self.chart = charts.container_breakdown(self.solution)
 
     def test_the_parts_add_up_to_the_container_exactly(self):
-        """Полоса врёт, если сумма долей не равна целому.
+        """The bar lies if the sum of its parts does not equal the whole.
 
-        Округление до целых MiB — такое же слагаемое, как остальные, и без
-        него полоса не сходится с числом, которое вводят в VeraCrypt.
+        Rounding to whole MiB is a part like any other, and without it the
+        bar does not add up to the number typed into VeraCrypt.
         """
         total = sum(int(point.y) for point in self.chart.series[0].points)
         self.assertEqual(total, self.solution.container_bytes)
@@ -237,7 +240,7 @@ class BreakdownTests(unittest.TestCase):
         self.assertEqual(self.chart.series[0].kind, KIND_STACK)
 
     def test_every_part_carries_its_exact_number(self):
-        """Тонкие слагаемые курсором не поймать — их читают в легенде."""
+        """The cursor cannot catch thin parts; they are read in the legend."""
         for point in self.chart.series[0].points:
             with self.subTest(point.tip):
                 self.assertIn(" B · ", point.tip)
@@ -250,7 +253,7 @@ class ClusterTailTests(unittest.TestCase):
         self.chart = charts.cluster_tail(self.sizes, self.choices, 4096)
 
     def test_the_curve_and_its_dots_are_one_legend_entry(self):
-        """Двумя сериями это давало бы две записи одного цвета про одно и то же."""
+        """Two series: two same-coloured legend entries for the same thing."""
         names = [item.name for item in self.chart.series]
         self.assertNotIn("замеры", names)
         self.assertEqual(series_named(self.chart, "по кластерам").kind, KIND_LINE_DOTS)
@@ -264,7 +267,7 @@ class ClusterTailTests(unittest.TestCase):
         self.assertEqual([point.x for point in chosen], [4096.0])
 
     def test_the_flat_line_is_the_logical_size(self):
-        """Расстояние до неё и есть кластерный хвост."""
+        """The distance to it is the cluster tail."""
         flat = series_named(self.chart, "логический размер").points
         self.assertEqual({point.y for point in flat}, {float(sum(self.sizes))})
 
@@ -273,10 +276,11 @@ class ClusterTailTests(unittest.TestCase):
 
 
 class ForecastSeriesTests(unittest.TestCase):
-    """Перезаклад — столбик, промах без страховки — точки.
+    """Overestimate is a bar, the miss without the safety margin is dots.
 
-    Столбик поверх столбика читается как «часть целого», а это отдельная
-    величина того же промаха: сколько осталось бы, не будь страховки.
+    A bar on top of a bar reads as "part of a whole", while this is a separate
+    quantity of the same miss: how much would remain without the safety
+    margin.
     """
 
     def store(self):
@@ -304,22 +308,24 @@ class ForecastSeriesTests(unittest.TestCase):
         self.assertEqual(kinds["без страховки"], KIND_DOTS)
 
     def test_the_zero_line_is_asked_for(self):
-        """Знак промаха решает всё, и ноль обязан быть в кадре."""
+        """The sign of a miss decides everything; zero must be in the frame."""
         self.assertTrue(forecast_misses(self.store()).zero_line)
 
 
 class UncoveredTests(unittest.TestCase):
-    """Непокрытые размеры называет подпись под кривой.
+    """The note under the curve names the uncovered sizes.
 
-    Отдельной панелью это уже стояло — «лента покрытия», три ряда точек, — и
-    оказалось лишним: своё против заводского на кривой видно по цвету, а
-    остаток укладывается в строку. Таблица на «Калибровке» говорит то же
-    подробнее и с кнопками.
+    This already existed as a separate panel, a "coverage strip" with three
+    rows of dots, and turned out to be redundant: own against factory shows
+    on the curve by colour, and the rest fits in one line. The table on the
+    Calibration tab says the same in more detail and with buttons.
     """
 
-    #: Размер, которого нет ни в заводских замерах, ни в своих: заводские
-    #: покрывают ровно строки таблицы рекомендуемых, и «непокрытым» бывает
-    #: только размер вне её.
+    #: A size found in neither factory nor own measurements. The factory
+    #: empty-volume points cover exactly the rows of the recommended-sizes
+    #: table, so only a size outside it can be "uncovered". The seven factory
+    #: copy-slack measurements add NTFS points off the table too, but 3000 MiB
+    #: is not one of them.
     ODD_MIB = 3000
 
     def test_a_size_without_any_measurement_is_named(self):
@@ -345,7 +351,7 @@ class UncoveredTests(unittest.TestCase):
         self.assertIn("и ещё", note)
 
     def test_an_own_measurement_covers_the_size(self):
-        volume = self.ODD_MIB * MIB - 266_240
+        volume = self.ODD_MIB * MIB - HEADERS_AND_TAIL
         store = Store(
             path=Path("нет"),
             calibration=[
@@ -361,7 +367,7 @@ class UncoveredTests(unittest.TestCase):
 
 
 class StemTests(unittest.TestCase):
-    """Остатки — стеблями: ноль здесь сама модель, и промах меряется от неё."""
+    """Residuals as stems: zero is the model itself, and misses start at it."""
 
     def test_both_residual_charts_use_stems(self):
         store = Store(path=Path("нет"), records=[CACHE_1, CACHE_4])
@@ -372,10 +378,11 @@ class StemTests(unittest.TestCase):
 
 
 class ShareTests(unittest.TestCase):
-    """Доля тома под метаданными — та же кривая в других единицах.
+    """Share of the volume taken by metadata: the same curve in other units.
 
-    В байтах разница между 0,2 % и 0,4 % на терабайтном томе толщиной в линию,
-    а спрашивают о метаданных обычно именно так: «сколько тома они съедят».
+    In bytes, the difference between 0.2 % and 0.4 % on a terabyte volume is
+    one line thick, yet this is usually how people ask about metadata: "how
+    much of the volume will it eat".
     """
 
     def store(self):
@@ -401,7 +408,10 @@ class ShareTests(unittest.TestCase):
         chart = charts.ntfs_share(self.store())
         mine = next(s for s in chart.series if s.name == "свои замеры")
         small = min(mine.points, key=lambda point: point.x)
-        self.assertAlmostEqual(small.y, 10 / 64 * 100, places=6)
+        volume = 64 * MIB - VC_HEADERS_BYTES
+        self.assertAlmostEqual(
+            small.y, (volume - 54 * MIB) / volume * 100, places=6
+        )
 
     def test_the_small_volume_stands_far_above_the_big_one(self):
         chart = charts.ntfs_share(self.store())
@@ -410,7 +420,10 @@ class ShareTests(unittest.TestCase):
         self.assertGreater(shares[0], shares[-1] * 10)
 
     def test_both_axes_are_logarithmic(self):
-        """Доля расходится на три порядка: на линейной оси середины не видно."""
+        """The share spans three orders of magnitude.
+
+        On a linear axis the middle cannot be seen.
+        """
         chart = charts.ntfs_share(self.store())
         self.assertTrue(chart.x.log)
         self.assertTrue(chart.y.log)
@@ -425,7 +438,8 @@ class ShareTests(unittest.TestCase):
         chart = charts.ntfs_share(self.store())
         mine = next(s for s in chart.series if s.name == "свои замеры")
         self.assertIn("Доля тома", mine.points[0].tip)
-        self.assertNotIn(".", mine.points[0].tip.split("Доля тома")[1])
+        # A decimal point, as in the tables — not a comma.
+        self.assertRegex(mine.points[0].tip.split("Доля тома")[1], r"^: \d+\.\d{3} %$")
 
 
 if __name__ == "__main__":

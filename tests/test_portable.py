@@ -1,4 +1,4 @@
-"""Портативная папка, заводские данные и трёхтактная сортировка."""
+"""Portable data folder, factory data and three-state sorting."""
 
 import os
 import tempfile
@@ -14,7 +14,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 _app = QApplication.instance() or QApplication([])
 
 from containerhelper.factory import factory_data, factory_volume  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.i18n import catalog  # noqa: E402
+from containerhelper.model import MIB  # noqa: E402
 from containerhelper.paths import (  # noqa: E402
     CALIBRATION_NAME,
     DATA_ARGUMENT,
@@ -31,6 +32,7 @@ from containerhelper.paths import (  # noqa: E402
     settings_path,
 )
 from containerhelper.records import Record, Store  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.ui.app import (  # noqa: E402
     ACTIVE_TAB_KEY,
     TAB_CALC,
@@ -47,14 +49,14 @@ class PathTests(unittest.TestCase):
         self.assertEqual(default_data_dir(), program_dir() / DATA_DIR_NAME)
 
     def test_every_file_lands_in_one_folder(self):
-        """Портативную папку носят целиком — разные места разъехались бы."""
+        """The folder travels whole — separate places would drift apart."""
         folder = Path(tempfile.mkdtemp())
         self.assertEqual(records_path(folder), folder / RECORDS_NAME)
         self.assertEqual(calibration_path(folder), folder / CALIBRATION_NAME)
         self.assertEqual(settings_path(folder), folder / SETTINGS_NAME)
 
     def test_the_store_finds_the_calibration_beside_the_records(self):
-        """Файл замеров не выбирают: он всегда рядом и всегда так называется."""
+        """The measurements file is not chosen: always beside, same name."""
         folder = Path(tempfile.mkdtemp())
         store = Store(path=records_path(folder))
         self.assertEqual(store.calibration_path, calibration_path(folder))
@@ -76,7 +78,7 @@ class PathTests(unittest.TestCase):
         self.assertIsNone(data_dir_from_arguments([DATA_ARGUMENT]))
 
     def test_writability_is_checked_by_writing(self):
-        """Права на сетевых дисках врут — проверять надо пробной записью."""
+        """Permissions on network drives lie — check with a trial write."""
         self.assertTrue(is_writable(Path(tempfile.mkdtemp())))
         self.assertFalse(is_writable(Path("Z:/no/such/place/at/all")))
 
@@ -95,14 +97,14 @@ class FactoryDataTests(unittest.TestCase):
     def test_every_point_has_a_plausible_overhead(self):
         for point in factory_data().points:
             with self.subTest(point.container_mib):
-                self.assertGreater(point.ntfs_bytes, MIB)
-                self.assertLess(point.ntfs_bytes, point.mounted_bytes // 20)
+                self.assertGreater(point.metadata_bytes, MIB)
+                self.assertLess(point.metadata_bytes, point.mounted_bytes // 20)
 
     def test_volume_matches_the_container(self):
         point = factory_data().points[0]
-        self.assertEqual(factory_volume(point.container_mib), point.mounted_bytes)
+        self.assertEqual(factory_volume(point.container_mib), point.volume_bytes)
         self.assertEqual(
-            point.mounted_bytes, point.container_mib * MIB - VC_HEADER_BYTES
+            point.mounted_bytes, point.container_mib * MIB - HEADERS_AND_TAIL
         )
 
     def test_every_factory_size_is_offered_in_the_table(self):
@@ -160,7 +162,7 @@ class PreferenceTests(WindowFixture):
         again.close()
 
     def test_the_picker_settings_come_back(self):
-        """Их ставят в диалоге, а хранит окно: диалог живёт один показ."""
+        """Set in the dialog, kept by the window: the dialog lives one show."""
         state = self.window.calc_tab.picker_state
         state.show_hidden = True
         state.remember_dir = False
@@ -180,23 +182,23 @@ class PreferenceTests(WindowFixture):
         self.window._select_tab(TAB_CALIBRATION)
         self.window._store_preferences()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALIBRATION)
+        self.assertEqual(again.current_tab_id(), TAB_CALIBRATION)
         again.close()
 
     def test_the_tab_is_stored_by_name_not_by_number(self):
-        """Номер меняется от перестановки вкладок, имя — нет."""
+        """Reordering the tabs changes the number, not the name."""
         self.window._select_tab(TAB_CALIBRATION)
         self.window._store_preferences()
         settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
         self.assertEqual(settings.value(ACTIVE_TAB_KEY, type=str), TAB_CALIBRATION)
 
     def test_an_old_numeric_setting_falls_back_to_the_first_tab(self):
-        """Настройка из прежних версий хранила номер; «2» — не заголовок."""
+        """Earlier versions stored the number; "2" is not a tab id."""
         settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
         settings.setValue(ACTIVE_TAB_KEY, 2)
         settings.sync()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
 
     def test_an_unknown_tab_name_falls_back_too(self):
@@ -204,8 +206,20 @@ class PreferenceTests(WindowFixture):
         settings.setValue(ACTIVE_TAB_KEY, "Вкладка, которой нет")
         settings.sync()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
+
+    def test_an_old_russian_title_is_migrated_to_the_id(self):
+        """Before the language switch the setting held the Russian title."""
+        settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
+        settings.setValue(ACTIVE_TAB_KEY, catalog("ru")["tab.calibration"])
+        settings.sync()
+        again = MainWindow(data_dir=self.data_dir)
+        self.assertEqual(again.current_tab_id(), TAB_CALIBRATION)
+        again._store_preferences()
+        again.close()
+        settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
+        self.assertEqual(settings.value(ACTIVE_TAB_KEY, type=str), TAB_CALIBRATION)
 
     def test_nothing_is_written_outside_the_folder(self):
         self.window._store_preferences()
@@ -214,7 +228,7 @@ class PreferenceTests(WindowFixture):
 
 
 class RememberTabTests(unittest.TestCase):
-    """Галочка «Запоминать вкладку» и её выключенное состояние."""
+    """The Remember tab check box and its unchecked state."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -226,10 +240,10 @@ class RememberTabTests(unittest.TestCase):
     def opened(self) -> MainWindow:
         return MainWindow(data_dir=self.data_dir)
 
-    def closed_on(self, title: str, remember: bool = True) -> None:
+    def closed_on(self, tab_id: str, remember: bool = True) -> None:
         window = self.opened()
         window.remember_tab.setChecked(remember)
-        window._select_tab(title)
+        window._select_tab(tab_id)
         window._store_preferences()
         window.close()
 
@@ -241,7 +255,7 @@ class RememberTabTests(unittest.TestCase):
     def test_switching_it_off_opens_the_calculation_tab(self):
         self.closed_on(TAB_CALIBRATION, remember=False)
         again = self.opened()
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
 
     def test_the_switch_itself_survives_a_restart(self):
@@ -251,7 +265,7 @@ class RememberTabTests(unittest.TestCase):
         again.close()
 
     def test_switched_off_it_does_not_overwrite_the_stored_tab(self):
-        """Иначе запомненная вкладка терялась бы молча, без спроса."""
+        """Else the remembered tab would be lost silently, without asking."""
         self.closed_on(TAB_CALIBRATION, remember=True)
         off = self.opened()
         off.remember_tab.setChecked(False)
@@ -271,12 +285,12 @@ class RememberTabTests(unittest.TestCase):
         back.close()
 
         again = self.opened()
-        self.assertEqual(again.current_tab_title(), TAB_RECORDS)
+        self.assertEqual(again.current_tab_id(), TAB_RECORDS)
         again.close()
 
 
 class SortCycleTests(unittest.TestCase):
-    """Три щелчка по заголовку: возрастание, убывание, исходный порядок."""
+    """Three clicks on a header: ascending, descending, original order."""
 
     def setUp(self):
         from containerhelper.ui.records_tab import RecordsTab
@@ -313,7 +327,7 @@ class SortCycleTests(unittest.TestCase):
         ]
 
     def click(self, section):
-        """Настоящий щелчок по заголовку: Qt сам ставит индикатор и сортирует."""
+        """A real header click: Qt sets the indicator and sorts by itself."""
         x = (
             self.header.sectionViewportPosition(section)
             + self.header.sectionSize(section) // 2
@@ -330,6 +344,11 @@ class SortCycleTests(unittest.TestCase):
         self.click(2)
         self.assertEqual(self.names(), ["alpha", "Mid", "Zeta"])
         self.assertEqual(self.header.sortIndicatorSection(), 2)
+        self.assertEqual(self.header.sortIndicatorOrder(), Qt.AscendingOrder)
+        self.click(2)
+        self.assertEqual(self.names(), ["Zeta", "Mid", "alpha"])
+        self.assertEqual(self.header.sortIndicatorSection(), 2)
+        self.assertEqual(self.header.sortIndicatorOrder(), Qt.DescendingOrder)
 
     def test_third_click_returns_the_original_order(self):
         for _ in range(3):

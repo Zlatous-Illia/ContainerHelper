@@ -1,24 +1,28 @@
-"""Поиск VeraCrypt и три операции над контейнером через командную строку.
+"""Finding VeraCrypt and three command-line operations on a container.
 
-Без Qt: всё, что здесь есть, проверяется без интерфейса. Запуск процессов и
-чтение томов подменяются полями, потому что настоящая проверка требует
-установленного VeraCrypt, прав администратора и нескольких минут на каждый
-контейнер — в наборе тестов такому места нет.
+No Qt: everything here is tested without the interface. Process launching and
+volume reading are replaced through fields, because a real check needs an
+installed VeraCrypt, administrator rights and several minutes per container —
+there is no room for that in the test suite.
 
-Сверено с документацией VeraCrypt 1.26.24 (`docs/html/en/Command Line
-Usage.html` в поставке). Отсюда и странности:
+Checked against the VeraCrypt 1.26.24 documentation (`docs/html/en/Command Line
+Usage.html` in the distribution). Hence the oddities:
 
-- создание и монтирование — **разные бинарники**;
-- `/pim` у `VeraCrypt Format.exe` нет вовсе, он только при монтировании,
-  поэтому ускорить создание уменьшенным числом итераций нельзя;
-- `/nosizecheck` обязателен, иначе динамический контейнер на терабайт
-  откажется создаваться там, где терабайта свободного нет;
-- `/dismount` устарел, нужен `/unmount`;
-- `/hash sha512` при монтировании заметно ускоряет: без него VeraCrypt
-  перебирает все PRF подряд;
-- `/silent` описан как «If there is any error, the operation will fail
-  silently», поэтому на код возврата здесь не полагается ничего: результат
-  проверяется по факту — появился ли файл нужного размера, поднялся ли том.
+- creating and mounting are **different binaries**;
+- `VeraCrypt Format.exe` has no `/pim` at all, it exists only for mounting,
+  so creation cannot be sped up with a reduced iteration count;
+- `/nosizecheck` is mandatory, otherwise a terabyte dynamic container refuses
+  to be created where there is no terabyte of free space;
+- `/unmount` exists only since 1.26.20; before it there is only `/dismount`,
+  which newer versions still accept though it is declared deprecated. So the
+  switch goes by version: `/unmount` from 1.26.20, `/dismount` below it or
+  when the version cannot be read;
+- `/hash sha512` noticeably speeds up mounting: without it VeraCrypt tries
+  every PRF in turn;
+- `/silent` is described as "If there is any error, the operation will fail
+  silently", so nothing here relies on the exit code: the result is checked by
+  the facts — whether a file of the right size appeared, whether the volume
+  came up.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from .formatting import plural
+from .i18n import tr, tr_n
 from .sizes import (
     IS_WINDOWS,
     cluster_size,
@@ -41,23 +45,24 @@ from .sizes import (
     volume_usage,
 )
 
-#: Имя папки внутри Program Files. Одно и то же у 32- и 64-битной установки.
+#: Folder name inside Program Files. The same for 32- and 64-bit installs.
 INSTALL_SUBDIR = "VeraCrypt"
 
-#: Переменные окружения, из которых берутся оба Program Files. ProgramW6432
-#: добавлен ради 32-битного Python на 64-битной Windows: там ProgramFiles
-#: указывает в «(x86)», и настоящая установка иначе не нашлась бы.
+#: Environment variables that give both Program Files. ProgramW6432 is added
+#: for 32-bit Python on 64-bit Windows: there ProgramFiles points into
+#: "(x86)", and the real install would not be found otherwise.
 PROGRAM_FILES_VARIABLES = ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
 
-#: Запасные пути на случай пустого окружения. Стандартные места установки
-#: названы явно: переменных может не быть, а VeraCrypt всё равно там.
+#: Fallback paths for an empty environment. The standard install locations are
+#: named explicitly: the variables may be missing, and VeraCrypt is still
+#: there.
 FALLBACK_DIRS = (
     r"C:\Program Files\VeraCrypt",
     r"C:\Program Files (x86)\VeraCrypt",
 )
 
-#: Имена бинарников. У установленной сборки без суффикса, у портативной — с
-#: суффиксом архитектуры. Порядок здесь и есть порядок предпочтения.
+#: Binary names. An installed build has no suffix, a portable one has an
+#: architecture suffix. The order here is the order of preference.
 FORMAT_NAMES = (
     "VeraCrypt Format.exe",
     "VeraCrypt Format-x64.exe",
@@ -69,78 +74,81 @@ MOUNT_NAMES = (
     "VeraCrypt-arm64.exe",
 )
 
-#: Параметры контейнера. Меняться им незачем: замер должен повторять то, как
-#: контейнеры создают руками, а не искать оптимум.
+#: Container parameters. There is no reason to change them: the measurement
+#: must repeat how containers are created by hand, not look for an optimum.
 HASH = "sha512"
 ENCRYPTION = "AES"
 FILESYSTEM = "NTFS"
 
-#: Версии, в которых менялись нужные нам ключи. Взято из Release Notes в
-#: поставке VeraCrypt 1.26.24.
+#: Versions in which the switches we need changed. Taken from the Release
+#: Notes in the VeraCrypt 1.26.24 distribution.
 #:
-#: 1.24 добавила `/nosizecheck` и `/quick` (до неё быстрое форматирование из
-#: командной строки не выключалось отдельным ключом). Без них сбор не идёт
-#: вовсе: терабайтный контейнер упрётся в проверку свободного места.
+#: 1.24 added `/nosizecheck` and `/quick` (before it, quick format could not
+#: be turned off from the command line by a separate switch). Without them the
+#: collection does not run at all: a terabyte container hits the free-space
+#: check.
 MINIMUM_VERSION = (1, 24)
 
-#: 1.25.4: «Avoid displaying waiting dialog when /silent specified ... during
-#: creating of file container ... and a filesystem other than FAT». До неё окно
-#: ожидания всё равно выскакивает на каждый контейнер.
+#: 1.25.4: "Avoid displaying waiting dialog when /silent specified ... during
+#: creating of file container ... and a filesystem other than FAT". Before it
+#: the waiting window pops up for every container anyway.
 QUIET_CREATE_SINCE = (1, 25, 4)
 
-#: 1.26.20 переименовала Dismount в Unmount. `/unmount` до неё не понимают, а
-#: `/dismount` понимают все версии до сегодняшней включительно — он объявлен
-#: устаревшим, но в документации 1.26.24 по-прежнему описан и работает.
+#: 1.26.20 renamed Dismount to Unmount. Versions before it do not understand
+#: `/unmount`, while `/dismount` is understood by every version up to and
+#: including today's — it is declared deprecated, but the 1.26.24
+#: documentation still describes it and it works.
 UNMOUNT_SINCE = (1, 26, 20)
 
-#: Пароль временного контейнера. Контейнер живёт минуты и удаляется сразу
-#: после замера, но на коротком пароле VeraCrypt показывает предупреждение,
-#: а предупреждение в тихом режиме — это молчаливый отказ.
+#: Password of the temporary container. The container lives for minutes and
+#: is deleted right after the measurement, but on a short password VeraCrypt
+#: shows a warning, and a warning in silent mode is a silent refusal.
 CALIBRATION_PASSWORD = "ContainerHelperCalibration2026"
 
-#: Сколько ждать процесс. Создание терабайтного динамического контейнера —
-#: секунды, обычного с полным форматированием — минуты. Потолок не про норму,
-#: а про то, чтобы зависший процесс не остался висеть навсегда.
+#: How long to wait for the process. Creating a terabyte dynamic container
+#: takes seconds, a normal one with full format takes minutes. The ceiling is
+#: not about the norm, it is about a hung process not hanging forever.
 CREATE_TIMEOUT = 3600
 MOUNT_TIMEOUT = 300
 
-#: Буква появляется не в тот же миг, когда вышел процесс: том поднимает
-#: драйвер. Поэтому опрашивается список смонтированных, а не код возврата.
+#: The letter does not appear the instant the process exits: the driver
+#: brings the volume up. So the list of mounted drives is polled, not the exit
+#: code.
 LETTER_TIMEOUT = 60.0
 POLL_SECONDS = 0.5
 
-#: Размонтирование повторяется, а не ждётся одной минутой. Сразу после записи
-#: данных VeraCrypt отказывает размонтировать том — кодом возврата 1 и
-#: немедленно, — а через полминуты отдаёт его без возражений. На первом
-#: настоящем прогоне сбора запаса так сорвались четыре замера из семи, и
-#: спасала их только повторная попытка в уборке: она случалась минутой позже
-#: и проходила. Здесь то же самое делается намеренно.
+#: Unmounting is repeated, not waited out for one minute. Right after data is
+#: written VeraCrypt refuses to unmount the volume — with exit code 1 and
+#: immediately — and half a minute later gives it up without objection. On the
+#: first real copy-slack collection run four measurements of seven failed this
+#: way, and only the retry in cleanup saved them: it happened a minute later
+#: and went through. Here the same thing is done on purpose.
 #:
-#: Ждать после отказа минуту бессмысленно: том не «медленно размонтируется»,
-#: его не отдали вовсе. Поэтому короткая отсрочка на драйвер, потом пауза и
-#: новая команда.
+#: Waiting a minute after a refusal is pointless: the volume is not "slowly
+#: unmounting", it was not given up at all. Hence a short grace period for the
+#: driver, then a pause and a new command.
 UNMOUNT_ATTEMPTS = 4
 UNMOUNT_GRACE = 5.0
 UNMOUNT_RETRY_SECONDS = 15.0
 
-#: Как называются временные контейнеры. Имя не для красоты: по нему уборка
-#: находит осиротевшие файлы — терабайтный файл, переживший падение, иначе
-#: лежал бы в папке молча и вечно.
+#: What the temporary containers are called. The name is not for looks:
+#: cleanup finds orphaned files by it — a terabyte file that survived a crash
+#: would otherwise lie in the folder silently and forever.
 CONTAINER_PREFIX = "containerhelper-calibration-"
 CONTAINER_SUFFIX = ".hc"
 
-#: Буквы, среди которых ищется свободная. A и B заняты историей, C — системой;
-#: сверху вниз, чтобы не занимать те, что система раздаёт следующими.
+#: Letters searched for a free one. A and B are taken by history, C by the
+#: system; top down, so as not to take the ones the system hands out next.
 LETTERS = tuple(reversed(string.ascii_uppercase[3:]))
 
 
 class VeraCryptError(Exception):
-    """Операция не удалась. Текст пригоден для показа пользователю."""
+    """The operation failed. The text is fit to show to the user."""
 
 
 @dataclass(frozen=True)
 class Install:
-    """Найденная установка: папка и оба бинарника."""
+    """A found install: the folder and both binaries."""
 
     directory: Path
     format_exe: Path
@@ -150,26 +158,33 @@ class Install:
     @property
     def title(self) -> str:
         if self.version:
-            return f"{self.directory} (версия {self.version})"
+            return tr(
+                "veracrypt.install.title",
+                directory=self.directory,
+                version=self.version,
+            )
         return str(self.directory)
 
     @property
     def number(self) -> tuple[int, ...]:
-        """Версия числами для сравнения. Пустая — прочитать не удалось."""
+        """The version as numbers for comparison.
+
+        Empty means it could not be read.
+        """
         return parse_version(self.version)
 
     @property
     def knows_unmount(self) -> bool:
-        """Понимает ли эта версия `/unmount`.
+        """Whether this version understands `/unmount`.
 
-        Непрочитанная версия считается старой: `/dismount` работает и на
-        новых, а `/unmount` на старых — нет. Ошибиться в эту сторону дешевле.
+        An unreadable version counts as old: `/dismount` works on new ones too,
+        while `/unmount` does not work on old ones. Erring this way is cheaper.
         """
         return self.number >= UNMOUNT_SINCE
 
 
 def standard_dirs() -> list[Path]:
-    """Стандартные места установки, без повторов и в порядке предпочтения."""
+    """Standard install locations, no repeats, in order of preference."""
     candidates: list[Path] = []
     for variable in PROGRAM_FILES_VARIABLES:
         base = os.environ.get(variable)
@@ -188,7 +203,10 @@ def standard_dirs() -> list[Path]:
 
 
 def install_at(directory: str | os.PathLike[str]) -> Install | None:
-    """Собрать установку из папки. Указать можно и сам exe — возьмётся папка."""
+    """Build an install from a folder.
+
+    The exe itself may be given too: its folder is taken.
+    """
     path = Path(directory)
     if path.is_file():
         path = path.parent
@@ -200,7 +218,7 @@ def install_at(directory: str | os.PathLike[str]) -> Install | None:
 
 
 def find_install(extra: Iterable[str | os.PathLike[str]] = ()) -> Install | None:
-    """Найти VeraCrypt: сначала указанное руками, потом стандартные места."""
+    """Find VeraCrypt: first what was set by hand, then standard locations."""
     for directory in [*extra, *standard_dirs()]:
         if not directory:
             continue
@@ -211,27 +229,29 @@ def find_install(extra: Iterable[str | os.PathLike[str]] = ()) -> Install | None
 
 
 def missing_report(directory: str | os.PathLike[str]) -> str:
-    """Чего не хватает в указанной папке. Пусто — всё на месте."""
+    """What is missing in the given folder. Empty means everything is there."""
     path = Path(directory)
     if path.is_file():
         path = path.parent
     if not path.is_dir():
-        return f"Папки {path} нет."
+        return tr("veracrypt.missing.folder", path=path)
 
     lacking = [
-        title
-        for title, names in (
-            ("создания контейнеров", FORMAT_NAMES),
-            ("монтирования", MOUNT_NAMES),
+        tr(key)
+        for key, names in (
+            ("veracrypt.missing.format", FORMAT_NAMES),
+            ("veracrypt.missing.mount", MOUNT_NAMES),
         )
         if _first_existing(path, names) is None
     ]
     if not lacking:
         return ""
-    return (
-        f"В папке {path} нет бинарника для {' и '.join(lacking)}. "
-        f"Нужны «{FORMAT_NAMES[0]}» и «{MOUNT_NAMES[0]}»; у портативной "
-        f"сборки те же имена с суффиксом архитектуры."
+    return tr(
+        "veracrypt.missing.binary",
+        path=path,
+        lacking=tr("veracrypt.missing.joiner").join(lacking),
+        format_name=FORMAT_NAMES[0],
+        mount_name=MOUNT_NAMES[0],
     )
 
 
@@ -244,10 +264,11 @@ def _first_existing(directory: Path, names: Sequence[str]) -> Path | None:
 
 
 def file_version(path: Path) -> str:
-    """Версия из ресурсов exe. Пусто — прочитать не удалось.
+    """The version from the exe resources. Empty means it was unreadable.
 
-    Версия нужна не расчёту, а человеку: размер метаданных решает не NTFS
-    вообще, а конкретный код форматирования, и в отчёте это стоит видеть.
+    The version is needed not by the calculation but by a person: the size of
+    the metadata is decided not by NTFS in general but by the specific
+    formatting code, and that is worth seeing in the report.
     """
     if not IS_WINDOWS:
         return ""
@@ -297,17 +318,18 @@ def file_version(path: Path) -> str:
         info.dwFileVersionLS >> 16,
         info.dwFileVersionLS & 0xFFFF,
     ]
-    # Четвёртое число у VeraCrypt всегда ноль и в разговоре не участвует.
+    # VeraCrypt's fourth number is always zero and never comes up.
     while len(parts) > 3 and parts[-1] == 0:
         parts.pop()
     return ".".join(str(part) for part in parts)
 
 
-# --- командные строки ------------------------------------------------------
+# --- command lines ---------------------------------------------------------
 #
-# Вынесены отдельными функциями, потому что проверять надо именно их: настоящий
-# запуск набору тестов недоступен, а ошибка в одном ключе стоит нескольких
-# часов работы и терабайтного файла в чужой папке.
+# Split out as separate functions because they are exactly what has to be
+# tested: a real launch is out of the test suite's reach, and a mistake in one
+# switch costs several hours of work and a terabyte file in someone else's
+# folder.
 
 
 def create_command(
@@ -318,10 +340,11 @@ def create_command(
     dynamic: bool = True,
     quick: bool = True,
 ) -> list[str]:
-    """Создание контейнера. Размер — точными байтами, а не суффиксом.
+    """Creating a container. The size is in exact bytes, not with a suffix.
 
-    Суффикс `G` округляет, а попасть надо в `container_mib × 1048576` до
-    байта: иначе замер встанет мимо своей строки в таблице покрытия.
+    The `G` suffix rounds, and `container_mib × 1048576` has to be hit to the
+    byte: otherwise the measurement lands outside its row in the coverage
+    table.
     """
     command = [
         str(install.format_exe),
@@ -352,7 +375,7 @@ def mount_command(
     letter: str,
     password: str = CALIBRATION_PASSWORD,
 ) -> list[str]:
-    """Монтирование. /hash избавляет VeraCrypt от перебора всех PRF подряд."""
+    """Mounting. /hash spares VeraCrypt from trying every PRF in turn."""
     return [
         str(install.mount_exe),
         "/quit",
@@ -371,18 +394,19 @@ def mount_command(
 def unmount_command(
     install: Install, letter: str, force: bool = False
 ) -> list[str]:
-    """Размонтирование тем ключом, который эта версия понимает.
+    """Unmounting with the switch this version understands.
 
-    С 1.26.20 это `/unmount`, до неё — `/dismount`. Ключи не синонимы во
-    времени: старая VeraCrypt на `/unmount` ругнётся, а с `/silent` — молча,
-    и том останется поднятым вместе с файлом контейнера.
+    Since 1.26.20 it is `/unmount`, before it `/dismount`. The switches are not
+    synonyms across time: an old VeraCrypt complains about `/unmount`, and with
+    `/silent` it does so silently, and the volume stays mounted along with the
+    container file.
 
-    `/force` — только для уборки. Он снимает том, даже когда файлы на нём
-    заняты, а это значит, что несброшенное содержимое кэша может пропасть.
-    Перед замером остатка так делать нельзя ни в коем случае: потерянная
-    запись покажется лишним свободным местом, и измеренный запас выйдет
-    **заниженным** — то есть ошибка уедет в единственную опасную сторону.
-    В уборке терять нечего: контейнер тут же удаляется.
+    `/force` is for cleanup only. It takes the volume down even when files on
+    it are in use, which means unflushed cache contents may be lost. Before
+    measuring left space this must never be done: a lost write looks like
+    extra free space, and the measured slack comes out **underestimated** —
+    that is, the error moves to the only dangerous side. In cleanup there is
+    nothing to lose: the container is deleted right away.
     """
     switch = "/unmount" if install.knows_unmount else "/dismount"
     command = [str(install.mount_exe), "/quit", "/silent", switch, letter]
@@ -392,7 +416,7 @@ def unmount_command(
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    """«1.26.24» → (1, 26, 24). Нечисловой хвост отбрасывается."""
+    """`1.26.24` → (1, 26, 24). A non-numeric tail is dropped."""
     parts: list[int] = []
     for chunk in text.split("."):
         digits = ""
@@ -407,43 +431,28 @@ def parse_version(text: str) -> tuple[int, ...]:
 
 
 def version_notice(install: Install) -> tuple[bool, str]:
-    """Годится ли эта версия для сбора и что о ней стоит сказать вслух.
+    """Whether this version is fit for collection and what to say about it.
 
-    Первое значение — можно ли начинать. Второе — текст для окна; пусто,
-    когда версия свежая и говорить нечего.
+    The first value is whether it is OK to start. The second is the text for
+    the window; empty when the version is recent and there is nothing to say.
     """
     number = install.number
     if not number:
-        return True, (
-            "Версию VeraCrypt прочитать не удалось. Том будем снимать старым "
-            "ключом /dismount — его понимают все версии."
-        )
+        return True, tr("veracrypt.version.unreadable")
     if number < MINIMUM_VERSION:
-        return False, (
-            f"VeraCrypt {install.version} слишком старая: ключи /nosizecheck и "
-            f"/quick появились в 1.24. Без первого контейнер на терабайт "
-            f"откажется создаваться, если терабайта свободного нет. "
-            f"Нужна 1.24 или новее."
-        )
+        return False, tr("veracrypt.version.too_old", version=install.version)
     if number < QUIET_CREATE_SINCE:
-        return True, (
-            f"VeraCrypt {install.version}: до 1.25.4 ключ /silent не убирал "
-            f"окно ожидания при создании NTFS-контейнера. Сбор пойдёт, но "
-            f"окно будет выскакивать на каждый контейнер."
-        )
+        return True, tr("veracrypt.version.noisy_create", version=install.version)
     if number < UNMOUNT_SINCE:
-        return True, (
-            f"VeraCrypt {install.version}: снимать том будем ключом /dismount "
-            f"— /unmount появился только в 1.26.20."
-        )
+        return True, tr("veracrypt.version.dismount", version=install.version)
     return True, ""
 
 
 def run_command(command: Sequence[str], timeout: int) -> int:
-    """Запустить процесс без консольного окна и вернуть код возврата.
+    """Run a process without a console window and return the exit code.
 
-    Код возврата тут же и забывается: в тихом режиме VeraCrypt падает молча.
-    Он берётся только затем, чтобы попасть в текст ошибки.
+    The exit code is forgotten right away: in silent mode VeraCrypt fails
+    silently. It is taken only to go into the error text.
     """
     options: dict[str, object] = {"timeout": timeout, "capture_output": True}
     if IS_WINDOWS:
@@ -452,39 +461,46 @@ def run_command(command: Sequence[str], timeout: int) -> int:
         completed = subprocess.run(list(command), **options)  # type: ignore[arg-type]
     except subprocess.TimeoutExpired as exc:
         raise VeraCryptError(
-            f"{Path(command[0]).name} не ответил за {timeout} с и был снят."
+            tr(
+                "veracrypt.run.timeout",
+                program=Path(command[0]).name,
+                timeout=timeout,
+            )
         ) from exc
     except OSError as exc:
-        raise VeraCryptError(f"Не удалось запустить {command[0]}: {exc}") from exc
+        raise VeraCryptError(
+            tr("veracrypt.run.failed", program=command[0], error=exc)
+        ) from exc
     return completed.returncode
 
 
 @dataclass(frozen=True)
 class Volumes:
-    """Чтение смонтированного тома. Подменяется целиком в тестах."""
+    """Reading a mounted volume. Replaced as a whole in tests."""
 
     drives: Callable[[], list[str]] = staticmethod(mounted_drives)
     usage: Callable[[str], tuple[int, int]] = staticmethod(volume_usage)
     cluster: Callable[[str], "int | None"] = staticmethod(cluster_size)
     filesystem: Callable[[str], str] = staticmethod(volume_filesystem)
-    #: Куда писать набор файлов при замере запаса. Единственное место, где
-    #: приложение пишет на том, а не читает его; в тестах подменяется
-    #: временной папкой, и генерация набора проверяется без VeraCrypt.
+    #: Where to write the file set when measuring slack. The only place where
+    #: the application writes to a volume instead of reading it; in tests it
+    #: is replaced with a temporary folder, and file set generation is tested
+    #: without VeraCrypt.
     root: Callable[[str], Path] = staticmethod(volume_root)
 
 
 @dataclass
 class VeraCrypt:
-    """Три операции с проверкой результата по факту, а не по коду возврата."""
+    """Three operations; the result is checked by facts, not the exit code."""
 
     install: Install
     password: str = CALIBRATION_PASSWORD
     run: Callable[[Sequence[str], int], int] = staticmethod(run_command)
-    #: Пауза между опросами. Подменяется, чтобы тест не спал по-настоящему.
+    #: Pause between polls. Replaced so that a test does not really sleep.
     pause: Callable[[float], None] = staticmethod(time.sleep)
     volumes: Volumes = field(default_factory=Volumes)
 
-    # --- операции ----------------------------------------------------------
+    # --- operations --------------------------------------------------------
 
     def create(
         self,
@@ -502,14 +518,16 @@ class VeraCrypt:
         actual = path.stat().st_size if path.exists() else None
         if actual is None:
             raise VeraCryptError(
-                f"Контейнер {path.name} не создан (код возврата {code}). "
-                f"Чаще всего это отказ в правах: форматирование NTFS требует "
-                f"администратора, а в тихом режиме VeraCrypt об этом молчит."
+                tr("veracrypt.create.missing", name=path.name, code=code)
             )
         if actual != size_bytes:
             raise VeraCryptError(
-                f"Контейнер {path.name} вышел {actual} B вместо {size_bytes} B. "
-                f"Замер с такого контейнера встал бы не в свою строку."
+                tr(
+                    "veracrypt.create.size",
+                    name=path.name,
+                    actual=actual,
+                    expected=size_bytes,
+                )
             )
 
     def mount(self, path: Path, letter: str) -> None:
@@ -519,28 +537,31 @@ class VeraCrypt:
         self._await_letter(
             letter,
             present=True,
-            message=(
-                f"Том {letter}: не поднялся за {LETTER_TIMEOUT:g} с "
-                f"(код возврата {code}). Проверьте, что драйвер VeraCrypt "
-                f"установлен и запущен."
+            message=tr(
+                "veracrypt.mount.timeout",
+                letter=letter,
+                timeout=f"{LETTER_TIMEOUT:g}",
+                code=code,
             ),
         )
 
     def unmount(self, letter: str, force_last: bool = False) -> None:
-        """Снять том, повторяя попытку, а не выжидая одну минуту.
+        """Unmount the volume by retrying, not by waiting out one minute.
 
-        Отказ виден сразу: VeraCrypt возвращает ненулевой код и буква
-        остаётся. Ждать после этого нечего — том не размонтируется медленно,
-        его не отдали вовсе. Зато через полминуты отдают: так вели себя все
-        четыре сорвавшихся замера первого настоящего прогона.
+        A refusal is visible at once: VeraCrypt returns a non-zero code and the
+        letter stays. There is nothing to wait for after that — the volume is
+        not unmounting slowly, it was not given up at all. But half a minute
+        later it is: that is how all four failed measurements of the first real
+        run behaved.
 
-        Короткая отсрочка после команды всё же нужна: снимает том драйвер, и
-        буква исчезает не в тот же миг, что вышел процесс.
+        A short grace period after the command is still needed: the driver
+        takes the volume down, and the letter does not disappear the instant
+        the process exits.
 
-        `force_last` разрешает применить `/force` на последней попытке — и
-        только на ней. Не на всех: незнакомый ключ VeraCrypt в тихом режиме
-        проглотит молча, и уборка, начнись она сразу с силы, могла бы не
-        сработать вовсе. Сначала три раза по-хорошему, и лишь потом силой.
+        `force_last` allows `/force` on the last attempt — and only on it. Not
+        on all of them: VeraCrypt in silent mode swallows an unknown switch
+        silently, and cleanup that started with force right away might not work
+        at all. Three times the gentle way first, and only then by force.
         """
         code = 0
         for attempt in range(UNMOUNT_ATTEMPTS):
@@ -556,18 +577,16 @@ class VeraCrypt:
             if self._letter_gone(letter, UNMOUNT_GRACE):
                 return
         raise VeraCryptError(
-            f"Том {letter}: не размонтировался за {UNMOUNT_ATTEMPTS} "
-            f"{plural(UNMOUNT_ATTEMPTS, 'попытку', 'попытки', 'попыток')} "
-            f"(последний код возврата {code}). Пока он поднят, файл "
-            f"контейнера удалить нельзя."
+            tr_n("veracrypt.unmount.failed", UNMOUNT_ATTEMPTS, letter=letter, code=code)
         )
 
     def unmount_quietly(self, letter: str) -> bool:
-        """Снять том, не заслоняя уже случившуюся ошибку. Для finally.
+        """Unmount the volume without masking an error that already happened.
 
-        Здесь и только здесь разрешается `/force`, и то последней попыткой:
-        контейнер сразу после этого удаляется, терять на нём нечего, а
-        оставить поднятым том и файл на терабайт нельзя.
+        For finally. Here and only here `/force` is allowed, and even then as
+        the last attempt: the container is deleted right after, there is
+        nothing to lose on it, and leaving a mounted volume and a terabyte
+        file behind is not an option.
         """
         try:
             if f"{letter}:" not in self._taken():
@@ -577,20 +596,20 @@ class VeraCrypt:
         except VeraCryptError:
             return False
 
-    # --- буквы дисков ------------------------------------------------------
+    # --- drive letters -----------------------------------------------------
 
     def free_letter(self) -> str:
         taken = self._taken()
         for letter in LETTERS:
             if f"{letter}:" not in taken:
                 return letter
-        raise VeraCryptError("Свободных букв дисков не осталось.")
+        raise VeraCryptError(tr("veracrypt.letters.none"))
 
     def _taken(self) -> set[str]:
         return {item.upper().rstrip("\\/") for item in self.volumes.drives()}
 
     def _await_letter(self, letter: str, present: bool, message: str) -> None:
-        """Дождаться появления или исчезновения буквы. Опросом, а не по коду."""
+        """Wait for the letter to appear or vanish. By polling, not by code."""
         waited = 0.0
         while True:
             if (f"{letter}:" in self._taken()) == present:
@@ -601,11 +620,11 @@ class VeraCrypt:
             waited += POLL_SECONDS
 
     def _letter_gone(self, letter: str, timeout: float) -> bool:
-        """Ушла ли буква за отведённое время. Без исключения: решает вызывающий.
+        """Whether the letter went away in the given time. No exception.
 
-        Нулевой срок — просто взгляд на список смонтированных, без единой
-        паузы: им проверяют, не отпустили ли том, пока мы ждали между
-        попытками.
+        The caller decides. A zero timeout is just a look at the list of
+        mounted drives, without a single pause: it checks whether the volume
+        was let go while we waited between attempts.
         """
         waited = 0.0
         while True:
@@ -617,22 +636,22 @@ class VeraCrypt:
             waited += POLL_SECONDS
 
 
-# --- временные контейнеры --------------------------------------------------
+# --- temporary containers --------------------------------------------------
 
 
 def container_name(container_mib: int, key: str = "") -> str:
-    """Имя временного контейнера. Ключ набора различает одинаковые размеры.
+    """Temporary container name. The file set key tells equal sizes apart.
 
-    Без него два набора файлов, которым расчёт выдал один и тот же
-    Container init, писали бы в один файл: первый ещё не удалён, второй уже
-    создаётся, и VeraCrypt отказывает молча.
+    Without it two file sets for which the calculation gave the same
+    Container init would write to one file: the first is not deleted yet, the
+    second is already being created, and VeraCrypt refuses silently.
     """
     suffix = f"-{key}" if key else ""
     return f"{CONTAINER_PREFIX}{container_mib}{suffix}{CONTAINER_SUFFIX}"
 
 
 def orphans(workdir: str | os.PathLike[str]) -> list[Path]:
-    """Контейнеры, оставшиеся от прерванного сбора."""
+    """Containers left over from an interrupted collection."""
     directory = Path(workdir)
     if not directory.is_dir():
         return []
@@ -640,7 +659,10 @@ def orphans(workdir: str | os.PathLike[str]) -> list[Path]:
 
 
 def remove_container(path: Path) -> bool:
-    """Удалить файл контейнера. False — не вышло, чаще всего том ещё поднят."""
+    """Delete the container file.
+
+    False means it failed, most often because the volume is still mounted.
+    """
     try:
         path.unlink(missing_ok=True)
         return True

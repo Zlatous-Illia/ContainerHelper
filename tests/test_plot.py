@@ -1,7 +1,7 @@
-"""Арифметика графиков: деления, границы, отображение в пиксели, попадание.
+"""Chart arithmetic: ticks, bounds, mapping to pixels, hit testing.
 
-Без Qt — как и сам модуль. Нарисованное глазами не проверяется: кривая,
-проведённая мимо, выглядит так же убедительно, как проведённая верно.
+Without Qt — like the module itself. What is drawn is not checked by eye: a
+curve drawn in the wrong place looks just as convincing as one drawn right.
 """
 
 import math
@@ -37,10 +37,10 @@ def texts(axis, lo, hi, unit=UNIT_AUTO):
 
 
 class TickTests(unittest.TestCase):
-    """Деления — то место, где самописный график обычно выдаёт себя."""
+    """Ticks are where a home-made chart usually gives itself away."""
 
     def test_a_byte_axis_is_labelled_in_a_multiple_unit(self):
-        """«50 MiB» вместо «52 428 800» — иначе подпись не читается."""
+        """Labels read "50 MiB", not "52 428 800" — otherwise unreadable."""
         axis = Axis("Метаданные", AXIS_BYTES)
         lo, hi = padded(17 * MIB, 143 * MIB)
         self.assertEqual(
@@ -49,24 +49,25 @@ class TickTests(unittest.TestCase):
         self.assertEqual(axis_caption(axis, lo, hi, UNIT_AUTO), "Метаданные, MiB")
 
     def test_the_step_is_the_nearest_one_not_the_next_one_up(self):
-        """Округление вверх выглядит логично и разрежает ось вдвое.
+        """Rounding up looks logical and thins the axis out by half.
 
-        На размахе в 137 MiB оно отправляет с шага 20 сразу на 50: вместо семи
-        делений остаётся два, и ось перестаёт говорить хоть что-то о
-        промежуточных значениях. Проверено на настоящем размахе кривой NTFS.
+        On a 137 MiB range it jumps from a step of 20 straight to 50: instead
+        of seven ticks two remain, and the axis stops saying anything at all
+        about the values in between. Checked on the real range of the NTFS
+        curve.
         """
         axis = Axis("Метаданные", AXIS_BYTES)
         self.assertGreaterEqual(len(texts(axis, *padded(17 * MIB, 143 * MIB))), 5)
 
     def test_a_whole_step_gets_no_trailing_zeros(self):
-        """«4.00 MiB» на оси — шум, из-за которого подписи налезают друг на друга."""
+        """A "4.00 MiB" on an axis is noise that makes the labels overlap."""
         axis = Axis("Метаданные", AXIS_BYTES)
         for text in texts(axis, 0, 20 * MIB):
             with self.subTest(text):
                 self.assertNotIn(",", text.replace(" ", ""))
 
     def test_the_step_follows_the_one_two_five_ladder(self):
-        """Без лестницы 1-2-5 подписи выходят вида 0,0037 — и это видно сразу."""
+        """Without the 1-2-5 ladder labels read 0.0037 — obvious at once."""
         axis = Axis("Наклон", AXIS_PLAIN)
         values = [tick.value for tick in ticks(axis, *padded(0.128, 0.324, include_zero=True))]
         self.assertGreaterEqual(len(values), 3)
@@ -77,7 +78,7 @@ class TickTests(unittest.TestCase):
         self.assertAlmostEqual(min((1.0, 2.0, 5.0), key=lambda f: abs(f - mantissa)), mantissa)
 
     def test_a_logarithmic_byte_axis_walks_powers_of_two(self):
-        """Все размеры тут кратны степени двойки; декады встали бы мимо них."""
+        """Sizes here are power-of-two multiples; decades would miss them."""
         axis = Axis("Размер тома", AXIS_BYTES, log=True)
         labels = texts(axis, *padded(536604672, 1099511361536, log=True))
         self.assertIn("512 MiB", labels)
@@ -85,7 +86,7 @@ class TickTests(unittest.TestCase):
         self.assertIn("1 TiB", labels)
 
     def test_a_logarithmic_byte_axis_gives_every_tick_its_own_unit(self):
-        """Общая единица превратила бы половину подписей в «0.001»."""
+        """A shared unit would turn half the labels into "0.001"."""
         axis = Axis("Размер тома", AXIS_BYTES, log=True)
         lo, hi = padded(536604672, 1099511361536, log=True)
         self.assertNotIn(",", axis_caption(axis, lo, hi, UNIT_AUTO))
@@ -93,7 +94,7 @@ class TickTests(unittest.TestCase):
         self.assertEqual(units, {"MiB", "GiB", "TiB"})
 
     def test_a_count_axis_walks_powers_of_ten(self):
-        """Число файлов степенью двойки не бывает: 1, 4, 16 читается хуже."""
+        """A file count is never a power of two: 1, 4, 16 reads worse."""
         axis = Axis("Файлов", AXIS_COUNT, log=True)
         self.assertEqual(
             texts(axis, *padded(1, 10000, log=True)),
@@ -113,7 +114,7 @@ class TickTests(unittest.TestCase):
                 self.assertLessEqual(tick.value, hi)
 
     def test_a_flat_range_does_not_divide_by_zero(self):
-        """Один замер — обычное состояние, а не поломка."""
+        """A single measurement is a normal state, not a breakage."""
         axis = Axis("Метаданные", AXIS_BYTES)
         lo, hi = padded(19 * MIB, 19 * MIB)
         self.assertLess(lo, hi)
@@ -131,18 +132,18 @@ class BoundsTests(unittest.TestCase):
         self.assertEqual(bounds((first, second), "y"), (5, 30))
 
     def test_a_hidden_series_does_not_stretch_the_axis(self):
-        """Иначе выключенная щелчком по легенде серия держала бы масштаб."""
+        """Else a series hidden via the legend would still hold the scale."""
         shown = Series("a", (Point(1, 10),))
         hidden = Series("b", (Point(500, 900),), visible=False)
         self.assertEqual(bounds((shown, hidden), "x"), (1, 1))
 
     def test_zero_is_included_when_asked(self):
-        """Остатки без нуля бессмысленны: ноль там и есть модель."""
+        """Residuals without zero are meaningless: zero there is the model."""
         lo, hi = padded(120000, 202672, include_zero=True)
         self.assertLessEqual(lo, 0)
 
     def test_log_padding_is_measured_in_octaves(self):
-        """Доля от значения съела бы у левого края целую октаву."""
+        """A fraction of the value would eat a whole octave at the left end."""
         lo, hi = padded(1024, 1048576, log=True)
         self.assertLess(lo, 1024)
         self.assertGreater(hi, 1048576)
@@ -178,7 +179,7 @@ class SpanTests(unittest.TestCase):
         self.assertAlmostEqual(zoomed.hi, 75)
 
     def test_zoom_by_frame_survives_a_backwards_drag(self):
-        """Рамку тянут в любую сторону, и справа налево — тоже выделение."""
+        """A frame is dragged either way; right to left is a selection too."""
         self.assertEqual(Span(0, 100).zoomed(0.75, 0.25), Span(0, 100).zoomed(0.25, 0.75))
 
     def test_the_wheel_keeps_the_point_under_the_cursor(self):
@@ -206,7 +207,7 @@ class FrameTests(unittest.TestCase):
         self.frame = Frame(50, 10, 200, 100, Span(0, 100), Span(0, 50))
 
     def test_the_y_axis_grows_upwards(self):
-        """Экранный ноль сверху; забыть это — классический перевёрнутый график."""
+        """Screen zero is on top; forget it: the classic upside-down chart."""
         self.assertAlmostEqual(self.frame.py(0), 110)
         self.assertAlmostEqual(self.frame.py(50), 10)
 
@@ -236,15 +237,16 @@ class HitTests(unittest.TestCase):
         self.assertEqual(hit.point.tip, "первая")
 
     def test_far_from_everything_hits_nothing(self):
-        """Иначе подсказка липнет к точке через полэкрана."""
+        """Otherwise the tooltip sticks to a point half a screen away."""
         self.assertIsNone(nearest(self.frame, self.series, 50, 50))
 
     def test_distance_is_measured_in_pixels_not_in_values(self):
-        """По значениям ближайшей всегда была бы точка оси с мелким размахом.
+        """By value, the nearest would always be on the small-range axis.
 
-        Курсор стоит вплотную к дальней по значению точке: до неё миллион по
-        X, до соседней — единица по Y. В пикселях выигрывает первая, и это
-        верно, потому что человек целится в экран, а не в число.
+        The cursor sits right against the point that is far by value: it is a
+        million away in X, the other one is one away in Y. In pixels the first
+        wins, and that is right, because a person aims at the screen, not at a
+        number.
         """
         frame = Frame(0, 0, 100, 100, Span(0, 1_000_000), Span(0, 1))
         series = (Series("a", (Point(1_000_000, 0.0), Point(0, 1.0))),)
@@ -257,7 +259,7 @@ class HitTests(unittest.TestCase):
         self.assertIsNone(nearest(self.frame, hidden, 10, 90))
 
     def test_a_stack_is_not_hit_as_points(self):
-        """У полосы попадание — это площадь сегмента, а не близость к точке."""
+        """For a bar, a hit is the segment's area, not closeness to a point."""
         stack = (Series("разложение", (Point(0, 10),), kind=KIND_STACK),)
         self.assertIsNone(nearest(self.frame, stack, 0, 100))
 
@@ -275,15 +277,16 @@ class StackTests(unittest.TestCase):
         self.assertEqual(stack_hit(self.frame, self.series, 10, 10).tip, "данные")
 
     def test_segments_are_laid_out_by_their_share(self):
-        """900 : 99 : 1 на ста пикселях — это 90, 9.9 и 0.1 пикселя."""
+        """900 : 99 : 1 over a hundred pixels is 90, 9.9 and 0.1 pixels."""
         self.assertEqual(stack_hit(self.frame, self.series, 95, 10).tip, "NTFS")
         self.assertEqual(stack_hit(self.frame, self.series, 99.95, 10).tip, "заголовок")
 
     def test_a_subpixel_segment_is_not_made_catchable_by_stealing_room(self):
-        """Расширить его зону — значит развести показанное и опрошенное.
+        """Widening its zone would split what is shown from what is queried.
 
-        Курсор стоял бы на метаданных NTFS, а подсказка говорила про заголовок
-        VeraCrypt. Такие слагаемые объясняет легенда, а не наведение.
+        The cursor would stand on the NTFS metadata while the tooltip spoke of
+        the VeraCrypt header. Such components are explained by the legend, not
+        by hovering.
         """
         self.assertEqual(stack_hit(self.frame, self.series, 99.5, 10).tip, "NTFS")
 
@@ -292,10 +295,10 @@ class StackTests(unittest.TestCase):
 
 
 class ValueLabelTests(unittest.TestCase):
-    """Подпись под перекрестьем считается тем же шагом, что и деления.
+    """The label under the crosshair uses the same step as the ticks.
 
-    Иначе одно и то же место оси подписано двумя способами: у деления «4»,
-    а у перекрестья рядом — «4,0000001».
+    Otherwise one and the same spot on the axis is labelled two ways: "4" at
+    the tick and "4.0000001" at the crosshair next to it.
     """
 
     def test_a_log_byte_axis_names_the_power_of_two(self):
@@ -326,17 +329,18 @@ class ValueLabelTests(unittest.TestCase):
 
 
 class LogCountTicksTests(unittest.TestCase):
-    """Дробные деления логарифмической счётной оси.
+    """Fractional ticks on a logarithmic count axis.
 
-    Они шли через `fmt_bytes(int(...))`, и «0,01» превращалось в «0»: величин
-    меньше единицы на такой оси до доли тома просто не бывало.
+    They went through `fmt_bytes(int(...))`, and "0.01" turned into "0":
+    values below one simply never occurred on such an axis until the share of
+    the volume came along.
     """
 
     axis = Axis("Доля тома, %", AXIS_PLAIN, log=True)
 
     def test_a_decade_below_one_keeps_its_digits(self):
         labels = [tick.text for tick in ticks(self.axis, 0.01, 20)]
-        self.assertEqual(labels, ["0,01", "0,1", "1", "10"])
+        self.assertEqual(labels, ["0.01", "0.1", "1", "10"])
 
     def test_whole_values_stay_whole(self):
         self.assertEqual(value_label(self.axis, 12.0, 0.01, 20), "12")

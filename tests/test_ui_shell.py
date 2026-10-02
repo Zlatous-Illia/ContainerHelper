@@ -1,4 +1,4 @@
-"""Оболочка: минимумы окна, высота таблиц, блок покрытия, кнопки записи."""
+"""Shell: window minimums, table heights, coverage block, record buttons."""
 
 import os
 import tempfile
@@ -23,6 +23,7 @@ from containerhelper.ui.app import MIN_WINDOW_WIDTH, MainWindow  # noqa: E402
 from containerhelper.ui.calibration_tab import RECOMMENDED_MIB  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
 from containerhelper.ui.table import MIN_TABLE_ROWS, height_for_rows  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 
 
 def seeded(path):
@@ -32,8 +33,8 @@ def seeded(path):
             Record(
                 id=f"Test {gib} GiB",
                 container_mib=gib * 1024,
-                mounted_bytes=gib * 1024 * 1024 * 1024 - 266_240,
-                empty_free_bytes=gib * 1024 * 1024 * 1024 - 266_240 - gib * 3_000_000,
+                mounted_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL,
+                empty_free_bytes=gib * 1024 * 1024 * 1024 - HEADERS_AND_TAIL - gib * 3_000_000,
             )
             for gib in (1, 2, 4, 8, 16, 32, 64, 100)
         ],
@@ -76,7 +77,7 @@ class MinimumSizeTests(WindowFixture):
                 self.assertGreater(table.minimumWidth(), 0)
 
     def test_minimum_height_fits_header_and_rows(self):
-        """Иначе шапка наезжает на первую строку при сжатии до минимума."""
+        """Else the header covers the first row when squeezed to minimum."""
         for table in self.tables():
             with self.subTest(table.objectName()):
                 header = table.horizontalHeader().sizeHint().height()
@@ -86,7 +87,7 @@ class MinimumSizeTests(WindowFixture):
                 )
 
     def test_squeezed_table_leaves_room_below_the_header(self):
-        """При сжатии до минимума шапка не должна занимать всю таблицу."""
+        """At the minimum height the header must not fill the whole table."""
         table = self.window.model_tab.ntfs_table
         header = table.horizontalHeader().sizeHint().height()
         row = table.verticalHeader().defaultSectionSize()
@@ -106,17 +107,17 @@ class TableHeightTests(WindowFixture):
         )
 
     def test_expanding_lengthens_the_scroll(self):
-        """Разделитель этого не умеет: он делит уже имеющуюся высоту.
+        """A splitter cannot do this: it shares out the height already there.
 
-        Вкладка ищется по названию, а не по номеру: номер меняется от одной
-        перестановки вкладок, и тест тогда молча меряет не ту страницу.
+        The tab is found by title, not by index: one reordering of the tabs
+        changes the index, and the test then silently measures the wrong page.
         """
         from PySide6.QtWidgets import QTabWidget
 
         tabs = self.window.centralWidget().findChild(QTabWidget)
         titles = [tabs.tabText(i) for i in range(tabs.count())]
         tabs.setCurrentIndex(titles.index("Калибровка"))
-        # Настройки переживают тесты в одном процессе — состояние задаём явно.
+        # Settings outlive tests within one process — set the state explicitly.
         self.window.expand_tables.setChecked(False)
         _app.processEvents()
         area = tabs.currentWidget()
@@ -135,7 +136,7 @@ class TableHeightTests(WindowFixture):
         self.assertEqual(table.minimumHeight(), compact)
 
     def test_the_grip_sits_right_under_the_table(self):
-        """Ручка должна садиться на контур таблицы, а не на текст под ней."""
+        """The grip must hug the table's outline, not the text below it."""
         from containerhelper.ui.table import TableGrip
 
         for name, table in self.window.all_tables().items():
@@ -158,7 +159,7 @@ class CoverageTests(WindowFixture):
         self.assertIn("Калибровка", titles)
 
     def test_range_list_reaches_past_the_measured_data(self):
-        """Экстраполяция вверх — слабое место модели, туда и нужны замеры."""
+        """Extrapolating up is the model's weak spot: measure there."""
         self.assertGreater(len(RECOMMENDED_MIB), 15)
         self.assertGreaterEqual(max(RECOMMENDED_MIB), 1024 * 1024)
         self.assertLessEqual(min(RECOMMENDED_MIB), 512)
@@ -210,7 +211,7 @@ class RecordDialogButtonTests(WindowFixture):
 
 
 class VerdictTests(WindowFixture):
-    """Сверка по итогам: число файлов и объём по кластерам."""
+    """Checking the outcome: the file count and the cluster-rounded payload."""
 
     def prepared(self, count, alloc):
         dialog = self.dialog_with(count, alloc)
@@ -250,7 +251,7 @@ class VerdictTests(WindowFixture):
         self.assertIn("⚠", text)
 
     def test_service_directories_are_named_not_counted(self):
-        """Они едят кластеры, но полезными данными не являются."""
+        """They eat clusters but are not payload."""
         dialog = self.dialog_with(500, 2_048_000)
         text = dialog._verdict(
             "E:", self.scan(500, 2_048_000, service=["System Volume Information"])

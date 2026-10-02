@@ -1,4 +1,4 @@
-"""Проверка расчётного ядра на трёх реальных записях."""
+"""Tests of the calculation core on three real records."""
 
 import math
 import unittest
@@ -7,9 +7,9 @@ from containerhelper.model import (
     DEFAULT_SLACK_PER_FILE,
     DEFAULT_NTFS_RATE,
     MIB,
-    VC_HEADER_BYTES,
+    VC_HEADERS_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     ceil_div,
     round_up,
@@ -41,7 +41,7 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(payload.cluster_tail, 4041)
 
     def test_folder_sums_cluster_sizes_not_logical(self):
-        """Наивная сумма логических размеров занижает результат."""
+        """A naive sum of logical sizes underestimates the result."""
         payload = Payload.for_files([1, 4097, 4096], 4096)
         self.assertEqual(payload.logical_bytes, 8194)
         self.assertEqual(payload.alloc_bytes, 4096 + 8192 + 4096)
@@ -57,12 +57,16 @@ class DerivedValueTests(unittest.TestCase):
     def test_veracrypt_header_is_constant_across_records(self):
         for record in reference.ALL:
             with self.subTest(record.id):
-                self.assertEqual(record.vc_header, VC_HEADER_BYTES)
+                self.assertEqual(
+                    record.container_bytes - record.mounted_bytes,
+                    VC_HEADERS_BYTES + record.cluster_bytes,
+                )
+                self.assertEqual(record.tail_bytes, record.cluster_bytes)
 
     def test_ntfs_overhead_matches_measurements(self):
         for record in reference.ALL:
             with self.subTest(record.id):
-                self.assertEqual(record.ntfs_bytes, reference.EXPECTED_NTFS[record.id])
+                self.assertEqual(record.metadata_bytes, reference.EXPECTED_NTFS[record.id])
 
     def test_copy_slack_matches_measurements(self):
         for record_id, expected in reference.EXPECTED_SLACK.items():
@@ -71,39 +75,39 @@ class DerivedValueTests(unittest.TestCase):
                 self.assertEqual(record.copy_slack_measured, expected)
 
     def test_broken_record_yields_negative_slack(self):
-        """Cache 2: занято меньше самого файла — величина не имеет смысла."""
+        """Cache 2 uses less than the file itself: the value is meaningless."""
         self.assertLess(reference.CACHE_2.copy_slack_measured, 0)
 
 
 class NtfsModelTests(unittest.TestCase):
     def test_falls_back_to_affine_without_points(self):
-        model = NtfsModel()
+        model = MetadataModel()
         self.assertFalse(model.calibrated)
         self.assertTrue(model.is_extrapolation(10 * 1024**3))
 
     def test_default_model_never_underestimates_measurements_by_much(self):
-        """Недооценка должна укладываться в страховочный запас 4 MiB."""
-        model = NtfsModel()
+        """An underestimate must fit within the 4 MiB safety margin."""
+        model = MetadataModel()
         for record in reference.ALL:
             with self.subTest(record.id):
-                shortfall = record.ntfs_bytes - model.overhead(record.mounted_bytes)
+                shortfall = record.metadata_bytes - model.overhead(record.mounted_bytes)
                 self.assertLess(shortfall, 4 * MIB)
 
     def test_calibrated_model_is_exact_at_measured_points(self):
-        points = [(r.mounted_bytes, r.ntfs_bytes) for r in reference.ALL]
-        model = NtfsModel(points)
+        points = [(r.mounted_bytes, r.metadata_bytes) for r in reference.ALL]
+        model = MetadataModel(points)
         self.assertTrue(model.calibrated)
         for volume, overhead in points:
             with self.subTest(volume=volume):
                 self.assertEqual(model.overhead(volume), overhead)
 
     def test_interpolates_between_points(self):
-        model = NtfsModel([(8 * 1024**3, 32 * MIB), (12 * 1024**3, 40 * MIB)])
+        model = MetadataModel([(8 * 1024**3, 32 * MIB), (12 * 1024**3, 40 * MIB)])
         self.assertEqual(model.overhead(10 * 1024**3), 36 * MIB)
 
     def test_extrapolates_from_the_edge_point_at_the_baseline_rate(self):
         edge = 12 * 1024**3
-        model = NtfsModel([(8 * 1024**3, 32 * MIB), (edge, 40 * MIB)])
+        model = MetadataModel([(8 * 1024**3, 32 * MIB), (edge, 40 * MIB)])
         far = 60 * 1024**3
 
         expected = 40 * MIB + math.ceil(DEFAULT_NTFS_RATE * (far - edge))
@@ -112,12 +116,12 @@ class NtfsModelTests(unittest.TestCase):
         self.assertFalse(model.is_extrapolation(10 * 1024**3))
 
     def test_extrapolation_ignores_a_steep_local_slope(self):
-        """Две близко стоящие точки не должны задавать наклон на весь вынос."""
+        """Two close points must not set the slope all the way out."""
         points = [
             (11 * 1024**3, 38 * MIB),
-            (11 * 1024**3 + 1024**2, 44 * MIB),  # рядом, наклон огромный
+            (11 * 1024**3 + 1024**2, 44 * MIB),  # close by, huge slope
         ]
-        model = NtfsModel(points)
+        model = MetadataModel(points)
         local_slope = 6 * MIB / 1024**2
 
         far = 60 * 1024**3
@@ -125,30 +129,30 @@ class NtfsModelTests(unittest.TestCase):
         self.assertLess(grew / (far - 11 * 1024**3 - 1024**2), local_slope / 1000)
 
     def test_downward_extrapolation_stays_within_the_safety_margin(self):
-        """Случай, на котором проверка исключением давала 10.8 MiB недооценки."""
+        """Where the leave-one-out check gave a 10.8 MiB underestimate."""
         without_smallest = [
-            (reference.CACHE_2.mounted_bytes, reference.CACHE_2.ntfs_bytes),
-            (reference.CACHE_1.mounted_bytes, reference.CACHE_1.ntfs_bytes),
+            (reference.CACHE_2.mounted_bytes, reference.CACHE_2.metadata_bytes),
+            (reference.CACHE_1.mounted_bytes, reference.CACHE_1.metadata_bytes),
         ]
-        predicted = NtfsModel(without_smallest).overhead(reference.CACHE_4.mounted_bytes)
-        shortfall = reference.CACHE_4.ntfs_bytes - predicted
+        predicted = MetadataModel(without_smallest).overhead(reference.CACHE_4.mounted_bytes)
+        shortfall = reference.CACHE_4.metadata_bytes - predicted
         self.assertLess(shortfall, 4 * MIB)
 
     def test_real_measurements_extrapolate_close_to_the_baseline(self):
-        """На 60 GiB калибровка по 8–12 GiB не должна улетать от базовой модели."""
-        points = [(r.mounted_bytes, r.ntfs_bytes) for r in reference.ALL]
-        calibrated = NtfsModel(points).overhead(60 * 1024**3)
-        baseline = NtfsModel().overhead(60 * 1024**3)
+        """At 60 GiB, calibration on 8–12 GiB must not fly off the baseline."""
+        points = [(r.mounted_bytes, r.metadata_bytes) for r in reference.ALL]
+        calibrated = MetadataModel(points).overhead(60 * 1024**3)
+        baseline = MetadataModel().overhead(60 * 1024**3)
         self.assertLess(abs(calibrated - baseline), 32 * MIB)
 
     def test_never_returns_degenerate_value(self):
-        """Экстраполяция вниз по крутому наклону не должна уходить в ноль."""
-        model = NtfsModel([(1_000_000, 900_000), (2_000_000, 1_800_000)])
+        """Extrapolating down a steep slope must not go to zero."""
+        model = MetadataModel([(1_000_000, 900_000), (2_000_000, 1_800_000)])
         self.assertGreaterEqual(model.overhead(1000), MIB)
 
     def test_duplicate_volumes_keep_the_larger_overhead(self):
         volume = 8 * 1024**3
-        model = NtfsModel(
+        model = MetadataModel(
             [(volume, 32 * MIB), (volume, 34 * MIB), (12 * 1024**3, 40 * MIB)]
         )
         self.assertEqual(model.overhead(volume), 34 * MIB)
@@ -161,7 +165,7 @@ class CopySlackModelTests(unittest.TestCase):
         self.assertFalse(model.per_file_calibrated)
 
     def test_single_file_count_keeps_default_per_file(self):
-        """При одном значении n по-файловую часть отделить нельзя."""
+        """With a single value of n the per-file slack cannot be separated."""
         samples = [(1, 143_360), (1, 114_688)]
         model = CopySlackModel.calibrate(samples)
         self.assertEqual(model.per_file, DEFAULT_SLACK_PER_FILE)
@@ -177,7 +181,7 @@ class CopySlackModelTests(unittest.TestCase):
                 self.assertGreaterEqual(model.slack(count), measured)
 
     def test_negative_slope_is_rejected(self):
-        """Убывающий запас физически невозможен — остаётся значение по умолчанию."""
+        """Falling slack is physically impossible — the default stays."""
         model = CopySlackModel.calibrate([(1, 900_000), (1000, 100_000)])
         self.assertEqual(model.per_file, DEFAULT_SLACK_PER_FILE)
 
@@ -188,14 +192,14 @@ class SolverTests(unittest.TestCase):
         return solve_container_mib(payload)
 
     def test_result_covers_the_true_minimum(self):
-        """Главная проверка: расчёт не должен промахиваться вниз."""
+        """The main check: the calculation must never miss downwards."""
         for record_id, minimum in reference.TRUE_MINIMUM_MIB.items():
             record = next(r for r in reference.ALL if r.id == record_id)
             with self.subTest(record_id):
                 self.assertGreaterEqual(self._solve(record).container_mib, minimum)
 
     def test_result_is_not_wasteful(self):
-        """Перерасход сверх истинного минимума — не больше 8 MiB."""
+        """Overspend beyond the true minimum is at most 8 MiB."""
         for record_id, minimum in reference.TRUE_MINIMUM_MIB.items():
             record = next(r for r in reference.ALL if r.id == record_id)
             with self.subTest(record_id):
@@ -217,7 +221,7 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(
             solution.predicted_left_bytes,
             solution.volume_bytes
-            - solution.ntfs_bytes
+            - solution.metadata_bytes
             - solution.payload_alloc
             - solution.copy_slack,
         )
@@ -227,7 +231,7 @@ class SolverTests(unittest.TestCase):
         for record in reference.ALL:
             with self.subTest(record.id):
                 solution = self._solve(record)
-                available = solution.volume_bytes - solution.ntfs_bytes
+                available = solution.volume_bytes - solution.metadata_bytes
                 self.assertGreaterEqual(
                     available, solution.payload_alloc + solution.copy_slack
                 )

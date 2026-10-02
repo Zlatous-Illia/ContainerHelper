@@ -1,4 +1,4 @@
-"""Точки калибровки: признак, фильтр, файловая система, упрощённый диалог."""
+"""Calibration points: flag, filter, filesystem, simplified dialog."""
 
 import os
 import tempfile
@@ -18,18 +18,25 @@ QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from dataclasses import replace  # noqa: E402
 
-from containerhelper.factory import FACTORY_MARGIN_BYTES, factory_data  # noqa: E402
-from containerhelper.model import MIB, VC_HEADER_BYTES  # noqa: E402
+from containerhelper.factory import factory_data  # noqa: E402
+from containerhelper.model import (  # noqa: E402
+    FACTORY_MARGIN_BYTES,
+    MIB,
+    volume_of,
+)
 from containerhelper.paths import CALIBRATION_NAME  # noqa: E402
+from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.records import (  # noqa: E402
+    EXFAT,
     SCHEMA_VERSION,
-    SCOPE_NTFS,
     SCOPE_SLACK,
     Record,
     Store,
     StoreError,
     is_usable,
-    ntfs_points,
+    VolumeProfile,
+    metadata_points,
+    slack_samples,
     validate,
 )
 from containerhelper.sizes import SUPPORTED_FS  # noqa: E402
@@ -41,12 +48,12 @@ from containerhelper.ui.record_dialog import (  # noqa: E402
 
 
 def point(mib, ntfs=17_879_040, **extra):
-    volume = mib * MIB - VC_HEADER_BYTES
+    """An empty-volume measurement whose metadata comes out exactly `ntfs`."""
     return Record(
         id=f"Точка {mib}",
         container_mib=mib,
-        mounted_bytes=volume,
-        empty_free_bytes=volume - ntfs,
+        mounted_bytes=mib * MIB - HEADERS_AND_TAIL,
+        empty_free_bytes=volume_of(mib * MIB) - ntfs,
         **extra,
     )
 
@@ -59,7 +66,7 @@ class CalibrationFlagTests(unittest.TestCase):
         self.assertFalse(point(1024, file_bytes=10_000).is_calibration_point)
 
     def test_a_record_with_leftover_is_not(self):
-        """Cache 1 остаток снял, а размер данных нет — это всё равно не точка."""
+        """Cache 1 has left space but no data size — still not a point."""
         self.assertFalse(point(1024, left_bytes=5_464_064).is_calibration_point)
 
 
@@ -68,23 +75,42 @@ class FilesystemTests(unittest.TestCase):
         record = point(1024, filesystem=SUPPORTED_FS)
         self.assertEqual([issue.code for issue in validate(record)], [])
 
-    def test_other_filesystem_is_flagged(self):
+    def test_other_filesystem_is_not_an_error(self):
+        """The profile keeps it apart now; a check would only lose the point."""
         record = point(1024, filesystem="exFAT")
-        self.assertIn("filesystem", {issue.code for issue in validate(record)})
+        self.assertEqual([issue.code for issue in validate(record)], [])
 
     def test_a_non_ntfs_record_leaves_the_ntfs_calibration(self):
-        """У exFAT накладные расходы про другое — точка испортила бы модель."""
-        record = point(1024, filesystem="exFAT")
-        self.assertFalse(is_usable(record, SCOPE_NTFS))
-        self.assertEqual(ntfs_points([record]), [])
+        """exFAT overhead is another story: the point would spoil the model."""
+        record = point(1024, filesystem="exFAT", cluster_bytes=32768)
+        self.assertEqual(metadata_points([record]), [])
+        self.assertEqual(
+            metadata_points([record], VolumeProfile(EXFAT, 32768)),
+            [(record.volume_bytes, record.metadata_bytes)],
+        )
 
-    def test_it_does_not_touch_the_copy_slack(self):
-        """Кластерная арифметика от файловой системы не зависит."""
-        record = point(1024, filesystem="exFAT")
+    def test_its_copy_slack_goes_to_its_own_profile(self):
+        """Stated the other way round before schema 6.
+
+        The copy slack was taken to be pure cluster arithmetic, and an exFAT
+        measurement went into the NTFS copy slack. exFAT spends a fraction of
+        NTFS's bytes per file, so it pulled the NTFS per-file slack down — the
+        dangerous side.
+        """
+        record = point(
+            1024,
+            filesystem="exFAT",
+            cluster_bytes=32768,
+            file_bytes=100 * 32768,
+            file_count=100,
+            left_bytes=volume_of(1024 * MIB) - 17_879_040 - 101 * 32768,
+        )
         self.assertTrue(is_usable(record, SCOPE_SLACK))
+        self.assertEqual(slack_samples([record]), [])
+        self.assertEqual(len(slack_samples([record], VolumeProfile(EXFAT, 32768))), 1)
 
     def test_empty_filesystem_means_not_read(self):
-        """Все записи до появления проверки — молча NTFS."""
+        """Every record made before this check existed is silently NTFS."""
         self.assertEqual([issue.code for issue in validate(point(1024))], [])
 
     def test_it_survives_a_round_trip(self):
@@ -105,7 +131,7 @@ class FilesystemTests(unittest.TestCase):
 
 
 class SeparateStoreTests(unittest.TestCase):
-    """Замеры пустых томов живут своим файлом, а не вперемешку с записями."""
+    """Empty-volume measurements live in their own file, not among records."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -142,7 +168,7 @@ class SeparateStoreTests(unittest.TestCase):
         self.assertEqual(len(self.written(self.points_path)["calibration"]), 2)
 
     def test_the_records_file_holds_no_measurements_at_all(self):
-        """Ключа calibration в файле записей больше нет — ни пустого, никакого."""
+        """No calibration key in the records file any more — not even empty."""
         self.seeded()
         raw = self.written(self.path)
         self.assertEqual(sorted(raw), ["records", "schema"])
@@ -161,19 +187,19 @@ class SeparateStoreTests(unittest.TestCase):
         self.assertEqual(len(again.calibration), 2)
 
     def test_an_empty_calibration_leaves_no_file_behind(self):
-        """На новой машине своих замеров нет — пустышку класть незачем."""
+        """A new machine has no own measurements: no empty file is needed."""
         Store(path=self.path, records=[self.cache]).save()
         self.assertFalse(self.points_path.exists())
 
     def test_deleting_every_point_rewrites_the_file(self):
-        """Иначе удалённые замеры вернулись бы при следующем чтении."""
+        """Otherwise deleted measurements would come back on the next load."""
         store = self.seeded()
         store.calibration = []
         store.save()
         self.assertEqual(Store.load(self.path).calibration, [])
 
     def test_old_files_migrate_their_points(self):
-        """Схемы до четвёртой держали замеры пустых томов вперемешку."""
+        """Before schema 4, empty-volume measurements lay among the records."""
         import json
 
         self.path.write_text(
@@ -212,7 +238,7 @@ class SeparateStoreTests(unittest.TestCase):
         self.assertFalse(Store.load(self.path).migrated)
 
     def test_the_new_file_wins_over_a_leftover_copy(self):
-        """Свежий замер не вытесняется старой копией из файла записей."""
+        """An old copy in the records file does not supersede a fresh one."""
         import json
 
         fresh = point(1024, ntfs=20 * MIB)
@@ -225,7 +251,7 @@ class SeparateStoreTests(unittest.TestCase):
         )
         store = Store.load(self.path)
         self.assertEqual(len(store.calibration), 1)
-        self.assertEqual(store.calibration[0].ntfs_bytes, 20 * MIB)
+        self.assertEqual(store.calibration[0].metadata_bytes, 20 * MIB)
 
     def test_nothing_to_migrate_leaves_the_flag_down(self):
         self.assertFalse(self.seeded().migrated)
@@ -237,7 +263,7 @@ class SeparateStoreTests(unittest.TestCase):
         self.assertIn(point(1024).mounted_bytes, volumes)
 
     def test_a_second_records_file_shares_one_calibration(self):
-        """Калибровка привязана к машине, а не к набору записей."""
+        """Calibration belongs to the machine, not to a set of records."""
         self.seeded()
         other = Store.load(Path(self._dir.name) / "other.json")
         self.assertEqual(other.records, [])
@@ -251,7 +277,7 @@ class SeparateStoreTests(unittest.TestCase):
 
 
 class FactoryOverrideTests(unittest.TestCase):
-    """Свой замер вытесняет заводской, отключённый пускает его обратно."""
+    """An own measurement supersedes factory; a disabled one lets it back."""
 
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
@@ -261,7 +287,8 @@ class FactoryOverrideTests(unittest.TestCase):
             id="Своя 1 GiB",
             container_mib=self.factory.container_mib,
             mounted_bytes=self.factory.mounted_bytes,
-            # намеренно меньше заводского: своё вернее любого чужого
+            # deliberately below the factory value: an own measurement is
+            # truer than any foreign one
             empty_free_bytes=self.factory.empty_free_bytes + 5 * MIB,
         )
 
@@ -269,13 +296,14 @@ class FactoryOverrideTests(unittest.TestCase):
         self._dir.cleanup()
 
     def overhead_at(self, store):
-        return dict(store.models()[0].points)[self.factory.mounted_bytes]
+        return dict(store.models()[0].points)[self.factory.volume_bytes]
 
     def factory_count(self):
-        """Заводских записей всего: точки плюс замеры запаса.
+        """All factory records: the points plus the copy-slack measurements.
 
-        Замер запаса тоже даёт точку NTFS — пустой том у него снят до записи
-        файлов, — поэтому в модель он идёт наравне с точками.
+        A copy-slack measurement also gives an NTFS point — its empty volume
+        was measured before the files were written — so it enters the model on
+        a par with the points.
         """
         data = factory_data()
         return len(data.points) + len(data.samples)
@@ -283,20 +311,45 @@ class FactoryOverrideTests(unittest.TestCase):
     def test_factory_fills_an_empty_store(self):
         store = Store(path=self.path)
         self.assertEqual(len(store.calibration_records()), self.factory_count())
-        self.assertEqual(self.overhead_at(store), self.factory.ntfs_bytes)
+        self.assertEqual(self.overhead_at(store), self.factory.metadata_bytes)
 
     def test_own_point_wins_even_when_smaller(self):
-        """_dedupe берёт большее; для заводских это правило неверно."""
+        """_dedupe takes the larger; for factory values that rule is wrong."""
         store = Store(path=self.path, calibration=[self.mine])
-        self.assertLess(self.overhead_at(store), self.factory.ntfs_bytes)
-        self.assertEqual(self.overhead_at(store), self.mine.ntfs_bytes)
+        self.assertLess(self.overhead_at(store), self.factory.metadata_bytes)
+        self.assertEqual(self.overhead_at(store), self.mine.metadata_bytes)
 
     def test_disabling_brings_the_factory_value_back(self):
         store = Store(path=self.path, calibration=[replace(self.mine, disabled=True)])
-        self.assertEqual(self.overhead_at(store), self.factory.ntfs_bytes)
+        self.assertEqual(self.overhead_at(store), self.factory.metadata_bytes)
+
+    def test_a_record_kept_out_of_the_model_does_not_cover_the_size(self):
+        """Keyed by the volume size, it lands on the factory size anyway.
+
+        Kept out by its own issue and still covering the size, it would take
+        the factory point off the curve with it: a node lost without a word.
+        """
+        foreign = (
+            replace(
+                self.mine,
+                cluster_bytes=8192,
+                mounted_bytes=self.factory.volume_bytes - 8192,
+            ),
+            replace(self.mine, filesystem="exFAT"),
+        )
+        for record in foreign:
+            for store in (
+                Store(path=self.path, records=[record]),
+                Store(path=self.path, calibration=[record]),
+            ):
+                with self.subTest(record=record.filesystem or record.cluster_bytes):
+                    self.assertEqual(
+                        self.overhead_at(store), self.factory.metadata_bytes
+                    )
+                    self.assertIn(self.factory.volume_bytes, store.factory_volumes())
 
     def test_disabled_point_stays_in_the_file(self):
-        """Сброс до заводских ничего не теряет."""
+        """Resetting to factory values loses nothing."""
         Store(
             path=self.path, calibration=[replace(self.mine, disabled=True)]
         ).save()
@@ -311,12 +364,12 @@ class FactoryOverrideTests(unittest.TestCase):
         self.assertEqual(len(covered.factory_volumes()), self.factory_count() - 1)
 
     def test_factory_only_segments_carry_a_margin(self):
-        """Чужая сборка Windows могла выбрать другой $LogFile."""
+        """A different Windows build may have chosen a different $LogFile."""
         empty = Store(path=self.path)
         volume = int(18 * 1024**3)
         with_factory = empty.safety().advise(volume, 1)
         self.assertIn("заводских", with_factory.ntfs_reason)
-        self.assertGreaterEqual(with_factory.ntfs_bytes, FACTORY_MARGIN_BYTES)
+        self.assertGreaterEqual(with_factory.metadata_bytes, FACTORY_MARGIN_BYTES)
 
 
 class SimplifiedDialogTests(unittest.TestCase):
@@ -368,9 +421,9 @@ class InputLimitTests(unittest.TestCase):
         self.assertEqual(dialog.cluster_combo.lineEdit().maxLength(), MAX_CLUSTER_CHARS)
 
     def test_a_cap_does_not_cut_a_real_value(self):
-        """Пределы должны пропускать всё, что физически осмысленно."""
+        """The caps must let through everything that makes physical sense."""
         dialog = RecordDialog()
-        biggest = "1 125 899 906 842 624"  # 1 PiB с разделителями
+        biggest = "1 125 899 906 842 624"  # 1 PiB with separators
         dialog.mounted_edit.setText(biggest)
         self.assertEqual(dialog.mounted_edit.text(), biggest)
         dialog.cluster_combo.setCurrentText("65536")

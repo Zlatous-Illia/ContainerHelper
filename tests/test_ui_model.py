@@ -1,4 +1,4 @@
-"""Проверка вкладки «Модель» и связки страховочного запаса между вкладками."""
+"""Tests of the Model tab and of the safety margin link between the tabs."""
 
 import os
 import tempfile
@@ -15,7 +15,7 @@ _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
-from containerhelper.model import CopySlackModel, NtfsModel  # noqa: E402
+from containerhelper.model import CopySlackModel, MetadataModel  # noqa: E402
 from containerhelper.records import Store, build_models  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
 from containerhelper.ui.model_tab import ModelTab  # noqa: E402
@@ -23,7 +23,7 @@ from tests import reference  # noqa: E402
 
 
 def tab_with(records):
-    models = build_models(records) if records else (NtfsModel(), CopySlackModel())
+    models = build_models(records) if records else (MetadataModel(), CopySlackModel())
     return ModelTab(lambda: models, lambda: records)
 
 
@@ -50,7 +50,7 @@ class ModelTabTests(unittest.TestCase):
         self.assertEqual(tab.slack_table.rowCount(), 2)
 
     def test_check_predictions_are_not_the_measurements(self):
-        """Столбцы совпали бы, если бы запись не исключалась из калибровки."""
+        """Columns would match if the record were kept in the calibration."""
         tab = tab_with(reference.ALL)
         for row in range(tab.ntfs_table.rowCount()):
             measured = tab.ntfs_table.item(row, 1).text()
@@ -66,11 +66,11 @@ class ModelTabTests(unittest.TestCase):
         )
 
     def test_safety_hint_reports_the_worst_shortfall_as_diagnostics(self):
-        """Общий промах — справка, а не требование.
+        """The overall miss is for reference, not a requirement.
 
-        Проверка исключением меряет модель без одной точки. Требовать по ней
-        страховку на все размеры значит платить везде за то место, где сетка
-        реже всего, — от этого и уходили.
+        The leave-one-out check measures the model without one point. Demanding
+        a safety margin from it for every size means paying everywhere for the
+        spot where the grid is sparsest — which is what we moved away from.
         """
         tab = tab_with(reference.ALL)
         tab.set_safety_mib(0)
@@ -87,7 +87,7 @@ class ModelTabTests(unittest.TestCase):
         self.assertIn("под каждый расчёт", tab.safety_value.text())
 
     def test_there_is_no_second_safety_control(self):
-        """Дубль поля при автоподборе откатывался сам и выглядел сломанным."""
+        """A duplicate field rolled itself back under auto, looking broken."""
         tab = tab_with(reference.ALL)
         self.assertFalse(hasattr(tab, "safety_spin"))
 
@@ -116,17 +116,13 @@ class SafetyLinkTests(unittest.TestCase):
         )
 
     def test_the_calculator_owns_the_value(self):
-        """Один владелец: запас зависит от размера, а его знает «Расчёт»."""
+        """One owner, Calculation: the safety margin depends on size."""
         self.window.calc_tab.auto_safety.setChecked(False)
         self.window.calc_tab.safety_spin.setValue(23)
         self.assertIn("23", self.window.model_tab.safety_value.text())
 
     def test_calculator_drives_the_model_tab(self):
         self.window.calc_tab.auto_safety.setChecked(False)
-        self.window.calc_tab.safety_spin.setValue(17)
-        self.assertIn("17", self.window.model_tab.safety_value.text())
-
-    def _unused(self):
         self.window.calc_tab.safety_spin.setValue(17)
         self.assertIn("17", self.window.model_tab.safety_value.text())
 
@@ -142,13 +138,13 @@ class SafetyLinkTests(unittest.TestCase):
         self.assertIn("Cache 1", self.checked_names())
 
     def test_the_check_covers_the_calibration_points_too(self):
-        """Кривую NTFS держат именно они — молчать о них отчёт не вправе."""
+        """They hold the NTFS curve up — the report may not omit them."""
         self.assertTrue(
             any(name.startswith("Заводская") for name in self.checked_names())
         )
 
     def test_the_model_is_calibrated_out_of_the_box(self):
-        """Заводские точки: новая копия считает осмысленно с первого запуска."""
+        """Factory points let a new copy calculate sensibly from the start."""
         self.window.records_tab.store.records = []
         self.window.records_tab._save()
         ntfs = self.window.models()[0]

@@ -1,26 +1,28 @@
-"""Форматирование чисел для интерфейса.
+"""Number formatting for the interface.
 
-На экране разряды разделяются пробелами, в JSON — никогда: там числа пишутся
-слитно. Поэтому форматирование живёт отдельно и не участвует в хранении.
+On screen, digit groups are separated by spaces; in JSON, never: there
+numbers are written solid. That is why formatting lives separately and takes
+no part in storage.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .i18n import tr
 from .model import MIB
 
-#: Разделитель разрядов на экране. Обычный пробел, а не неразрывный: значение
-#: должно оставаться пригодным для копирования и обратного разбора.
+#: Digit group separator on screen. A plain space, not a non-breaking one: the
+#: value must stay fit for copying and parsing back.
 GROUP_SEPARATOR = " "
 
-#: Символы, которые parse_bytes выбрасывает из ввода. Неразрывный и узкий
-#: пробелы попадают сюда при вставке из Проводника и из таблиц.
+#: Characters that parse_bytes throws out of the input. Non-breaking and thin
+#: spaces get here when pasting from Explorer and from spreadsheets.
 #:
-#: Не приватная: тем же набором живёт валидатор поля размера. Разойдись
-#: они — поле принимало бы то, чего разбор не понимает, или наоборот
-#: отвергало вставленное из Проводника, и заметить это можно было бы
-#: только руками.
+#: Not private: the size field validator lives by the same set. Were they to
+#: diverge, the field would accept what parsing does not understand, or, the
+#: other way round, reject what was pasted from Explorer, and this could only
+#: be noticed by hand.
 IGNORED_IN_INPUT = (" ", " ", " ", " ", "_")
 
 DASH = "—"
@@ -40,40 +42,24 @@ def fmt_bytes(value: int | None) -> str:
 
 
 def fmt_mib(value_bytes: int | None, digits: int = 2) -> str:
-    """Байты в MiB с дробной частью."""
+    """Bytes in MiB with a fractional part."""
     if value_bytes is None:
         return DASH
     return _group(value_bytes / MIB, digits)
 
 
 def fmt_both(value_bytes: int | None) -> str:
-    """'1 048 576 B · 1.00 MiB' — байты и MiB рядом."""
+    """'1 048 576 B · 1.00 MiB' — bytes and MiB side by side."""
     if value_bytes is None:
         return DASH
     return f"{fmt_bytes(value_bytes)} B · {fmt_mib(value_bytes)} MiB"
 
 
-def plural(count: int, one: str, few: str, many: str) -> str:
-    """Русское склонение после числа: 1 точка, 2 точки, 5 точек.
-
-    Нужно там, где число подставляется в текст. «23 точек» в отчёте читается
-    как машинный перевод, а исправляется одной строкой.
-    """
-    if 11 <= abs(count) % 100 <= 14:
-        return many
-    tail = abs(count) % 10
-    if tail == 1:
-        return one
-    if 2 <= tail <= 4:
-        return few
-    return many
-
-
 def size_label(container_mib: int) -> str:
-    """1024 → «1 GiB», 512 → «512 MiB» — как размер называют вслух.
+    """1024 → "1 GiB", 512 → "512 MiB" — the way a size is said out loud.
 
-    Нужно там, где размер попадает в имя записи и в подписи шагов сбора:
-    «Калибровка 1048576 MiB» не читается глазом вовсе.
+    Needed where the size goes into a record name and into the labels of
+    collection steps: "Calibration 1048576 MiB" cannot be read by eye at all.
     """
     if container_mib % 1024 == 0:
         return f"{container_mib // 1024} GiB"
@@ -81,7 +67,7 @@ def size_label(container_mib: int) -> str:
 
 
 def parse_bytes(text: str) -> int | None:
-    """Разобрать ручной ввод, не придираясь к разделителям разрядов."""
+    """Parse manual input without being picky about digit group separators."""
     cleaned = text
     for junk in IGNORED_IN_INPUT:
         cleaned = cleaned.replace(junk, "")
@@ -95,21 +81,26 @@ def parse_bytes(text: str) -> int | None:
     return value if value >= 0 else None
 
 
-# --- единицы отображения ---------------------------------------------------
+# --- display units ---------------------------------------------------------
 #
-# Хранение и ввод остаются в байтах всегда: единица влияет только на то, как
-# число показано в таблицах. Иначе округление до GiB при вводе потеряло бы
-# точность замера, ради которой всё и затевалось.
+# Storage and input always stay in bytes: the unit affects only how a number
+# is shown in the tables. Otherwise rounding to GiB on input would lose the
+# measurement precision that the whole thing was started for.
 
 
 @dataclass(frozen=True)
 class Unit:
-    """Единица отображения. factor = 0 означает автоподбор по величине."""
+    """Display unit. factor = 0 means auto-selection by magnitude."""
 
     key: str
-    label: str
+    symbol: str
     factor: int
     digits: int
+
+    @property
+    def label(self) -> str:
+        """The symbol; auto-selection has none and is named in words."""
+        return self.symbol or tr("unit.auto")
 
 
 UNIT_BYTE = Unit("B", "B", 1, 0)
@@ -117,12 +108,12 @@ UNIT_KIB = Unit("KiB", "KiB", 1024, 2)
 UNIT_MIB = Unit("MiB", "MiB", 1024**2, 2)
 UNIT_GIB = Unit("GiB", "GiB", 1024**3, 3)
 UNIT_TIB = Unit("TiB", "TiB", 1024**4, 3)
-UNIT_AUTO = Unit("auto", "Авто", 0, 2)
+UNIT_AUTO = Unit("auto", "", 0, 2)
 
-#: Порядок в выпадающем списке. Байты первыми: это значение по умолчанию.
+#: Order in the drop-down list. Bytes first: that is the default.
 UNITS = (UNIT_BYTE, UNIT_KIB, UNIT_MIB, UNIT_GIB, UNIT_TIB, UNIT_AUTO)
 
-#: Кратные единицы от большей к меньшей — для автоподбора.
+#: Multiple units from larger to smaller — for auto-selection.
 _SCALED = (UNIT_TIB, UNIT_GIB, UNIT_MIB, UNIT_KIB)
 
 DEFAULT_UNIT = UNIT_BYTE
@@ -136,7 +127,7 @@ def unit_by_key(key: str) -> Unit:
 
 
 def resolve_unit(value_bytes: int, unit: Unit) -> Unit:
-    """Развернуть «Авто» в конкретную единицу для этого значения."""
+    """Expand "Auto" into a concrete unit for this value."""
     if unit.factor:
         return unit
     magnitude = abs(value_bytes)
@@ -147,7 +138,7 @@ def resolve_unit(value_bytes: int, unit: Unit) -> Unit:
 
 
 def fmt_in_unit(value_bytes: int | None, unit: Unit = DEFAULT_UNIT) -> str:
-    """Число байт в выбранной единице, без названия единицы."""
+    """A byte count in the chosen unit, without the unit name."""
     if value_bytes is None:
         return DASH
     resolved = resolve_unit(value_bytes, unit)
@@ -158,12 +149,12 @@ def fmt_in_unit(value_bytes: int | None, unit: Unit = DEFAULT_UNIT) -> str:
 
 
 def unit_suffix(unit: Unit = DEFAULT_UNIT) -> str:
-    """Подпись для заголовка столбца: «, MiB» или пусто для автоподбора."""
+    """Column header suffix: ", MiB", or empty for auto-selection."""
     return "" if not unit.factor else f", {unit.label}"
 
 
 def fmt_with_unit(value_bytes: int | None, unit: Unit = DEFAULT_UNIT) -> str:
-    """То же, но с названием единицы рядом — для одиночных подписей."""
+    """The same, but with the unit name alongside — for standalone labels."""
     if value_bytes is None:
         return DASH
     resolved = resolve_unit(value_bytes, unit)
@@ -171,10 +162,10 @@ def fmt_with_unit(value_bytes: int | None, unit: Unit = DEFAULT_UNIT) -> str:
 
 
 def fmt_table_cell(value_bytes: int | None, unit: Unit = DEFAULT_UNIT) -> str:
-    """Значение для ячейки таблицы.
+    """Value for a table cell.
 
-    В фиксированной единице возвращается голое число: единица стоит в
-    заголовке столбца. В режиме «Авто» единица у каждой строки своя, и без
-    подписи столбец смешал бы MiB с GiB.
+    In a fixed unit a bare number is returned: the unit sits in the column
+    header. In "Auto" mode each row has its own unit, and without a label the
+    column would mix MiB with GiB.
     """
     return fmt_in_unit(value_bytes, unit) if unit.factor else fmt_with_unit(value_bytes, unit)

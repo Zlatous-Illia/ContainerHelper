@@ -1,12 +1,12 @@
-"""Расчёт размеров контейнеров VeraCrypt и калибровка по накопленным замерам."""
+"""Sizing VeraCrypt containers and calibrating by accumulated measurements."""
 
 from .model import (
     DEFAULT_CLUSTER_BYTES,
     DEFAULT_SAFETY_BYTES,
     MIB,
-    VC_HEADER_BYTES,
+    VC_HEADERS_BYTES,
     CopySlackModel,
-    NtfsModel,
+    MetadataModel,
     Payload,
     Solution,
     ceil_div,
@@ -26,10 +26,10 @@ from .sizes import ScanResult, cluster_size, mounted_drives, scan_path, volume_u
 
 __all__ = [
     "MIB",
-    "VC_HEADER_BYTES",
+    "VC_HEADERS_BYTES",
     "DEFAULT_CLUSTER_BYTES",
     "DEFAULT_SAFETY_BYTES",
-    "NtfsModel",
+    "MetadataModel",
     "CopySlackModel",
     "Payload",
     "Solution",
