@@ -10,7 +10,9 @@ free space from an already mounted volume, whatever that volume is filled with.
 Windows, Python 3.12, PySide6. PySide6 is the only external dependency.
 
 The interface speaks Russian and English and switches between them live, from
-the list in the window header. Where the exact Russian wording of a label
+the list in the window header. Simplified Chinese, Spanish, French and German
+are there too, marked "(beta)": machine-drafted from English and not yet read
+by a native speaker. Where the exact Russian wording of a label
 matters, it is given in «» next to the English name.
 
 ## Why this is needed

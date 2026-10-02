@@ -107,13 +107,15 @@ class SystemLanguageTests(unittest.TestCase):
                 self.assertEqual(i18n.match_language(name), "en")
 
     def test_a_region_code_matches_only_its_region(self):
-        with mock.patch.object(i18n, "LANGUAGES", ("ru", "en", "zh_CN")):
-            self.assertEqual(i18n.match_language("zh-CN"), "zh_CN")
-            self.assertEqual(i18n.match_language("zh_TW"), "en")
+        self.assertEqual(i18n.match_language("zh-CN"), "zh_CN")
+        self.assertEqual(i18n.match_language("zh_TW"), "en")
+        self.assertEqual(i18n.match_language("de_AT"), "de")
 
     def test_first_launch_follows_the_system(self):
-        with mock.patch.object(i18n, "_system_locale", lambda: "de_DE"):
+        with mock.patch.object(i18n, "_system_locale", lambda: "ja_JP"):
             self.assertEqual(i18n.system_language(), "en")
+        with mock.patch.object(i18n, "_system_locale", lambda: "de_DE"):
+            self.assertEqual(i18n.system_language(), "de")
         with mock.patch.object(i18n, "_system_locale", lambda: "ru_RU"):
             self.assertEqual(i18n.system_language(), "ru")
 

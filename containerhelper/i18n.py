@@ -26,7 +26,7 @@ LOCALE_PACKAGE = "containerhelper.locale"
 REFERENCE = "en"
 
 #: Shipped languages, in the order of the language list.
-LANGUAGES = ("ru", "en")
+LANGUAGES = ("ru", "en", "zh_CN", "es", "fr", "de")
 
 #: Key of the catalog's own description; never a UI string.
 META = "_meta"

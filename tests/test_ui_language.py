@@ -38,7 +38,7 @@ from containerhelper.ui.chart_window import (  # noqa: E402
     CHART_SLACK,
 )
 from containerhelper.ui.collect_dialog import PATH_KEY, CollectDialog  # noqa: E402
-from containerhelper.ui.language import apply_language  # noqa: E402
+from containerhelper.ui.language import _qt_translator, apply_language  # noqa: E402
 from containerhelper.ui.measure_dialog import MeasureDialog  # noqa: E402
 from containerhelper.ui.path_picker import PathPicker  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
@@ -138,6 +138,10 @@ class LiveSwitchTests(unittest.TestCase):
                     veracrypt="1.26.24",
                 )
             )
+        # A calculation to explain: the safety advice names the records near
+        # it, factory ones among them, whose names are built in a language.
+        self.window.calc_tab.size_edit.setText("700 000 000")
+        self.window.calc_tab.recalculate()
         for key in (CHART_NTFS, CHART_SLACK, CHART_FORECAST, CHART_CALC):
             self.window.open_chart(key)
         charts = self.window._charts[CHART_NTFS]
@@ -190,17 +194,70 @@ class LiveSwitchTests(unittest.TestCase):
             if text
         )
 
-    def test_english_leaves_no_russian(self):
+    def test_no_language_leaves_russian_behind(self):
         """Data keeps its language: the folder path in the picker."""
         data = (str(Path.cwd()),)
+        for code in i18n.LANGUAGES:
+            if code == "ru":
+                continue
+            with self.subTest(code=code):
+                switch(code)
+                russian = []
+                for number, kind, text in self.shown():
+                    for piece in data:
+                        text = text.replace(piece, "")
+                    if CYRILLIC.search(text):
+                        russian.append((number, kind, text))
+                self.assertEqual(russian, [])
+
+    def test_every_header_fits_after_a_switch(self):
+        """The widths are fitted once, in the first language; a longer header
+        in the next one showed only its middle."""
+        for code in i18n.LANGUAGES:
+            with self.subTest(code=code):
+                switch(code)
+                cut = [
+                    (name, column, table.horizontalHeaderItem(column).text())
+                    for name, table in self.window.all_tables().items()
+                    for column in range(table.columnCount())
+                    if table.horizontalHeader().sectionSize(column)
+                    < table.horizontalHeader().sectionSizeHint(column)
+                ]
+                self.assertEqual(cut, [])
+
+    def test_a_column_dragged_narrow_stays_until_its_header_changes(self):
+        """A refresh with the same header is no reason to undo a drag."""
+        tab = self.window.records_tab
+        header = tab.table.horizontalHeader()
+        column = 2  # «Ёмкость тома» / "Volume capacity": the text changes
+        narrow = header.minimumSectionSize()
+        header.resizeSection(column, narrow)
+        tab.set_unit(tab._unit)
+        self.assertEqual(header.sectionSize(column), narrow)
         switch("en")
-        russian = []
-        for number, kind, text in self.shown():
-            for piece in data:
-                text = text.replace(piece, "")
-            if CYRILLIC.search(text):
-                russian.append((number, kind, text))
-        self.assertEqual(russian, [])
+        self.assertGreaterEqual(
+            header.sectionSize(column), header.sectionSizeHint(column)
+        )
+
+    def test_a_picked_point_survives_a_switch(self):
+        """Found again by its key, not its name: a collected point's name is
+        built in the language of the moment, and the line describing it
+        follows the language instead of emptying."""
+        window = self.window._charts[CHART_NTFS]
+        point = next(
+            point
+            for view in window.views
+            for series in view.chart().series
+            for point in series.points
+            if isinstance(point.key, tuple) and point.key[2] == 1024 and not point.key[3]
+        )
+        window._on_picked(point.key, point.tip)
+        before = window.detail.text()
+        switch("en")
+        self.assertEqual(window._picked, point.key)
+        self.assertTrue(window.detail.text())
+        self.assertNotEqual(window.detail.text(), before)
+        self.assertFalse(CYRILLIC.search(window.detail.text()), window.detail.text())
 
     def test_a_switch_leaves_the_collection_progress_alone(self):
         """A collection may be running: the bar is not the scope's to reset."""
@@ -239,6 +296,12 @@ class LiveSwitchTests(unittest.TestCase):
         switch("en")
         calls = {number: spy.call_count for number, spy in counted.items()}
         self.assertEqual(calls, {number: 1 for number in counted})
+
+    def test_every_language_brings_qt_s_catalog(self):
+        """A language without it shows Qt's dialogs in English."""
+        for code in i18n.LANGUAGES:
+            with self.subTest(code=code):
+                self.assertIsNotNone(_qt_translator(code))
 
     def test_qt_s_own_captions_follow(self):
         """The stock buttons and labels of Qt's dialogs come from Qt's own

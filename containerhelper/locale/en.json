@@ -200,7 +200,7 @@
   "picker.invert": "Invert",
   "picker.invert.tip": "Select everything except what is selected now. An easier way to take a whole folder without two or three names.",
   "picker.remember": "Remember folder",
-  "picker.remember.tip": "Open where it was closed last time. Off — open on \"This PC\", with the list of drives.\nThe folder shown is remembered, not the one selected in it: the next choice usually lies next to the last one.",
+  "picker.remember.tip": "Open where it was closed last time. Off — open on \"My Computer\", with the list of drives.\nThe folder shown is remembered, not the one selected in it: the next choice usually lies next to the last one.",
   "picker.hidden": "Show hidden",
   "picker.hidden.tip": "The dialog does not inherit the Explorer setting but keeps its own — it is saved in the data folder next to the other view settings.\nDoes not affect the calculation: inside a selected folder hidden files are always counted, the walk does not skip them.",
   "picker.hint": "A double-click enters a folder, \"Select\" takes the whole selection. You can draw a frame with the mouse; Ctrl and Shift select one by one and in a run — files and folders can be mixed. A folder inside another selected folder is not counted twice.",

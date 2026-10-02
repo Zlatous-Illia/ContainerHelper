@@ -1772,12 +1772,23 @@ The choice is remembered in `QSettings` between launches.
 
 ## Interface language
 
-A list in the header of the window, next to the units: «Русский» and English.
-Each name is written in its own language, whatever the current one, so that
-whoever cannot read the current language still finds theirs; a language
-nobody has read through yet gets "(beta)" after its name, in that language
-too. The first launch
-speaks the Windows UI language if it is shipped, English otherwise.
+A list in the header of the window, next to the units: «Русский», English,
+中文（简体）, Español, Français, Deutsch. Each name is written in its own
+language, whatever the current one, so that whoever cannot read the current
+language still finds theirs; a language nobody has read through yet gets
+"(beta)" after its name, in that language too. The first launch speaks the
+Windows UI language if it is shipped, English otherwise. Chinese is
+Simplified only: a `zh_TW` system gets English, since a Traditional reader is
+better served by it than by characters read as foreign.
+
+Russian and English are written by hand and reviewed. The other four are
+drafts translated from the English catalog and stay "(beta)" until a native
+speaker has read them — first of all the texts the data depends on: the
+warnings about an underestimate, the refusals and stops of collection, the
+lack of space, unmounting with force. A wrong word there is not a cosmetic
+defect: it is a person trusting a container that is too small. Numbers are
+not localized in any language (see "Charts"), so a translation cannot break
+parsing.
 
 The switch is live: every open window — the main one, record windows and the
 volume chooser over them, chart windows and detached charts — sets its text
@@ -1806,6 +1817,14 @@ The choice is stored by its code (`language = en`), not by its name.
 - **A hidden series is kept by its key, not its name.** The name is
   translated; kept by name, every hidden series came back after a switch,
   and the edge measurements on the residual chart with them.
+- **A header that grew widens its column.** The widths are fitted once, in
+  the language of the first fill; "Capacité du volume, B" in a column fitted
+  to «Ёмкость, B» showed only its middle. A column whose header changed and
+  no longer fits is widened, never narrowed; one dragged narrower than an
+  unchanged header stays as it is.
+- **The safety model is built again on a switch.** The advice names the
+  records near it, and a factory record's name is made when the model is
+  built: kept, the advice spoke German around Russian names.
 
 ## Charts
 
