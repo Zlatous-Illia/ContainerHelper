@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Callable, Sequence
 
-from PySide6.QtCore import QByteArray, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DEFAULT_UNIT, Unit
+from ..i18n import tr
 from ..plot import LAYOUT_STACK, Chart
 from .chart import ChartView
 
@@ -38,12 +39,7 @@ CHART_SLACK = "slack"
 CHART_FORECAST = "forecast"
 CHART_CALC = "calc"
 
-HINT = (
-    "Рамка левой кнопкой — приблизить, колесо — масштаб, правая кнопка "
-    "зажатой — сдвиг, двойной правой или Esc — сброс. Меню — двойным левым "
-    "щелчком или средней кнопкой. Щелчок по легенде прячет серию, щелчок по "
-    "точке показывает её целиком."
-)
+HINT = "chart.hint"
 
 #: Window size on first show. The width is the same for all windows; the
 #: height is computed from what is inside: a chart gets PANEL_HEIGHT, while
@@ -58,9 +54,9 @@ CHROME_HEIGHT = 140
 #: height saved stops paying off.
 GRID_COLUMNS = 2
 
-#: Labels of the layout toggle.
-GRID_TEXT = "Сеткой"
-COLUMN_TEXT = "Столбцом"
+#: Labels of the layout toggle, as catalog keys.
+GRID_TEXT = "chart.grid"
+COLUMN_TEXT = "chart.column"
 
 Builder = Callable[[], Chart]
 
@@ -75,7 +71,15 @@ class EvenHandle(QSplitterHandle):
 
     def __init__(self, orientation, parent) -> None:
         super().__init__(orientation, parent)
-        self.setToolTip("Двойной щелчок делит высоту поровну")
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.setToolTip(tr("chart.even.tip"))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 — Qt's name
         splitter = self.splitter()
@@ -150,24 +154,13 @@ class DetachedChart(QWidget):
         # things. A shared zoom makes the windows show the same stretch; a
         # shared crosshair stays useful even with different stretches — the
         # line is placed by value, and each chart draws it in its own zoom.
-        self.sync_check = QCheckBox("Общий масштаб по X")
-        self.sync_check.setToolTip(
-            "Держать по оси X тот же участок, что и у графиков той же "
-            "группы.\n"
-            "Выключено — окно живёт своим масштабом."
-        )
+        self.sync_check = QCheckBox()
         self.sync_check.setChecked(sync)
         self.sync_check.setVisible(link_x)
         self.sync_check.toggled.connect(self.syncToggled.emit)
         row.addWidget(self.sync_check)
 
-        self.cross_check = QCheckBox("Общее перекрестье")
-        self.cross_check.setToolTip(
-            "Показывать на соседних графиках вертикаль под курсором — на том "
-            "же значении по X, каждый в своём масштабе.\n"
-            "Ради этого общая ось и заведена: горб на остатках стоит ровно "
-            "под своей ступенью наклона."
-        )
+        self.cross_check = QCheckBox()
         self.cross_check.setChecked(cross)
         self.cross_check.setVisible(link_x)
         self.cross_check.toggled.connect(self.crossToggled.emit)
@@ -176,6 +169,7 @@ class DetachedChart(QWidget):
         # There is no return button here: it sits on the chart itself, in the
         # corner, and a second one at the bottom would say the same thing.
         layout.addLayout(row)
+        self.retranslate()
 
         #: How much of the window is taken by things other than the chart.
         #: Needed to fit the window height to the chart itself, not to the
@@ -186,6 +180,19 @@ class DetachedChart(QWidget):
             + layout.contentsMargins().top()
             + layout.contentsMargins().bottom()
         )
+
+    def retranslate(self) -> None:
+        """The check boxes. The window title is made of chart data, and the
+        shared window sets it on every refresh."""
+        self.sync_check.setText(tr("chart.sync"))
+        self.sync_check.setToolTip(tr("chart.sync.tip"))
+        self.cross_check.setText(tr("chart.cross"))
+        self.cross_check.setToolTip(tr("chart.cross.tip"))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt's name
         """The window was closed — the chart returns instead of disappearing.
@@ -211,6 +218,8 @@ class ChartWindow(QWidget):
     ) -> None:
         super().__init__(parent, Qt.Window)
         self.key = key
+        #: A catalog key, translated where shown. Text that is not a key
+        #: shows as it is, untranslated.
         self.title = title
         self._builders = list(builders)
         self._link_x = link_x
@@ -220,7 +229,6 @@ class ChartWindow(QWidget):
         #: have changed, and the line would be telling about yesterday's
         #: numbers.
         self._picked: object = None
-        self.setWindowTitle(title)
 
         layout = QVBoxLayout(self)
         layout.addLayout(self._build_actions())
@@ -301,20 +309,14 @@ class ChartWindow(QWidget):
 
         self.detail = QLabel("")
         self.detail.setWordWrap(True)
-        self.detail.setToolTip(
-            "Что за точка под курсором. Заполняется щелчком по ней — таблица "
-            "с числами живёт в главном окне, и подсвечивать в ней строку "
-            "из-под другого окна было бы некуда смотреть."
-        )
         layout.addWidget(self.detail)
 
-        hint = QLabel(HINT)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(mid);")
-        layout.addWidget(hint)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: palette(mid);")
+        layout.addWidget(self.hint)
 
-        self._refresh_grid_button()
-        self.refresh()
+        self.retranslate()
         self.resize(self._natural_size())
 
     def _natural_size(self) -> QSize:
@@ -349,36 +351,44 @@ class ChartWindow(QWidget):
     def _build_actions(self) -> QHBoxLayout:
         row = QHBoxLayout()
 
-        self.reset_button = QPushButton("Сбросить масштаб")
-        self.reset_button.setToolTip(
-            "Вернуть все графики окна к полному виду. То же делает двойной "
-            "щелчок правой кнопкой по графику или Esc."
-        )
+        self.reset_button = QPushButton()
         self.reset_button.clicked.connect(self.reset_zoom)
         row.addWidget(self.reset_button)
 
-        self.grid_button = QPushButton(GRID_TEXT)
+        self.grid_button = QPushButton()
         self.grid_button.clicked.connect(lambda: self.set_grid(not self._grid))
         row.addWidget(self.grid_button)
 
-        self.copy_button = QPushButton("Копировать картинку")
-        self.copy_button.setToolTip(
-            "Положить график в буфер обмена. Копируется тот, на который "
-            "наводили последним."
-        )
+        self.copy_button = QPushButton()
         self.copy_button.clicked.connect(lambda: self.active_view().copy_image())
         row.addWidget(self.copy_button)
 
-        self.save_button = QPushButton("Сохранить картинку…")
-        self.save_button.setToolTip(
-            "PNG, SVG или PDF — по расширению в имени файла. SVG и PDF "
-            "векторные: их можно увеличивать без потери."
-        )
+        self.save_button = QPushButton()
         self.save_button.clicked.connect(lambda: self.active_view().save_image())
         row.addWidget(self.save_button)
 
         row.addStretch(1)
         return row
+
+    def retranslate(self) -> None:
+        """Set the static text, then rebuild the charts in the current
+        language through `refresh` — the zoom stays, as on any update."""
+        self.setWindowTitle(tr(self.title))
+        self.reset_button.setText(tr("chart.reset"))
+        self.reset_button.setToolTip(tr("chart.reset.tip"))
+        self.copy_button.setText(tr("chart.copy"))
+        self.copy_button.setToolTip(tr("chart.copy.tip"))
+        self.save_button.setText(tr("chart.save"))
+        self.save_button.setToolTip(tr("chart.save.tip"))
+        self.detail.setToolTip(tr("chart.detail.tip"))
+        self.hint.setText(tr(HINT))
+        self._refresh_grid_button()
+        self.refresh()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     # --- layout ------------------------------------------------------------
 
@@ -514,12 +524,9 @@ class ChartWindow(QWidget):
         self.resize(size)
 
     def _refresh_grid_button(self) -> None:
-        self.grid_button.setText(COLUMN_TEXT if self._grid else GRID_TEXT)
+        self.grid_button.setText(tr(COLUMN_TEXT if self._grid else GRID_TEXT))
         self.grid_button.setToolTip(
-            "Поставить графики в столбец, один под другим."
-            if self._grid
-            else "Разложить графики по два в ряд. Окно станет ниже и шире — "
-            "по вертикали место дороже."
+            tr("chart.column.tip" if self._grid else "chart.grid.tip")
         )
         self.grid_button.setVisible(len(self.views) > 1)
 
@@ -562,8 +569,16 @@ class ChartWindow(QWidget):
         for view, builder in zip(self.views, self._builders):
             view.set_chart(builder(), keep_view=True)
             view.set_unit(self._unit)
+        # The detached windows are named after their charts, and a fresh
+        # chart may carry a new title — in a new language, too.
+        for index, window in self._windows.items():
+            window.setWindowTitle(self._detached_title(index))
         self._refresh_stretch()
         self._refresh_detail()
+
+    def _detached_title(self, index: int) -> str:
+        chart = self.views[index].chart()
+        return f"{tr(self.title)} — {chart.title if chart else ''}".strip(" —")
 
     def _compact(self, view: ChartView) -> bool:
         """Whether the chart takes its own height exactly, not a window share.
@@ -686,10 +701,9 @@ class ChartWindow(QWidget):
             return
         view = self.views[index]
         height = max(view.height(), view.sizeHint().height())
-        chart = view.chart()
         window = DetachedChart(
             view,
-            f"{self.title} — {chart.title if chart else ''}".strip(" —"),
+            self._detached_title(index),
             self._link_x,
             self._sync[index],
             self._cross[index],

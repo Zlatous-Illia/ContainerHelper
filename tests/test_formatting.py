@@ -18,7 +18,6 @@ from containerhelper.formatting import (
     fmt_in_unit,
     fmt_table_cell,
     fmt_with_unit,
-    plural,
     resolve_unit,
     unit_by_key,
     unit_suffix,
@@ -69,33 +68,3 @@ class UnitTests(unittest.TestCase):
 
     def test_fmt_with_unit_spells_the_unit_out(self):
         self.assertEqual(fmt_with_unit(266_240, UNIT_AUTO), "260.00 KiB")
-
-
-class PluralTests(unittest.TestCase):
-    """«23 точек» in a report reads like machine translation."""
-
-    def word(self, count):
-        return f"{count} {plural(count, 'точка', 'точки', 'точек')}"
-
-    def test_the_three_forms(self):
-        self.assertEqual(self.word(1), "1 точка")
-        self.assertEqual(self.word(2), "2 точки")
-        self.assertEqual(self.word(5), "5 точек")
-
-    def test_the_teens_are_the_exception(self):
-        """11–14 take the third form although they end in 1–4."""
-        for count in (11, 12, 13, 14):
-            self.assertEqual(self.word(count), f"{count} точек")
-
-    def test_past_twenty_the_last_digit_decides(self):
-        self.assertEqual(self.word(21), "21 точка")
-        self.assertEqual(self.word(22), "22 точки")
-        self.assertEqual(self.word(25), "25 точек")
-        self.assertEqual(self.word(101), "101 точка")
-
-    def test_zero_takes_the_third_form(self):
-        self.assertEqual(self.word(0), "0 точек")
-
-
-if __name__ == "__main__":
-    unittest.main()

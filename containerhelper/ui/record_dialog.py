@@ -7,7 +7,7 @@ from typing import Callable
 
 PayloadProvider = Callable[[], "Payload | None"]
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DASH, fmt_both, fmt_bytes, parse_bytes
+from ..i18n import tr, tr_n
 from ..model import DEFAULT_CLUSTER_BYTES, VC_HEADERS_BYTES, Payload
 
 #: Input limits. Bytes — up to a petabyte with digit-group separators;
@@ -61,7 +62,6 @@ class RecordDialog(QDialog):
         calibration: bool = False,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Запись измерений")
         self.setMinimumWidth(560)
         self._record = record or Record(id="", container_mib=1024)
         #: Where to get the size and the file count. The application does not
@@ -77,29 +77,95 @@ class RecordDialog(QDialog):
         #: Simplified mode for a calibration point: nothing is put into the
         #: container, so the data and left-space fields only get in the way.
         self._calibration = calibration
+        #: Form row captions and their keys, set by `retranslate`.
+        self._row_labels: list[tuple[QLabel, str]] = []
+        #: Numeric fields: they share one placeholder.
+        self._number_edits: list[QLineEdit] = []
+        #: What a button said above the issues (the check of the copied data
+        #: and the like), as a function of the issues text. Kept to be said
+        #: again in another language: the check of the volume is not repeated,
+        #: and a lost mismatch warning would let a spoilt record be saved.
+        #: Any edit of a field clears it, as it always cleared the label.
+        self._notice: Callable[[str], str] | None = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_fields())
         layout.addWidget(self._build_derived())
         layout.addWidget(self._build_issues())
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Save | QDialogButtonBox.Cancel, parent=self
-        )
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel, parent=self)
+        # Our own button in the accept role, not the standard Save: the box
+        # resets a standard button's caption on a language change, after our
+        # `retranslate` has run, and «Сохранить с пометкой» would turn into a
+        # plain Save.
+        self.save_button = buttons.addButton("", QDialogButtonBox.AcceptRole)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
-        self.save_button = buttons.button(QDialogButtonBox.Save)
         layout.addWidget(buttons)
 
         self._filesystem = self._record.filesystem
         self._load(self._record)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        """Set every static text in the current language and rebuild the
+        computed ones; what was typed into the fields stays as it is."""
+        self.setWindowTitle(tr("record.title"))
+        self._fields_group.setTitle(tr("record.group.fields"))
+        self._derived_group.setTitle(tr("record.group.derived"))
+        for label, key in self._row_labels:
+            label.setText(tr(key))
+        self.id_edit.setPlaceholderText(tr("record.id.placeholder"))
+        for edit in self._number_edits:
+            edit.setPlaceholderText(tr("record.unset"))
+        for button, key in (
+            (self.payload_button, "record.payload"),
+            (self.measure_button, "record.measure"),
+            (self.left_button, "record.left"),
+        ):
+            button.setText(tr(key))
+        for widget, key in (
+            (self.id_edit, "record.id.tip"),
+            (self.payload_button, "record.payload.tip"),
+            (self.measure_button, "record.measure.tip"),
+            (self.left_button, "record.left.tip"),
+            (self.container_edit, "record.container.tip"),
+            (self.cluster_combo, "record.cluster.tip"),
+            (self.mounted_edit, "record.capacity.tip"),
+            (self.free_edit, "record.empty_free.tip"),
+            (self.file_edit, "record.data.tip"),
+            (self.count_edit, "record.files.tip"),
+            (self.alloc_edit, "record.alloc.tip"),
+            (self.left_edit, "record.left_space.tip"),
+            (self.predicted_edit, "record.predicted.tip"),
+            (self.predicted_safety_edit, "record.predicted_safety.tip"),
+            (self.note_edit, "record.note.tip"),
+            (self.minimum_label, "record.minimum.tip"),
+            (self.miss_label, "record.miss.tip"),
+        ):
+            widget.setToolTip(tr(key))
+        notice = self._notice
         self._refresh()
+        if notice is not None:
+            self._show_notice(notice)
         # The minimum width comes from the widest row of buttons, not from a
         # round number. QPushButton agrees to become four times narrower than
         # its caption, and at 560 pixels the Take from Calculation button
         # («Взять с „Расчёта“») showed «Взять с…»: it clips silently, while
-        # the window looks intact.
-        self.setMinimumWidth(max(self.minimumWidth(), self._actions_width()))
+        # the window looks intact. Measured again after every change of
+        # language: the captions change their width.
+        self.setMinimumWidth(max(560, self._actions_width()))
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
+
+    def _row(self, form: QFormLayout, key: str, field) -> None:
+        """A form row whose caption `retranslate` sets by the key."""
+        label = QLabel()
+        form.addRow(label, field)
+        self._row_labels.append((label, key))
 
     def _actions_width(self) -> int:
         """How much the row of buttons needs, with the window margins."""
@@ -111,41 +177,25 @@ class RecordDialog(QDialog):
     # --- building ----------------------------------------------------------
 
     def _build_fields(self) -> QGroupBox:
-        group = QGroupBox("Измеренные величины")
+        group = self._fields_group = QGroupBox()
         form = QFormLayout(group)
 
         self.id_edit = QLineEdit()
-        self.id_edit.setPlaceholderText("например Cache 5")
-        self.id_edit.setToolTip(
-            "Как запись будет называться в таблицах. На расчёт не влияет, но "
-            "без имени не сохранить — иначе её не найти в проверках."
-        )
-        form.addRow("Имя:", self.id_edit)
+        self._row(form, "record.id", self.id_edit)
 
         # Three actions in a row, right under the name: take what was
         # calculated, measure the empty volume, measure the left space after
         # copying.
         actions = QHBoxLayout()
-        self.payload_button = QPushButton("Взять с «Расчёта»")
-        self.payload_button.setToolTip(
-            "Перенести Container init, размер кластера, размер данных, число "
-            "файлов и объём по кластерам — ровно те, по которым считали."
-        )
+        self.payload_button = QPushButton()
         self.payload_button.clicked.connect(self._take_payload)
         actions.addWidget(self.payload_button)
 
-        self.measure_button = QPushButton("Измерить том")
-        self.measure_button.setToolTip(
-            "Прочитать ёмкость и свободное место пустого смонтированного тома."
-        )
+        self.measure_button = QPushButton()
         self.measure_button.clicked.connect(self._measure_empty)
         actions.addWidget(self.measure_button)
 
-        self.left_button = QPushButton("Замерить остаток")
-        self.left_button.setToolTip(
-            "Снять свободное место после копирования и заодно проверить, что "
-            "на томе лежит именно то, по чему считали контейнер."
-        )
+        self.left_button = QPushButton()
         self.left_button.clicked.connect(self._measure_left)
         actions.addWidget(self.left_button)
         actions.addStretch(1)
@@ -153,81 +203,23 @@ class RecordDialog(QDialog):
         self._actions = actions
 
         self.container_edit = QLineEdit()
-        self.container_edit.setToolTip(
-            "Container init — то, что задали в VeraCrypt при создании. Не "
-            "размер файла на диске: файл больше тома на заголовок."
-        )
-        form.addRow("Container init, MiB:", self.container_edit)
+        self._row(form, "record.container", self.container_edit)
 
         self.cluster_combo = QComboBox()
         self.cluster_combo.setEditable(True)
         for value in CLUSTER_CHOICES:
             self.cluster_combo.addItem(str(value), value)
-        self.cluster_combo.setToolTip(
-            "Шаг, которым файловая система выдаёт место. При замере читается "
-            "с тома сам; руками нужен только для записи задним числом.\n"
-            "Опечатка здесь тихо испортит запас на копирование."
-        )
-        form.addRow("Размер кластера, B:", self.cluster_combo)
+        self._row(form, "record.cluster", self.cluster_combo)
 
-        self.mounted_edit = self._number_field(form, "Ёмкость тома, B:")
-        self.mounted_edit.setToolTip(
-            "Сколько показывает смонтированный том: контейнер без заголовков "
-            "VeraCrypt и без одного кластера, который NTFS оставляет себе. "
-            "По этой разнице видна опечатка в размере контейнера.\n"
-            "Снимается кнопкой «Измерить том»."
-        )
-        self.free_edit = self._number_field(form, "Свободно на пустом, B:")
-        self.free_edit.setToolTip(
-            "Свободное место сразу после форматирования, до копирования. "
-            "Размер тома (контейнер без заголовков VeraCrypt) минус это "
-            "число и есть метаданные NTFS."
-        )
-        self.file_edit = self._number_field(form, "Размер данных, B:")
-        self.file_edit.setToolTip(
-            "Размер того, что скопировали, — столько же показывает "
-            "Проводник.\n"
-            "Пусто — значит, том был пустой; запас на копирование такая "
-            "запись не калибрует."
-        )
-        self.count_edit = self._number_field(form, "Файлов:")
-        self.count_edit.setToolTip(
-            "Сколько файлов скопировали. По этому числу калибруется "
-            "по-файловая часть запаса — но только если записей несколько и "
-            "число файлов в них разное."
-        )
-        self.alloc_edit = self._number_field(form, "Данные по кластерам, B:")
-        self.alloc_edit.setToolTip(
-            "Сколько данные заняли с округлением каждого файла до кластера. "
-            "Для одного файла можно не заполнять — посчитается само. Для "
-            "папки так не выйдет, и без этого числа запас на копирование "
-            "выйдет завышенным."
-        )
-        self.left_edit = self._number_field(form, "Остаток после копии, B:")
-        self.left_edit.setToolTip(
-            "Свободное место после копирования, оно же Left space в "
-            "VeraCrypt. Разница со «свободно на пустом» — это и есть то, "
-            "сколько данные заняли на самом деле.\n"
-            "Снимается кнопкой «Замерить остаток»."
-        )
-
-        self.predicted_edit = self._number_field(form, "Обещано расчётом, MiB:")
-        self.predicted_edit.setToolTip(
-            "Container init, который посоветовала программа на эти данные. "
-            "Заполняется кнопкой «Взять с „Расчёта“».\n"
-            "Хранится, а не считается заново: обе модели меняются от каждого "
-            "нового замера, и пересчёт задним числом ответил бы «что я скажу "
-            "сегодня», а не «что я сказал тогда».\n"
-            "Пусто — проверять прогноз не с чем."
-        )
+        self.mounted_edit = self._number_field(form, "record.capacity")
+        self.free_edit = self._number_field(form, "record.empty_free")
+        self.file_edit = self._number_field(form, "record.data")
+        self.count_edit = self._number_field(form, "record.files")
+        self.alloc_edit = self._number_field(form, "record.alloc")
+        self.left_edit = self._number_field(form, "record.left_space")
+        self.predicted_edit = self._number_field(form, "record.predicted")
         self.predicted_safety_edit = self._number_field(
-            form, "Из них страховка, MiB:"
-        )
-        self.predicted_safety_edit.setToolTip(
-            "Сколько в обещанном было страховочного запаса. Без этого числа "
-            "промах неоднозначен: +5 MiB одинаково выглядят и когда модель "
-            "точна при страховке 5 MiB, и когда модель занизила на 3, а 8 MiB "
-            "страховки это скрыли."
+            form, "record.predicted_safety"
         )
 
         # Length limits: without them a field takes a number for which no
@@ -266,11 +258,7 @@ class RecordDialog(QDialog):
 
         self.note_edit = QLineEdit()
         plain_text(self.note_edit, MAX_NOTE_CHARS)
-        self.note_edit.setToolTip(
-            "Свободный текст для себя: чем заполняли, на какой машине, что "
-            "показалось странным. В расчёте не участвует."
-        )
-        form.addRow("Заметка:", self.note_edit)
+        self._row(form, "record.note", self.note_edit)
 
         return group
 
@@ -293,13 +281,13 @@ class RecordDialog(QDialog):
 
     def _number_field(self, form: QFormLayout, label: str) -> QLineEdit:
         edit = QLineEdit()
-        edit.setPlaceholderText("не задано")
         edit.textEdited.connect(self._refresh)
-        form.addRow(label, edit)
+        self._row(form, label, edit)
+        self._number_edits.append(edit)
         return edit
 
     def _build_derived(self) -> QGroupBox:
-        group = QGroupBox("Вычисляется автоматически, в файл не пишется")
+        group = self._derived_group = QGroupBox()
         form = QFormLayout(group)
         self.header_label = QLabel()
         self.ntfs_label = QLabel()
@@ -308,25 +296,12 @@ class RecordDialog(QDialog):
         self.minimum_label = QLabel()
         self.miss_label = QLabel()
         self.miss_label.setWordWrap(True)
-        form.addRow("Заголовок VeraCrypt:", self.header_label)
-        form.addRow("Метаданные NTFS:", self.ntfs_label)
-        form.addRow("Занято при копировании:", self.consumed_label)
-        form.addRow("Запас на копирование:", self.slack_label)
-
-        self.minimum_label.setToolTip(
-            "Наименьший контейнер, в который эти данные всё-таки влезли бы: "
-            "занятое на томе плюс заголовок VeraCrypt, округлённое вверх до "
-            "MiB.\n"
-            "Оценка чуть завышена — контейнер поменьше дал бы и метаданных "
-            "поменьше, — то есть промах выходит меньше настоящего. Ошибка в "
-            "сторону тревоги, а не благодушия."
-        )
-        self.miss_label.setToolTip(
-            "Обещано минус минимально достаточно. Минус означает, что данные "
-            "не влезли бы, — ради этого случая проверка и делается."
-        )
-        form.addRow("Минимально достаточный контейнер:", self.minimum_label)
-        form.addRow("Промах:", self.miss_label)
+        self._row(form, "record.headers", self.header_label)
+        self._row(form, "record.metadata", self.ntfs_label)
+        self._row(form, "record.consumed", self.consumed_label)
+        self._row(form, "record.slack", self.slack_label)
+        self._row(form, "record.minimum", self.minimum_label)
+        self._row(form, "record.miss", self.miss_label)
         return group
 
     def _build_issues(self) -> QLabel:
@@ -386,10 +361,7 @@ class RecordDialog(QDialog):
 
     def _measure_empty(self) -> None:
         """Volume capacity and empty free space: a point for the NTFS model."""
-        result = self._ask_volume(
-            "Смонтируйте пустой отформатированный контейнер и выберите его "
-            "букву. Считываются ёмкость тома и свободное место на нём."
-        )
+        result = self._ask_volume("record.prompt.empty")
         if result is None:
             return
         drive, total, free = result
@@ -406,10 +378,7 @@ class RecordDialog(QDialog):
         Copy the wrong thing, and the copy slack comes out as garbage and
         silently spoils the calibration, with nothing to catch it afterwards.
         """
-        result = self._ask_volume(
-            "Смонтируйте контейнер с уже скопированными данными и выберите "
-            "его букву. Считывается остаток свободного места."
-        )
+        result = self._ask_volume("record.prompt.left")
         if result is None:
             return
         drive, _total, free = result
@@ -418,20 +387,25 @@ class RecordDialog(QDialog):
         cluster = parse_bytes(self.cluster_combo.currentText()) or DEFAULT_CLUSTER_BYTES
         scan = scan_volume(drive, cluster)
         if scan.empty:
-            self.issues_label.setText(
-                f"<i>На томе {drive} нет файлов. Замер остатка снимают после "
-                f"копирования — для пустого тома есть «Измерить том».</i>"
+            self._show_notice(
+                lambda _issues: f"<i>{tr('record.left.no_files', drive=drive)}</i>"
             )
             return
 
         self.left_edit.setText(fmt_bytes(free))
         self._refresh()
-        self.issues_label.setText(
-            self._verdict(drive, scan) + "<br>" + self.issues_label.text()
+        self._show_notice(
+            lambda issues: self._verdict(drive, scan) + "<br>" + issues
         )
 
+    def _show_notice(self, notice: Callable[[str], str]) -> None:
+        """Put a button's message in place of the issues text."""
+        self._notice = notice
+        self.issues_label.setText(notice(self.issues_label.text()))
+
     def _ask_volume(self, prompt: str) -> tuple[str, int, int] | None:
-        dialog = MeasureDialog(self, prompt=prompt)
+        """Ask for a mounted volume; `prompt` is the key of the wording."""
+        dialog = MeasureDialog(self, prompt_key=prompt)
         # Modal to its own window, not to the whole program: several record
         # windows can now be open, and choosing a drive letter in one of them
         # must not lock the others together with the Calculation tab.
@@ -472,44 +446,51 @@ class RecordDialog(QDialog):
 
         if scan.service_dirs:
             lines.append(
-                "Служебные каталоги NTFS на томе: "
-                + ", ".join(scan.service_dirs)
-                + ". Место они занимают, в число файлов не входят."
+                tr("record.verdict.service_dirs", dirs=", ".join(scan.service_dirs))
             )
 
         if expected_count is None and expected_alloc is None:
             lines.append(
-                f"На томе {drive}: файлов {scan.payload.file_count}, по кластерам "
-                f"{fmt_bytes(scan.payload.alloc_bytes)} B. Сверять не с чем — "
-                f"заполните размер данных и число файлов."
+                tr(
+                    "record.verdict.unchecked",
+                    drive=drive,
+                    count=scan.payload.file_count,
+                    alloc=fmt_bytes(scan.payload.alloc_bytes),
+                )
             )
             return "<br>".join(lines)
 
         mismatch = []
         if expected_count is not None and expected_count != scan.payload.file_count:
             mismatch.append(
-                f"файлов на томе {scan.payload.file_count}, ожидалось {expected_count}"
+                tr(
+                    "record.verdict.count_mismatch",
+                    found=scan.payload.file_count,
+                    expected=expected_count,
+                )
             )
         if expected_alloc is not None and expected_alloc != scan.payload.alloc_bytes:
             mismatch.append(
-                f"по кластерам на томе {fmt_bytes(scan.payload.alloc_bytes)} B, "
-                f"ожидалось {fmt_bytes(expected_alloc)} B"
+                tr(
+                    "record.verdict.alloc_mismatch",
+                    found=fmt_bytes(scan.payload.alloc_bytes),
+                    expected=fmt_bytes(expected_alloc),
+                )
             )
 
         if mismatch:
-            lines.append(
-                "⚠ Содержимое тома не совпало с расчётом: "
-                + "; ".join(mismatch)
-                + ". Запас на копирование из такой записи брать нельзя."
-            )
+            lines.append(tr("record.verdict.mismatch", details="; ".join(mismatch)))
         else:
             lines.append(
-                f"Содержимое тома {drive} совпало с расчётом: "
-                f"{scan.payload.file_count} файлов, "
-                f"{fmt_bytes(scan.payload.alloc_bytes)} B по кластерам."
+                tr_n(
+                    "record.verdict.match",
+                    scan.payload.file_count,
+                    drive=drive,
+                    alloc=fmt_bytes(scan.payload.alloc_bytes),
+                )
             )
         if scan.errors:
-            lines.append(f"Часть тома не прочитана ({len(scan.errors)} путей).")
+            lines.append(tr_n("record.verdict.unread", len(scan.errors)))
         return "<br>".join(lines)
 
     def _take_payload(self) -> None:
@@ -523,10 +504,7 @@ class RecordDialog(QDialog):
         """
         payload = self._payload_provider() if self._payload_provider else None
         if payload is None:
-            self.issues_label.setText(
-                "<i>На вкладке «Расчёт» нет данных: выберите файл или папку "
-                "либо введите размер.</i>"
-            )
+            self._show_notice(lambda _issues: f"<i>{tr('record.payload.none')}</i>")
             return
         container = self._container_provider() if self._container_provider else None
         if container:
@@ -561,15 +539,18 @@ class RecordDialog(QDialog):
 
         issues = validate(record)
         if not record.id:
-            self.issues_label.setText("<i>Укажите имя записи.</i>")
+            self.issues_label.setText(f"<i>{tr('record.no_name')}</i>")
         elif issues:
             body = "<br>".join(f"⚠ {issue.message}" for issue in issues)
             self.issues_label.setText(body)
         else:
             self.issues_label.setText("")
+        self._notice = None
 
         self.save_button.setEnabled(bool(record.id))
-        self.save_button.setText("Сохранить с пометкой" if issues else "Сохранить")
+        self.save_button.setText(
+            tr("record.save.flagged") if issues else tr("record.save")
+        )
 
     def _refresh_forecast(self, record: Record) -> None:
         """Show whether the prediction held — in words, not with a bare number.
@@ -585,19 +566,15 @@ class RecordDialog(QDialog):
 
         miss = record.miss_mib
         if miss is None:
-            self.miss_label.setText(
-                "—  (нужны «Обещано расчётом» и остаток после копии)"
-            )
+            self.miss_label.setText(tr("record.miss.none"))
             return
-        model_miss = record.model_miss_mib
-        verdict = (
-            "данные не влезли бы"
+        key = (
+            "record.miss.short"
             if miss < 0
-            else ("впритык" if miss == 0 else "перезаклад")
+            else ("record.miss.exact" if miss == 0 else "record.miss.over")
         )
         self.miss_label.setText(
-            f"{miss:+d} MiB — {verdict}; из них промах моделей "
-            f"{model_miss:+d} MiB, остальное страховка."
+            tr(key, miss=f"{miss:+d}", model=f"{record.model_miss_mib:+d}")
         )
 
     def _on_save(self) -> None:

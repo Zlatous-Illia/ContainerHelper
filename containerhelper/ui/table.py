@@ -6,7 +6,7 @@ the tabs depend on each other for the sake of a few helpers.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRegularExpression, Qt, Signal
+from PySide6.QtCore import QEvent, QRegularExpression, Qt, Signal
 from PySide6.QtGui import (
     QCursor,
     QFontMetrics,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import IGNORED_IN_INPUT
+from ..i18n import tr
 
 #: How many rows a table must always show. Fewer than two, and the header
 #: runs over the first row: QTableWidget has no minimum of its own, it
@@ -120,9 +121,17 @@ class TableGrip(QWidget):
         self.setFixedHeight(GRIP_HEIGHT)
         self.setCursor(QCursor(Qt.SizeVerCursor))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.retranslate()
+
+    def retranslate(self) -> None:
         # Nothing about dragging: the cursor itself says that. The double
         # click has to be mentioned — there is nowhere else to learn of it.
-        self.setToolTip("Двойной щелчок вернёт наименьшую высоту")
+        self.setToolTip(tr("table.grip.tip"))
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     def floor_height(self) -> int:
         rows = self._table.property("min_rows") or MIN_TABLE_ROWS

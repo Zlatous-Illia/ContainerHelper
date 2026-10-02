@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Callable, Sequence
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -49,8 +49,8 @@ from ..collect import (
 )
 from ..elevation import is_admin, relaunch_as_admin
 from ..fileset import FileSet
-from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit, plural
-from ..i18n import tr
+from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit
+from ..i18n import tr, tr_n
 from ..model import MIB, CopySlackModel, MetadataModel, SafetyModel
 from ..paths import is_writable
 from .table import scrollable, wrapped
@@ -70,11 +70,13 @@ from ..veracrypt import (
 PATH_KEY = "veracrypt/path"
 WORKDIR_KEY = "veracrypt/workdir"
 
-NOT_FOUND = (
-    "VeraCrypt не нашёлся ни в «C:\\Program Files\\VeraCrypt», ни в "
-    "«C:\\Program Files (x86)\\VeraCrypt». Укажите папку, где лежат "
-    "«{format_exe}» и «{mount_exe}»."
-).format(format_exe=FORMAT_NAMES[0], mount_exe=MOUNT_NAMES[0])
+def _not_found() -> str:
+    return tr(
+        "collect.dialog.not_found",
+        format_exe=FORMAT_NAMES[0],
+        mount_exe=MOUNT_NAMES[0],
+    )
+
 
 #: Line break in tooltips. A constant, as in the other tabs: escaping inside
 #: edit templates has already collapsed once.
@@ -173,13 +175,12 @@ class CollectWorker(QObject):
             removed = self.collector.prepare()
             if removed:
                 self.note.emit(
-                    f"Убрано контейнеров от прошлого прерванного сбора: "
-                    f"{len(removed)}."
+                    tr("collect.dialog.log.removed", count=len(removed))
                 )
 
             for index, step in enumerate(self.collector.steps):
                 if self._stop:
-                    reason = "Остановлено по требованию."
+                    reason = tr("collect.dialog.log.stopped")
                     break
                 self._index = index
                 self._last_phase = ""
@@ -220,7 +221,6 @@ class CollectDialog(QDialog):
         forbidden_sizes: Sequence[int] = (),
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Автоматический сбор замеров")
         self.setMinimumWidth(660)
 
         self._sizes = tuple(sizes)
@@ -312,21 +312,75 @@ class CollectDialog(QDialog):
 
         self._restore_install()
         self._restore_workdir()
-        self._refresh_rights()
+        self.retranslate()
         self._refresh_scope()
+
+    def retranslate(self) -> None:
+        """Set the static text in the current language and rebuild the text
+        made from data.
+
+        The scope is rebuilt as text only: `_refresh_scope` also resets the
+        progress bar, and a language switch mid-collection must not do that.
+        Lines already in the log stay as written.
+        """
+        self.setWindowTitle(tr("collect.dialog.title"))
+        self.intro_label.setText(tr("collect.dialog.intro"))
+        self.install_button.setText(tr("collect.dialog.install.button"))
+        self.install_button.setToolTip(
+            tr(
+                "collect.dialog.install.button.tip",
+                format_exe=FORMAT_NAMES[0],
+                mount_exe=MOUNT_NAMES[0],
+            )
+        )
+        self.version_label.setToolTip(tr("collect.dialog.version.tip"))
+        self.workdir_group.setTitle(tr("collect.dialog.workdir.group"))
+        self.workdir_label.setToolTip(tr("collect.dialog.workdir.tip"))
+        self.workdir_button.setText(tr("collect.dialog.workdir.button"))
+        self.space_label.setToolTip(tr("collect.dialog.space.tip"))
+        self.scope_group.setTitle(tr("collect.dialog.scope.group"))
+        self.want_ntfs.setText(tr("collect.dialog.ntfs"))
+        self.want_ntfs.setToolTip(tr("collect.dialog.ntfs.tip"))
+        self.want_slack.setText(tr("collect.dialog.slack"))
+        self.want_slack.setToolTip(tr("collect.dialog.slack.tip"))
+        self.everything.setToolTip(tr("collect.dialog.everything.tip"))
+        self.with_self_check.setText(tr("collect.dialog.self_check"))
+        self.with_self_check.setToolTip(tr("collect.dialog.self_check.tip"))
+        for item in self._filesets:
+            self.fileset_boxes[item.key].setText(tr(item.title))
+        for button, title, tip in self._mark_buttons:
+            button.setText(tr(title))
+            button.setToolTip(tr(tip))
+        self.rights_group.setTitle(tr("collect.dialog.rights.group"))
+        self.elevate_button.setText(tr("collect.dialog.elevate"))
+        self.elevate_button.setToolTip(tr("collect.dialog.elevate.tip"))
+        self.progress.setToolTip(tr("collect.dialog.progress.tip"))
+        self.progress_label.setToolTip(tr("collect.dialog.status.tip"))
+        self.log.setToolTip(tr("collect.dialog.log.tip"))
+        self.start_button.setText(tr("collect.dialog.start"))
+        self.stop_button.setText(tr("collect.dialog.stop"))
+        self.stop_button.setToolTip(tr("collect.dialog.stop.tip"))
+        self.close_button.setText(tr("collect.dialog.close"))
+
+        self._show_install()
+        self._show_workdir()
+        self._refresh_rights()
+        self._refresh_scope_text(self.steps())
+        if self.running():
+            self._show_progress()
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     # --- building ----------------------------------------------------------
 
     def _build_intro(self) -> QLabel:
-        text = QLabel(
-            "Программа создаёт контейнеры, монтирует их и читает тома сама.\n"
-            "Пустой том даёт метаданные NTFS — контейнеры динамические, "
-            "поэтому терабайтный занимает на диске мегабайты. Замер запаса на "
-            "копирование пишет на том сгенерированный набор файлов, и вот ему "
-            "место нужно по-настоящему."
-        )
+        text = QLabel()
         text.setWordWrap(True)
         text.setStyleSheet("color: palette(mid);")
+        self.intro_label = text
         return text
 
     def _build_install_box(self) -> QGroupBox:
@@ -340,29 +394,19 @@ class CollectDialog(QDialog):
         self.install_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         row.addWidget(self.install_label, 1)
 
-        self.install_button = QPushButton("Указать папку…")
-        self.install_button.setToolTip(
-            "Папка, где лежат «" + FORMAT_NAMES[0] + "» и «"
-            + MOUNT_NAMES[0] + "».\n"
-            "Нужна, если VeraCrypt стоит не в Program Files — например, "
-            "портативная сборка. Выбор запомнится."
-        )
+        self.install_button = QPushButton()
         self.install_button.clicked.connect(self._choose_install)
         row.addWidget(self.install_button)
 
         self.version_label = QLabel()
         self.version_label.setWordWrap(True)
         self.version_label.setStyleSheet("color: palette(mid);")
-        self.version_label.setToolTip(
-            "Ключи командной строки у VeraCrypt со временем менялись. Для "
-            "старой версии возьмём те, которые она понимает; с совсем старой "
-            "сбор не пойдёт."
-        )
         outer.addWidget(self.version_label)
         return group
 
     def _build_workdir_box(self) -> QGroupBox:
-        group = QGroupBox("Где создавать контейнеры")
+        group = QGroupBox()
+        self.workdir_group = group
         outer = QVBoxLayout(group)
         row = QHBoxLayout()
         outer.addLayout(row)
@@ -370,55 +414,31 @@ class CollectDialog(QDialog):
         self.workdir_label = QLabel()
         self.workdir_label.setWordWrap(True)
         self.workdir_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.workdir_label.setToolTip(
-            "Папка для временных контейнеров — их удаляют сразу после "
-            "замера.\n"
-            "Замеры NTFS почти не требуют места: контейнер динамический, на "
-            "диск ложатся только метаданные. Замер запаса пишет весь набор "
-            "файлов, и вот под него место нужно."
-        )
         row.addWidget(self.workdir_label, 1)
 
-        button = QPushButton("Выбрать…")
-        button.clicked.connect(self._choose_workdir)
-        row.addWidget(button)
+        self.workdir_button = QPushButton()
+        self.workdir_button.clicked.connect(self._choose_workdir)
+        row.addWidget(self.workdir_button)
 
         self.space_label = QLabel()
         self.space_label.setWordWrap(True)
         self.space_label.setStyleSheet("color: palette(mid);")
-        self.space_label.setToolTip(
-            "Сколько места нужно самому прожорливому из выбранных шагов и "
-            "сколько его есть. Требуемое считается той же моделью "
-            "метаданных, которую сбор и калибрует.\n"
-            "Шаг, которому не хватило, пропускается — его можно доснять "
-            "позже, когда место освободится."
-        )
         outer.addWidget(self.space_label)
         return group
 
     def _build_scope_box(self) -> QGroupBox:
-        group = QGroupBox("Что снимать")
+        group = QGroupBox()
+        self.scope_group = group
         layout = QVBoxLayout(group)
 
-        self.want_ntfs = QCheckBox("Метаданные NTFS — замеры пустых томов")
+        self.want_ntfs = QCheckBox()
         self.want_ntfs.setChecked(True)
-        self.want_ntfs.setToolTip(
-            "Точки для модели метаданных. Класть в контейнер ничего не "
-            "нужно: метаданные зависят только от размера тома."
-        )
         self.want_ntfs.toggled.connect(self._refresh_scope)
         layout.addWidget(self.want_ntfs)
         layout.addWidget(self._build_ntfs_options())
 
-        self.want_slack = QCheckBox(
-            "Запас на копирование — наборы файлов на томе"
-        )
+        self.want_slack = QCheckBox()
         self.want_slack.setChecked(bool(self._filesets))
-        self.want_slack.setToolTip(
-            "Единственная часть модели, не подтверждённая замерами при разном "
-            "числе файлов. Наборы отличаются именно числом файлов: по одному "
-            "числу наклон не считается вовсе."
-        )
         self.want_slack.toggled.connect(self._refresh_scope)
         layout.addWidget(self.want_slack)
         layout.addWidget(self._build_slack_options())
@@ -441,22 +461,10 @@ class CollectDialog(QDialog):
         layout.addWidget(self.only_missing)
 
         self.everything = QRadioButton()
-        self.everything.setToolTip(
-            "Переснять все размеры заново. Имеет смысл после обновления "
-            "Windows или смены версии VeraCrypt — форматирует именно их код."
-        )
         layout.addWidget(self.everything)
 
-        self.with_self_check = QCheckBox("Начать с самопроверки (1 GiB дважды)")
+        self.with_self_check = QCheckBox()
         self.with_self_check.setChecked(True)
-        self.with_self_check.setToolTip(
-            "Снять гигабайт двумя способами: динамическим контейнером с "
-            "быстрым форматированием и обычным с полным.\n"
-            "Совпало — остальное можно снимать динамическими. Разошлось — на "
-            "этой машине так нельзя, и лучше узнать это сразу.\n"
-            "Обычный контейнер единственный во всём сборе требует целого "
-            "гигабайта свободного места."
-        )
         self.with_self_check.toggled.connect(self._refresh_scope)
         layout.addWidget(self.with_self_check)
 
@@ -483,7 +491,7 @@ class CollectDialog(QDialog):
         #: cut off exactly at the most important part — at «уже есть».
         self.fileset_notes: dict[str, QLabel] = {}
         for item in self._filesets:
-            check = QCheckBox(tr(item.title))
+            check = QCheckBox()
             check.setChecked(item.key not in self._slack_covered)
             check.toggled.connect(self._refresh_scope)
             layout.addWidget(check)
@@ -496,14 +504,16 @@ class CollectDialog(QDialog):
             self.fileset_notes[item.key] = note
 
         row = QHBoxLayout()
+        #: The "all" and "none" buttons with the keys of their text.
+        self._mark_buttons: list[tuple[QPushButton, str, str]] = []
         for title, wanted, tip in (
-            ("Все", True, "Отметить все наборы."),
-            ("Ничего", False, "Снять все отметки."),
+            ("collect.dialog.all", True, "collect.dialog.all.tip"),
+            ("collect.dialog.none", False, "collect.dialog.none.tip"),
         ):
-            button = QPushButton(title)
-            button.setToolTip(tip)
+            button = QPushButton()
             button.clicked.connect(lambda _=False, value=wanted: self._set_all(value))
             row.addWidget(button)
+            self._mark_buttons.append((button, title, tip))
         row.addStretch(1)
         layout.addLayout(row)
 
@@ -518,19 +528,15 @@ class CollectDialog(QDialog):
         self._refresh_scope()
 
     def _build_rights_box(self) -> QGroupBox:
-        group = QGroupBox("Права")
+        group = QGroupBox()
+        self.rights_group = group
         row = QHBoxLayout(group)
 
         self.rights_label = QLabel()
         self.rights_label.setWordWrap(True)
         row.addWidget(self.rights_label, 1)
 
-        self.elevate_button = QPushButton("Перезапустить от администратора")
-        self.elevate_button.setToolTip(
-            "Без прав администратора Windows спросит подтверждение на каждый "
-            "контейнер, и сбор перестанет быть автоматическим.\n"
-            "Программа закроется и откроется заново с той же папкой данных."
-        )
+        self.elevate_button = QPushButton()
         self.elevate_button.clicked.connect(self._elevate)
         row.addWidget(self.elevate_button)
         return group
@@ -541,52 +547,32 @@ class CollectDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.progress = QProgressBar()
-        self.progress.setToolTip(
-            "Доля записанных байт, а не пройденных шагов. Шаги слишком "
-            "разные: пустой терабайтный том снимается за секунды, а набор в "
-            "четыре гигабайта пишется минутами, и полоса по числу шагов "
-            "врала бы в разы."
-        )
         layout.addWidget(self.progress)
 
         self.progress_label = QLabel()
         self.progress_label.setWordWrap(True)
         self.progress_label.setStyleSheet("color: palette(mid);")
-        self.progress_label.setToolTip(
-            "Какой шаг идёт, на какой он фазе, сколько эта фаза длится и "
-            "сколько прошло всего. Внутри записи набора видно число готовых "
-            "файлов и записанный объём."
-        )
         layout.addWidget(self.progress_label)
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(160)
-        self.log.setToolTip(
-            "Ход сбора. Текст выделяется и копируется — если что-то пошло не "
-            "так, смотреть сюда."
-        )
         layout.addWidget(self.log)
         return box
 
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        self.start_button = QPushButton("Начать")
+        self.start_button = QPushButton()
         self.start_button.clicked.connect(self._start)
         row.addWidget(self.start_button)
 
-        self.stop_button = QPushButton("Остановить")
+        self.stop_button = QPushButton()
         self.stop_button.setEnabled(False)
-        self.stop_button.setToolTip(
-            "Остановиться, доделав то, что нельзя бросить. Запись набора "
-            "прерывается сразу, а начатое создание контейнера доводится до "
-            "конца — иначе остался бы поднятый том и файл на диске."
-        )
         self.stop_button.clicked.connect(self._stop)
         row.addWidget(self.stop_button)
 
         row.addStretch(1)
-        self.close_button = QPushButton("Закрыть")
+        self.close_button = QPushButton()
         self.close_button.clicked.connect(self.reject)
         row.addWidget(self.close_button)
         return row
@@ -596,26 +582,33 @@ class CollectDialog(QDialog):
     def _restore_install(self) -> None:
         remembered = self._stored(PATH_KEY)
         self._install = self.find_install([remembered] if remembered else [])
-        self._refresh_install()
 
     def _refresh_install(self) -> None:
+        self._show_install()
+        self._refresh_scope()
+
+    def _show_install(self) -> None:
+        """The install and version labels; also whether the version will do."""
         if self._install is None:
-            self.install_label.setText(NOT_FOUND)
+            self.install_label.setText(_not_found())
             self._supported, notice = False, ""
         else:
             self.install_label.setText(self._install.title)
             self._supported, notice = version_notice(self._install)
         self.version_label.setText(notice)
         self.version_label.setVisible(bool(notice))
-        self._refresh_scope()
 
     def _choose_install(self) -> None:
-        chosen = self.ask_directory("Папка VeraCrypt", self._install_start_dir())
+        chosen = self.ask_directory(
+            tr("collect.dialog.install.ask"), self._install_start_dir()
+        )
         if not chosen:
             return
         found = install_at(chosen)
         if found is None:
-            self.report_error("VeraCrypt не найден", missing_report(chosen))
+            self.report_error(
+                tr("collect.dialog.install.missing"), missing_report(chosen)
+            )
             return
         self._install = found
         self._remember(PATH_KEY, str(found.directory))
@@ -632,22 +625,26 @@ class CollectDialog(QDialog):
     def _restore_workdir(self) -> None:
         remembered = self._stored(WORKDIR_KEY)
         self._workdir = Path(remembered) if remembered else Path(tempfile.gettempdir())
-        self._refresh_workdir()
 
     def _refresh_workdir(self) -> None:
+        self._show_workdir()
+        self._refresh_scope()
+
+    def _show_workdir(self) -> None:
         free = self.free_bytes()
         self.workdir_label.setText(
-            f"{self._workdir} — свободно {fmt_both(free)}"
+            tr("collect.dialog.workdir.free", path=self._workdir, free=fmt_both(free))
             if free
-            else f"{self._workdir} — недоступна или места нет вовсе"
+            else tr("collect.dialog.workdir.unavailable", path=self._workdir)
         )
-        self._refresh_scope()
 
     def free_bytes(self) -> int:
         return free_space(self._workdir)
 
     def _choose_workdir(self) -> None:
-        chosen = self.ask_directory("Папка для контейнеров", str(self._workdir))
+        chosen = self.ask_directory(
+            tr("collect.dialog.workdir.ask"), str(self._workdir)
+        )
         if not chosen:
             return
         self._workdir = Path(chosen)
@@ -660,25 +657,21 @@ class CollectDialog(QDialog):
         elevated = self.is_admin()
         self.elevate_button.setVisible(not elevated)
         self.rights_label.setText(
-            "Программа работает с правами администратора — UAC ничего не "
-            "спросит."
+            tr("collect.dialog.rights.admin")
             if elevated
-            else "Прав администратора нет: Windows спросит подтверждение на "
-            "каждый контейнер. Форматирование NTFS без них не идёт."
+            else tr("collect.dialog.rights.none")
         )
 
     def _elevate(self) -> None:
         if not self.confirm(
-            "Перезапуск от администратора",
-            "Программа закроется и откроется заново, уже с запросом прав. "
-            "Несохранённого у неё ничего нет.\nПродолжить?",
+            tr("collect.dialog.elevate.confirm.title"),
+            tr("collect.dialog.elevate.confirm"),
         ):
             return
         if not self.relaunch(self._data_dir):
             self.report_error(
-                "Не вышло",
-                "Windows отклонила запрос прав. Запустите программу через "
-                "«Запуск от имени администратора» сами.",
+                tr("collect.dialog.elevate.failed.title"),
+                tr("collect.dialog.elevate.failed"),
             )
             return
         # Two copies in one data folder would write over each other.
@@ -733,22 +726,27 @@ class CollectDialog(QDialog):
         return steps
 
     def _refresh_scope(self) -> None:
-        missing = len([size for size in self._sizes if size not in self._covered])
-        self.only_missing.setText(f"Только недостающие размеры ({missing})")
-        self.everything.setText(f"Переснять все размеры ({len(self._sizes)})")
         self.ntfs_options.setVisible(self.want_ntfs.isChecked())
 
         self.want_slack.setVisible(bool(self._filesets))
         self.slack_options.setVisible(
             bool(self._filesets) and self.want_slack.isChecked()
         )
-        self._refresh_fileset_labels()
 
         steps = self.steps()
-        self._refresh_scope_summary(steps)
+        self._refresh_scope_text(steps)
         self.progress.setMaximum(max(self._plan_weight(steps) // MIB, 1))
         self.progress.setValue(0)
         self.start_button.setEnabled(bool(steps) and self._supported)
+
+    def _refresh_scope_text(self, steps: Sequence[Step]) -> None:
+        """The scope's text alone: the radio buttons, the file set notes and
+        the summary. Leaves the progress bar and the buttons as they are."""
+        missing = len([size for size in self._sizes if size not in self._covered])
+        self.only_missing.setText(tr("collect.dialog.only_missing", n=missing))
+        self.everything.setText(tr("collect.dialog.everything", n=len(self._sizes)))
+        self._refresh_fileset_labels()
+        self._refresh_scope_summary(steps)
 
     def _plan_weight(self, steps: Sequence[Step]) -> int:
         ntfs, _slack = self.current_models()
@@ -768,23 +766,26 @@ class CollectDialog(QDialog):
             step = self._preview_step(item, ntfs, slack)
             need = required_bytes(step, ntfs)
             parts = [
-                f"{item.file_count} "
-                f"{plural(item.file_count, 'файл', 'файла', 'файлов')}",
-                f"{fmt_with_unit(item.alloc_bytes(), UNIT_AUTO)} по кластерам",
-                f"нужно {fmt_with_unit(need, UNIT_AUTO)}",
+                tr_n("collect.dialog.fileset.files", item.file_count),
+                tr(
+                    "collect.dialog.fileset.alloc",
+                    size=fmt_with_unit(item.alloc_bytes(), UNIT_AUTO),
+                ),
+                tr("collect.dialog.fileset.need", size=fmt_with_unit(need, UNIT_AUTO)),
             ]
             if item.key in self._slack_covered:
-                parts.append("свой замер уже есть")
+                parts.append(tr("collect.dialog.fileset.covered"))
             if free and free < need:
-                parts.append("НЕ ХВАТАЕТ МЕСТА")
+                parts.append(tr("collect.dialog.fileset.short"))
             check = self.fileset_boxes[item.key]
             self._set_note(self.fileset_notes[item.key], ", ".join(parts))
             check.setToolTip(
-                f"Контейнер {step.container_mib} MiB. Расчёт обещает "
-                f"{step.predicted_mib} MiB, из них {step.predicted_safety_mib} "
-                f"MiB страховки; контейнер делается с запасом, чтобы набор "
-                f"точно влез, а обещание записывается как есть — на нём "
-                f"держится проверка прогноза."
+                tr(
+                    "collect.dialog.fileset.tip",
+                    container=step.container_mib,
+                    predicted=step.predicted_mib,
+                    safety=step.predicted_safety_mib,
+                )
             )
 
     @staticmethod
@@ -814,39 +815,38 @@ class CollectDialog(QDialog):
         free = self.free_bytes()
         peak = max((required_bytes(step, ntfs) for step in steps), default=0)
         self.space_label.setText(
-            f"Самому прожорливому шагу нужно {fmt_with_unit(peak, UNIT_AUTO)}, "
-            f"свободно {fmt_with_unit(free, UNIT_AUTO)}."
+            tr(
+                "collect.dialog.space.peak",
+                peak=fmt_with_unit(peak, UNIT_AUTO),
+                free=fmt_with_unit(free, UNIT_AUTO),
+            )
             if steps
-            else f"Свободно {fmt_with_unit(free, UNIT_AUTO)}."
+            else tr("collect.dialog.space.free", free=fmt_with_unit(free, UNIT_AUTO))
         )
         if not steps:
-            self.scope_summary.setText(
-                "Снимать нечего: все размеры уже закрыты своими замерами."
-            )
+            self.scope_summary.setText(tr("collect.dialog.scope.nothing"))
             return
-        text = (
-            f"Контейнеров будет создано: {len(steps)}. Записать предстоит "
-            f"{fmt_with_unit(self._plan_weight(steps), UNIT_AUTO)}, самому "
-            f"прожорливому шагу нужно {fmt_with_unit(peak, UNIT_AUTO)}."
+        text = tr(
+            "collect.dialog.scope.summary",
+            count=len(steps),
+            weight=fmt_with_unit(self._plan_weight(steps), UNIT_AUTO),
+            peak=fmt_with_unit(peak, UNIT_AUTO),
         )
         short = [step for step in steps if required_bytes(step, ntfs) > free]
         if free and short:
-            text += (
-                f" Шагов, которым места не хватает: {len(short)} — они будут "
-                f"пропущены, доснять их можно позже."
-            )
+            text += " " + tr("collect.dialog.scope.short", count=len(short))
         self.scope_summary.setText(text)
 
     # --- collection run ----------------------------------------------------
 
     def _start(self) -> None:
         if self._install is None:
-            self.report_error("VeraCrypt не найден", NOT_FOUND)
+            self.report_error(tr("collect.dialog.install.missing"), _not_found())
             return
         if not is_writable(self._workdir):
             self.report_error(
-                "Папка недоступна",
-                f"В {self._workdir} нельзя писать — выберите другую.",
+                tr("collect.dialog.workdir.denied.title"),
+                tr("collect.dialog.workdir.denied", path=self._workdir),
             )
             return
 
@@ -854,10 +854,12 @@ class CollectDialog(QDialog):
         ntfs, _slack = self.current_models()
         weight = total_bytes(steps, ntfs)
         if not self.confirm(
-            "Начать сбор",
-            f"Будет создано и удалено контейнеров: {len(steps)}.\n"
-            f"Записать предстоит примерно "
-            f"{fmt_with_unit(weight, UNIT_AUTO)}. Продолжить?",
+            tr("collect.dialog.start.confirm.title"),
+            tr(
+                "collect.dialog.start.confirm",
+                count=len(steps),
+                weight=fmt_with_unit(weight, UNIT_AUTO),
+            ),
         ):
             return
 
@@ -873,9 +875,9 @@ class CollectDialog(QDialog):
         self.progress.setMaximum(max(self._total_weight // MIB, 1))
         self.progress.setValue(0)
         self._started = time.monotonic()
-        self._set_phase("подготовка")
+        self._set_phase("collect.dialog.phase.prepare")
         self._clock.start()
-        self._say(f"Сбор начат. VeraCrypt: {self._install.title}.")
+        self._say(tr("collect.dialog.log.started", install=self._install.title))
 
         collector = Collector(
             veracrypt=self.make_veracrypt(self._install),
@@ -909,23 +911,24 @@ class CollectDialog(QDialog):
         if self._worker is not None:
             self._worker.stop()
             self.stop_button.setEnabled(False)
-            self._say("Остановлюсь, как только текущий шаг можно будет бросить…")
+            self._say(tr("collect.dialog.log.stopping"))
 
     def _on_step_started(self, index: int, title: str) -> None:
         self._index = index
         self._share = 0.0
-        self._set_phase("подготовка шага")
+        self._set_phase("collect.dialog.phase.step")
         self._advance(index, 0.0)
         self._say(f"[{index + 1}/{len(self._weights)}] {title}")
 
     def _on_step_progress(self, index: int, progress: Progress) -> None:
         self._index = index
         self._advance(index, progress.share)
-        self._set_phase(tr(progress.phase), progress.detail)
+        self._set_phase(progress.phase, progress.detail)
         self._show_progress()
 
     def _set_phase(self, phase: str, detail: str = "") -> None:
-        """Remember the phase and when it started.
+        """Remember the phase — its key, translated when shown — and when it
+        started.
 
         The phase clock is needed exactly where there is no progress:
         "creating the container" with a full format lasts for minutes, and
@@ -967,23 +970,32 @@ class CollectDialog(QDialog):
         if not self._weights:
             return
         now = time.monotonic()
-        phase = f"{self._phase}, {self._detail}" if self._detail else self._phase
+        phase = tr(self._phase)
+        if self._detail:
+            phase = f"{phase}, {self._detail}"
         parts = [f"[{self._index + 1}/{len(self._weights)}] {phase}"]
         if self._phase_started:
-            parts.append(f"фаза {_clock(now - self._phase_started)}")
+            parts.append(
+                tr("collect.dialog.status.phase", time=_clock(now - self._phase_started))
+            )
         elapsed = now - self._started
-        parts.append(f"прошло {_clock(elapsed)}")
+        parts.append(tr("collect.dialog.status.elapsed", time=_clock(elapsed)))
         done = self.progress.value()
         total = self.progress.maximum()
         if done > total * ETA_AFTER_PERCENT // 100 and done:
-            parts.append(f"осталось примерно {_clock(elapsed * (total - done) / done)}")
+            parts.append(
+                tr(
+                    "collect.dialog.status.left",
+                    time=_clock(elapsed * (total - done) / done),
+                )
+            )
         self.progress_label.setText(" · ".join(parts))
 
     def _on_step_finished(self, result: StepResult) -> None:
         self._advance(self._index, 1.0)
         if result.skipped:
             self._skipped += 1
-            self._say(f"    пропущен: {result.error}")
+            self._say("    " + tr("collect.dialog.log.skipped", error=result.error))
             return
         if result.measurement is not None:
             # The measurement goes out even when the self-check fails: it is
@@ -994,19 +1006,19 @@ class CollectDialog(QDialog):
             self._say(self._measurement_line(result))
         if result.error:
             self._failed += 1
-            self._say(f"    ошибка: {result.error}")
+            self._say("    " + tr("collect.dialog.log.error", error=result.error))
 
     def _measurement_line(self, result: StepResult) -> str:
         measurement = result.measurement
-        line = f"    метаданные NTFS: {fmt_both(measurement.metadata_bytes)}"
+        line = "    " + tr(
+            "collect.dialog.log.metadata", size=fmt_both(measurement.metadata_bytes)
+        )
         slack = measurement.copy_slack_bytes
         if slack is not None:
             record = measurement.as_record()
             miss = record.miss_mib
-            line += (
-                f"{LINE_BREAK}    запас на копирование: {fmt_both(slack)} "
-                f"при {measurement.file_count} "
-                f"{plural(measurement.file_count, 'файле', 'файлах', 'файлах')}"
+            line += f"{LINE_BREAK}    " + tr_n(
+                "collect.dialog.log.slack", measurement.file_count, slack=fmt_both(slack)
             )
             if slack < 0:
                 # Less is used than the data itself — that cannot happen. Most
@@ -1015,16 +1027,13 @@ class CollectDialog(QDialog):
                 # The measurement will not go into the copy-slack
                 # calibration, but its NTFS point is valid, and there is no
                 # reason to throw it away.
-                line += (
-                    f"{LINE_BREAK}    ⚠ запас вышел отрицательным — в "
-                    f"калибровку запаса такой замер не идёт; точка NTFS из "
-                    f"него остаётся годной"
-                )
+                line += f"{LINE_BREAK}    " + tr("collect.dialog.log.negative")
             if miss is not None:
-                line += (
-                    f"{LINE_BREAK}    прогноз: обещано "
-                    f"{measurement.predicted_mib} MiB, хватило бы "
-                    f"{record.minimum_mib} MiB, промах {miss:+d} MiB"
+                line += f"{LINE_BREAK}    " + tr(
+                    "collect.dialog.log.prediction",
+                    predicted=measurement.predicted_mib,
+                    minimum=record.minimum_mib,
+                    miss=f"{miss:+d}",
                 )
         return line
 
@@ -1035,20 +1044,21 @@ class CollectDialog(QDialog):
         self._phase = self._detail = ""
         self.progress_label.setText("")
         self._say(
-            f"Готово. Снято замеров: {self._measured}, неудач: {self._failed}, "
-            f"пропущено из-за места: {self._skipped}."
+            tr(
+                "collect.dialog.log.done",
+                measured=self._measured,
+                failed=self._failed,
+                skipped=self._skipped,
+            )
             if not reason
-            else f"Сбор прерван. {reason}"
+            else tr("collect.dialog.log.interrupted", reason=reason)
         )
         if self._skipped:
-            self._say(
-                "Пропущенные шаги можно доснять позже: освободите место и "
-                "откройте это окно снова — недостающее подберётся само."
-            )
+            self._say(tr("collect.dialog.log.skipped_later"))
         self._say(
-            "Замеры сохранены, таблицы уже обновились."
+            tr("collect.dialog.log.saved")
             if self._measured
-            else "Снять не удалось ничего."
+            else tr("collect.dialog.log.nothing")
         )
         if self._closing:
             super().reject()
@@ -1063,7 +1073,9 @@ class CollectDialog(QDialog):
 
     def _note(self) -> str:
         version = self._install.version if self._install else ""
-        return "Автоматический сбор" + (f", VeraCrypt {version}" if version else "")
+        if version:
+            return tr("collect.dialog.note.version", version=version)
+        return tr("collect.dialog.note")
 
     def _say(self, text: str) -> None:
         self.log.appendPlainText(text)
@@ -1083,9 +1095,8 @@ class CollectDialog(QDialog):
         """
         if self.running():
             if not self.confirm(
-                "Сбор идёт",
-                "Остановить сбор и закрыть окно? Текущий контейнер доделаем "
-                "и удалим, окно закроется после этого.",
+                tr("collect.dialog.close.confirm.title"),
+                tr("collect.dialog.close.confirm"),
             ):
                 return
             self._closing = True

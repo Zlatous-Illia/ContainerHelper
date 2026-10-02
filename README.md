@@ -291,9 +291,9 @@ code; here are the ones people trip over first:
   silently.
 - **`setHorizontalHeaderLabels` erases the header tooltips**: always follow it
   with `set_header_tooltips(...)`.
-- **UI state is stored by name, not by number.** The active tab and the geometry
-  of chart windows go by title: a single reordering would scramble the list of
-  indices, and there would be no way to notice.
+- **UI state is stored by name, not by number.** The active tab goes by its
+  id and the geometry of chart windows by key: a single reordering would
+  scramble the list of indices, and there would be no way to notice.
 - **Logic does not raise modal windows.** Showing errors and confirmations goes
   through substitutable attributes; otherwise a test has no way to close the
   dialog.

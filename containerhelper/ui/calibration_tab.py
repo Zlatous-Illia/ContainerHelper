@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable, Sequence
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGroupBox,
@@ -32,9 +32,9 @@ from ..formatting import (
     Unit,
     fmt_bytes,
     fmt_table_cell,
-    plural,
     unit_suffix,
 )
+from ..i18n import tr, tr_n
 from ..model import MIB, VC_HEADERS_BYTES, volume_of
 from ..records import Record, factory_points, forecast, gives_metadata_point
 from .chart_window import CHART_NTFS
@@ -70,92 +70,33 @@ RECOMMENDED_MIB = (
     153600, 204800, 262144, 393216, 524288, 786432, 1048576,
 )
 
-#: Header, "column in bytes" and tooltip. The tooltip is mandatory: the header
-#: itself is short, otherwise the columns do not fit in the window.
+#: Header key, "column in bytes" and tooltip key. The tooltip is mandatory:
+#: the header itself is short, otherwise the columns do not fit in the
+#: window. An empty header stays empty.
 COLUMNS = (
-    (
-        "Размер, MiB",
-        False,
-        "Container init — число, которое вводят в VeraCrypt.",
-    ),
-    (
-        "GiB",
-        False,
-        "Тот же размер в гибибайтах — так строку проще найти глазом.",
-    ),
-    (
-        "Источник",
-        False,
-        "Откуда взяты метаданные на этом размере:\n"
-        "• «свой замер» — снят на этой машине;\n"
-        "• «заводской» — из поставки, снят на чужой;\n"
-        "• «свой, отключён» — свой есть, но считаем по заводскому;\n"
-        "• «нет замера» — размер не покрыт, модель считает его по соседям.",
-    ),
-    (
-        "Метаданные NTFS",
-        True,
-        "Сколько файловая система забирает себе на пустом томе: размер "
-        "тома минус свободное место сразу после форматирования. Эту "
-        "величину модель и предсказывает.",
-    ),
-    (
-        "",
-        False,
-        "Что можно сделать со строкой: снять свой замер, отключить его в "
-        "пользу заводского или вернуть обратно.",
-    ),
+    ("calibration.col.size", False, "calibration.col.size.tip"),
+    ("calibration.col.gib", False, "calibration.col.gib.tip"),
+    ("calibration.col.source", False, "calibration.col.source.tip"),
+    ("calibration.col.metadata", True, "calibration.col.metadata.tip"),
+    ("", False, "calibration.col.actions.tip"),
 )
 
-#: Columns of the copy-slack measurement table: header, "in bytes", tooltip.
-#: The prediction check lives here too — these measurements are the only ones
-#: whose prediction was recorded by the program itself, not by a person.
+#: Columns of the copy-slack measurement table: header key, "in bytes",
+#: tooltip key. The prediction check lives here too — these measurements are
+#: the only ones whose prediction was recorded by the program itself, not by
+#: a person.
 SLACK_COLUMNS = (
+    ("calibration.slack_col.fileset", False, "calibration.slack_col.fileset.tip"),
+    ("calibration.slack_col.files", False, "calibration.slack_col.files.tip"),
+    ("calibration.slack_col.alloc", True, "calibration.slack_col.alloc.tip"),
+    ("calibration.slack_col.slack", True, "calibration.slack_col.slack.tip"),
+    ("calibration.slack_col.miss", False, "calibration.slack_col.miss.tip"),
     (
-        "Набор",
+        "calibration.slack_col.model_miss",
         False,
-        "Из чего состоял набор файлов. Числа файлов у наборов разные "
-        "намеренно: по одному числу по-файловую часть запаса не отделить "
-        "вовсе.",
+        "calibration.slack_col.model_miss.tip",
     ),
-    (
-        "Файлов",
-        False,
-        "Сколько файлов легло на том. Именно от этого числа зависит "
-        "по-файловая часть запаса.",
-    ),
-    (
-        "По кластерам",
-        True,
-        "Сколько данные заняли бы сами по себе: каждый файл округлён вверх "
-        "до кластера. Всё, что сверх этого, и есть запас.",
-    ),
-    (
-        "Запас",
-        True,
-        "Измеренный запас на копирование: занятое на томе минус объём данных "
-        "по кластерам. Считается на лету, в файл не пишется.",
-    ),
-    (
-        "Промах",
-        False,
-        "Обещанный расчётом Container init минус тот, которого хватило бы "
-        "впритык. Плюс — перезаклад, минус — данные не влезли бы.",
-    ),
-    (
-        "Промах модели",
-        False,
-        "Тот же промах за вычетом страховки. Показывает, ошиблись ли сами "
-        "модели: близкое занижение, прикрытое страховкой, иначе выглядело бы "
-        "здоровым.",
-    ),
-    (
-        "",
-        False,
-        "Удалить замер. Числа исчезнут из файла совсем — в отличие от точек "
-        "калибровки, отключать их незачем: заводского значения на это же "
-        "число файлов может и не быть.",
-    ),
+    ("", False, "calibration.slack_col.remove.tip"),
 )
 
 #: Three row colours for four states: a disabled own measurement takes the
@@ -166,10 +107,11 @@ COLOUR_OWN = QColor("#1b7f3b")
 COLOUR_FACTORY = QColor("#8a6d1f")
 COLOUR_MISSING = QColor("#9a9a9a")
 
-SOURCE_OWN = "свой замер"
-SOURCE_FACTORY = "заводской"
-SOURCE_DISABLED = "свой, отключён"
-SOURCE_MISSING = "нет замера"
+#: Row states, as keys: translated where shown.
+SOURCE_OWN = "calibration.source.own"
+SOURCE_FACTORY = "calibration.source.factory"
+SOURCE_DISABLED = "calibration.source.disabled"
+SOURCE_MISSING = "calibration.source.missing"
 
 #: Line break in a tooltip. A constant, because the escape inside the edit
 #: templates for this file has already collapsed once.
@@ -222,67 +164,79 @@ class CalibrationTab(QWidget):
         layout.addWidget(self._build_slack_section())
         layout.addStretch(1)
 
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self._intro.setTitle(tr("calibration.intro.title"))
+        self._intro_text.setText(tr("calibration.intro.text"))
+        if self._origin is not None:
+            data = factory_data()
+            count = len(factory_points())
+            self._origin.setText(
+                tr_n(
+                    "calibration.intro.factory",
+                    count,
+                    source=data.source,
+                    note=data.note,
+                )
+            )
+
+        self.collect_button.setText(tr("calibration.collect"))
+        self.collect_button.setToolTip(tr("calibration.collect.tip"))
+        self.reset_all_button.setText(tr("calibration.reset_all"))
+        self.reset_all_button.setToolTip(tr("calibration.reset_all.tip"))
+        self.chart_button.setText(tr("calibration.chart"))
+        self.chart_button.setToolTip(tr("calibration.chart.tip"))
+
+        self.table.setToolTip(tr("calibration.table.tip"))
+        self.summary.setToolTip(tr("calibration.summary.tip"))
+        self._slack_caption.setText(tr("calibration.slack.caption"))
+        self._slack_explanation.setText(tr("calibration.slack.explanation"))
+        self.slack_summary.setToolTip(tr("calibration.slack.summary.tip"))
+        self.slack_table.setToolTip(tr("calibration.slack.table.tip"))
+        self._apply_headers()
+        self._apply_slack_headers()
+        # Cells, row buttons and summaries are built from data: the same
+        # refresh rebuilds them, and it never refits the widths from scratch.
         self.refresh()
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     # --- building ----------------------------------------------------------
 
     def _build_intro(self) -> QGroupBox:
-        group = QGroupBox("Как снять точку")
-        layout = QVBoxLayout(group)
-        text = QLabel(
-            "Вручную: создать в VeraCrypt пустой контейнер нужного размера с "
-            "NTFS и быстрым форматированием, смонтировать, нажать «Снять» в "
-            "его строке, потом размонтировать и удалить файл. Класть внутрь "
-            "ничего не нужно — метаданные зависят только от размера тома.\n"
-            "«Снять автоматически» проделывает всё это само, тем же VeraCrypt."
-        )
-        text.setWordWrap(True)
-        text.setStyleSheet("color: palette(mid);")
-        layout.addWidget(text)
+        self._intro = QGroupBox()
+        layout = QVBoxLayout(self._intro)
+        self._intro_text = QLabel()
+        self._intro_text.setWordWrap(True)
+        self._intro_text.setStyleSheet("color: palette(mid);")
+        layout.addWidget(self._intro_text)
 
-        data = factory_data()
-        count = len(factory_points())
-        if count:
-            origin = QLabel(
-                f"<b>Заводские замеры:</b> {count} "
-                f"{plural(count, 'точка', 'точки', 'точек')}, "
-                f"{data.source}. {data.note}"
-            )
-            origin.setWordWrap(True)
-            origin.setStyleSheet("color: palette(mid);")
-            layout.addWidget(origin)
-        return group
+        self._origin: QLabel | None = None
+        if factory_points():
+            self._origin = QLabel()
+            self._origin.setWordWrap(True)
+            self._origin.setStyleSheet("color: palette(mid);")
+            layout.addWidget(self._origin)
+        return self._intro
 
     def _build_actions(self) -> QWidget:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.collect_button = QPushButton("Снять автоматически…")
-        self.collect_button.setToolTip(
-            "Программа сама создаст контейнеры недостающих размеров, замерит "
-            "и удалит их. Вручную это двадцать два контейнера и целый вечер.\n"
-            "Нужен установленный VeraCrypt. Если он не в Program Files, "
-            "спросим папку."
-        )
+        self.collect_button = QPushButton()
         self.collect_button.clicked.connect(self.collectRequested.emit)
         layout.addWidget(self.collect_button)
 
-        self.reset_all_button = QPushButton("Отключить все свои замеры")
-        self.reset_all_button.setToolTip(
-            "Вернуться к заводским значениям на всех размерах. Свои замеры "
-            "останутся в файле, включить их обратно можно кнопкой в строке."
-        )
+        self.reset_all_button = QPushButton()
         self.reset_all_button.clicked.connect(self.resetAllRequested.emit)
         layout.addWidget(self.reset_all_button)
 
-        self.chart_button = QPushButton("График метаданных…")
-        self.chart_button.setToolTip(
-            "Кривая NTFS по этим замерам, промах модели проверкой исключением "
-            "и наклон каждого отрезка — в одном окне, с общей осью.\n"
-            "Окно немодальное: его можно оставить рядом и смотреть, как "
-            "меняется картинка после нового замера."
-        )
+        self.chart_button = QPushButton()
         self.chart_button.clicked.connect(
             lambda: self.chartRequested.emit(CHART_NTFS)
         )
@@ -299,22 +253,11 @@ class CalibrationTab(QWidget):
         # The row order is the size order; there is nothing to sort. The
         # buttons in the cells would not survive sorting anyway.
         setup_table(self.table, sortable=False, min_rows=6)
-        self.table.setToolTip(
-            "Покрытие размеров замерами. Строки идут по возрастанию и не "
-            "сортируются.\n"
-            "Наведите на строку — покажет размер тома, к которому привязан "
-            "замер."
-        )
-        self._apply_headers()
         return self.table
 
     def _build_summary(self) -> QLabel:
         self.summary = QLabel()
         self.summary.setWordWrap(True)
-        self.summary.setToolTip(
-            "Непокрытые размеры модель считает по соседним замерам — там она "
-            "слабее всего."
-        )
         return self.summary
 
     def _build_slack_section(self) -> QWidget:
@@ -328,27 +271,16 @@ class CalibrationTab(QWidget):
         column = QVBoxLayout(section)
         column.setContentsMargins(0, 0, 0, 0)
 
-        caption = QLabel("<b>Запас на копирование</b>")
-        column.addWidget(caption)
+        self._slack_caption = QLabel()
+        column.addWidget(self._slack_caption)
 
-        explanation = QLabel(
-            "Сколько появление файлов на томе стоит сверх их кластерного "
-            "размера. Снимается тем же «Снять автоматически…»: программа "
-            "создаёт контейнер, пишет в него сгенерированный набор и читает "
-            "остаток.\n"
-            "Наборы отличаются числом файлов намеренно — по одному числу "
-            "по-файловую часть от постоянной не отделить."
-        )
-        explanation.setWordWrap(True)
-        explanation.setStyleSheet("color: palette(mid);")
-        column.addWidget(explanation)
+        self._slack_explanation = QLabel()
+        self._slack_explanation.setWordWrap(True)
+        self._slack_explanation.setStyleSheet("color: palette(mid);")
+        column.addWidget(self._slack_explanation)
 
         self.slack_summary = QLabel()
         self.slack_summary.setWordWrap(True)
-        self.slack_summary.setToolTip(
-            "Промах считается по каждому набору отдельно: контейнер под него "
-            "программа выбирала сама, и промахнулась бы тоже сама."
-        )
         column.addWidget(self.slack_summary)
 
         self.slack_table = QTableWidget(0, len(SLACK_COLUMNS))
@@ -358,31 +290,30 @@ class CalibrationTab(QWidget):
         # The row order is the order of measuring. The buttons in the cells
         # would not survive sorting anyway.
         setup_table(self.slack_table, sortable=False, min_rows=3)
-        self.slack_table.setToolTip(
-            "Свои замеры запаса на копирование. Строки идут в порядке "
-            "снятия и не сортируются."
-        )
-        self._apply_slack_headers()
         column.addWidget(with_grip(self.slack_table))
         return section
 
     def _apply_headers(self) -> None:
         self.table.setHorizontalHeaderLabels(
             [
-                title + (unit_suffix(self._unit) if is_bytes else "")
+                (tr(title) if title else "")
+                + (unit_suffix(self._unit) if is_bytes else "")
                 for title, is_bytes, _tip in COLUMNS
             ]
         )
-        set_header_tooltips(self.table, [tip for _t, _b, tip in COLUMNS])
+        set_header_tooltips(self.table, [tr(tip) for _t, _b, tip in COLUMNS])
 
     def _apply_slack_headers(self) -> None:
         self.slack_table.setHorizontalHeaderLabels(
             [
-                title + (unit_suffix(self._unit) if is_bytes else "")
+                (tr(title) if title else "")
+                + (unit_suffix(self._unit) if is_bytes else "")
                 for title, is_bytes, _tip in SLACK_COLUMNS
             ]
         )
-        set_header_tooltips(self.slack_table, [tip for _t, _b, tip in SLACK_COLUMNS])
+        set_header_tooltips(
+            self.slack_table, [tr(tip) for _t, _b, tip in SLACK_COLUMNS]
+        )
 
     # --- refresh -----------------------------------------------------------
 
@@ -429,10 +360,10 @@ class CalibrationTab(QWidget):
             cells = (
                 fmt_bytes(size_mib),
                 f"{size_mib / 1024:g}",
-                source,
+                tr(source),
                 fmt_table_cell(ntfs, self._unit),
             )
-            tooltip = self._row_tooltip(size_mib, volume, source, record)
+            tooltip = self._row_tooltip(size_mib, volume, tr(source), record)
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if column:
@@ -502,18 +433,24 @@ class CalibrationTab(QWidget):
 
     def _slack_tooltip(self, record: Record) -> str:
         lines = [
-            f"Контейнер {fmt_bytes(record.container_mib)} MiB, ёмкость тома "
-            f"{fmt_bytes(record.mounted_bytes)} B, кластер "
-            f"{fmt_bytes(record.cluster_bytes)} B."
+            tr(
+                "calibration.slack.row.tip",
+                container=fmt_bytes(record.container_mib),
+                mounted=fmt_bytes(record.mounted_bytes),
+                cluster=fmt_bytes(record.cluster_bytes),
+            )
         ]
         if record.predicted_mib is not None:
             lines.append(
-                f"Расчёт обещал {fmt_bytes(record.predicted_mib)} MiB, из них "
-                f"{fmt_bytes(record.predicted_safety_mib or 0)} MiB страховки; "
-                f"хватило бы {fmt_bytes(record.minimum_mib)} MiB."
+                tr(
+                    "calibration.slack.row.predicted",
+                    predicted=fmt_bytes(record.predicted_mib),
+                    safety=fmt_bytes(record.predicted_safety_mib or 0),
+                    minimum=fmt_bytes(record.minimum_mib),
+                )
             )
         else:
-            lines.append("Обещания расчёта у этого замера нет — сверять не с чем.")
+            lines.append(tr("calibration.slack.row.unpredicted"))
         if record.note:
             lines.append(record.note)
         return LINE_BREAK.join(lines)
@@ -522,10 +459,8 @@ class CalibrationTab(QWidget):
         box = QWidget()
         layout = QHBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
-        button = QPushButton("Удалить")
-        button.setToolTip(
-            "Убрать этот замер. Отменить не выйдет — спросим подтверждение."
-        )
+        button = QPushButton(tr("calibration.slack.remove"))
+        button.setToolTip(tr("calibration.slack.remove.tip"))
         button.clicked.connect(
             lambda _=False, item=record: self.slackRemoveRequested.emit(item)
         )
@@ -535,37 +470,50 @@ class CalibrationTab(QWidget):
 
     def _refresh_slack_summary(self, records: Sequence[Record]) -> None:
         if not records:
-            self.slack_summary.setText(
-                "Своих замеров запаса нет. Без них по-файловая часть остаётся "
-                "предположением, и на папке из десяти тысяч файлов ошибка "
-                "переносится в результат целиком."
-            )
+            self.slack_summary.setText(tr("calibration.slack.summary.none"))
             return
         counts = sorted({record.file_count for record in records if record.file_count})
-        parts = [
-            f"Замеров: {len(records)}, различных чисел файлов: {len(counts)}"
-            + (f" (от {counts[0]} до {counts[-1]})." if counts else "."),
-        ]
+        if counts:
+            parts = [
+                tr(
+                    "calibration.slack.summary.counts_range",
+                    records=len(records),
+                    counts=len(counts),
+                    low=counts[0],
+                    high=counts[-1],
+                )
+            ]
+        else:
+            parts = [
+                tr(
+                    "calibration.slack.summary.counts",
+                    records=len(records),
+                    counts=len(counts),
+                )
+            ]
         if len(counts) < 2:
-            parts.append(
-                "Наклон считается только при двух и более различных числах "
-                "файлов — снимите ещё один набор."
-            )
+            parts.append(tr("calibration.slack.summary.slope"))
 
         report = forecast(records)
         if report.checked:
             if report.any_short:
                 parts.append(
-                    f"Расчёт занизил на {len(report.short)} из "
-                    f"{report.checked}: {', '.join(report.short)}. "
-                    f"Худший промах {report.worst_miss:+d} MiB."
+                    tr(
+                        "calibration.slack.summary.short",
+                        short=len(report.short),
+                        checked=report.checked,
+                        names=", ".join(report.short),
+                        worst=f"{report.worst_miss:+d}",
+                    )
                 )
             else:
                 parts.append(
-                    f"Прогноз проверен на {report.checked}: ни разу не "
-                    f"занизил, наименьший перезаклад {report.worst_miss:+d} "
-                    f"MiB, из него {report.worst_model_miss:+d} MiB — "
-                    f"погрешность самих моделей."
+                    tr(
+                        "calibration.slack.summary.held",
+                        checked=report.checked,
+                        worst=f"{report.worst_miss:+d}",
+                        model=f"{report.worst_model_miss:+d}",
+                    )
                 )
         self.slack_summary.setText(" ".join(parts))
 
@@ -576,13 +524,16 @@ class CalibrationTab(QWidget):
         as the key: a measurement is tied to the volume, not to Container init.
         """
         lines = [
-            f"Контейнер {fmt_bytes(size_mib)} MiB, том {fmt_bytes(volume)} B "
-            f"— заголовки VeraCrypt {fmt_bytes(VC_HEADERS_BYTES)} B уже "
-            f"вычтены.",
-            f"Состояние: {source}.",
+            tr(
+                "calibration.row.tip",
+                container=fmt_bytes(size_mib),
+                volume=fmt_bytes(volume),
+                headers=fmt_bytes(VC_HEADERS_BYTES),
+                source=source,
+            )
         ]
         if record is not None:
-            lines.append(f"Своя запись: «{record.id}».")
+            lines.append(tr("calibration.row.own", id=record.id))
         return LINE_BREAK.join(lines)
 
     def _row_button(self, size_mib: int, record, point) -> QWidget:
@@ -591,33 +542,27 @@ class CalibrationTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        take = QPushButton("Переснять" if record is not None else "Снять")
-        take.setToolTip(
-            f"Замерить пустой том контейнера на {size_mib} MiB. Класть "
-            f"внутрь ничего не нужно."
-            + ("\nПрежний замер на этом размере заменится." if record else "")
-        )
+        if record is not None:
+            take = QPushButton(tr("calibration.row.retake"))
+            take.setToolTip(tr("calibration.row.retake.tip", size=size_mib))
+        else:
+            take = QPushButton(tr("calibration.row.take"))
+            take.setToolTip(tr("calibration.row.take.tip", size=size_mib))
         take.clicked.connect(lambda _=False, mib=size_mib: self.pointRequested.emit(mib))
         layout.addWidget(take)
 
         if record is not None and point is not None:
             volume = volume_of(size_mib * MIB)
             if record.disabled:
-                restore = QPushButton("Вернуть своё")
-                restore.setToolTip(
-                    "Снова считать по своему замеру — числа всё это время "
-                    "лежали в файле."
-                )
+                restore = QPushButton(tr("calibration.row.restore"))
+                restore.setToolTip(tr("calibration.row.restore.tip"))
                 restore.clicked.connect(
                     lambda _=False, v=volume: self.disableRequested.emit(v, False)
                 )
                 layout.addWidget(restore)
             else:
-                reset = QPushButton("К заводскому")
-                reset.setToolTip(
-                    "Считать по заводскому. Свой замер останется в файле, "
-                    "вернуть его можно этой же кнопкой."
-                )
+                reset = QPushButton(tr("calibration.row.reset"))
+                reset.setToolTip(tr("calibration.row.reset.tip"))
                 reset.clicked.connect(
                     lambda _=False, v=volume: self.disableRequested.emit(v, True)
                 )
@@ -627,8 +572,10 @@ class CalibrationTab(QWidget):
     def _refresh_summary(self, counts: dict[str, int]) -> None:
         self.reset_all_button.setEnabled(counts["own"] > 0)
         self.summary.setText(
-            f"Своих замеров: {counts['own']}. "
-            f"Работает заводское: {counts['factory']}. "
-            f"Не покрыто: {counts['missing']}. "
-            f"На одном размере свой замер всегда важнее заводского."
+            tr(
+                "calibration.summary",
+                own=counts["own"],
+                factory=counts["factory"],
+                missing=counts["missing"],
+            )
         )

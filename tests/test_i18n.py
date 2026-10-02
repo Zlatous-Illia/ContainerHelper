@@ -252,6 +252,32 @@ class SourceKeyTests(unittest.TestCase):
         unused = sorted(set(strings(REFERENCE)) - used)
         self.assertEqual(unused, [])
 
+    def test_no_russian_in_the_code(self):
+        """UI text lives in the catalogs; a Russian literal in the code is a
+        string that does not switch. Docstrings are prose and are checked by
+        `test_source_language`."""
+        cyrillic = re.compile("[А-Яа-яЁё]")
+        found = []
+        for path in SOURCES:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            docstrings = {
+                id(node.body[0].value)
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+            }
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and id(node) not in docstrings
+                    and cyrillic.search(node.value)
+                ):
+                    found.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(found, [], "\n" + "\n".join(found))
+
 
 if __name__ == "__main__":
     unittest.main()

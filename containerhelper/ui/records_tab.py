@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -26,10 +26,10 @@ from ..formatting import (
     Unit,
     fmt_bytes,
     fmt_table_cell,
-    plural,
     size_label,
     unit_suffix,
 )
+from ..i18n import tr, tr_n
 from ..model import MetadataModel, Payload
 from ..records import Record, Store, StoreError, forecast, validate
 from .record_dialog import RecordDialog
@@ -54,83 +54,21 @@ COL_BYTES = "bytes"
 #: lost in the common formatting.
 COL_SIGNED = "signed"
 
-#: Title, kind and tooltip. The kind determines both the formatting and
-#: whether the chosen unit is appended to the title. The tooltip is mandatory:
-#: the titles are short out of necessity, otherwise the columns do not fit
-#: into the window.
+#: Title key, kind and tooltip key. The kind determines both the formatting
+#: and whether the chosen unit is appended to the title. The tooltip is
+#: mandatory: the titles are short out of necessity, otherwise the columns do
+#: not fit into the window. Keys, not text: the text is taken when shown.
 COLUMNS = (
-    (
-        "Имя",
-        COL_TEXT,
-        "Как запись назвали. Нужно только чтобы узнать её в проверках на "
-        "вкладке «Модель».",
-    ),
-    (
-        "Container init, MiB",
-        COL_COUNT,
-        "Размер, заданный в VeraCrypt при создании контейнера. Без "
-        "заголовков VeraCrypt это размер тома — от него и зависят "
-        "метаданные NTFS.",
-    ),
-    (
-        "Ёмкость тома",
-        COL_BYTES,
-        "Сколько показывает смонтированный том: размер тома без одного "
-        "кластера, который NTFS оставляет себе. По разнице видна опечатка "
-        "в размере контейнера.",
-    ),
-    (
-        "NTFS",
-        COL_BYTES,
-        "Размер тома (контейнер без заголовков VeraCrypt) минус свободное "
-        "место на пустом. Считается на лету, в файл не пишется.",
-    ),
-    (
-        "Откл. от базовой",
-        COL_BYTES,
-        "Насколько замер разошёлся с моделью по умолчанию (19 MiB + 0.17 % "
-        "от тома). С ней, а не с калиброванной: та проходит через свои же "
-        "точки, и отклонение всегда было бы нулём.",
-    ),
-    (
-        "Файлов",
-        COL_COUNT,
-        "Сколько файлов скопировали. Пусто — замер сделан на пустом томе.",
-    ),
-    (
-        "Остаток",
-        COL_BYTES,
-        "Свободное место после копирования, оно же Left space в VeraCrypt. "
-        "По нему калибруется запас на копирование.",
-    ),
-    (
-        "Промах, MiB",
-        COL_SIGNED,
-        "Что расчёт обещал минус то, чего хватило бы впритык. Минимум "
-        "выводится из замеренного остатка: занятое на томе плюс заголовок "
-        "VeraCrypt, округлённое вверх.\n"
-        "Плюс — перезаклад, минус — данные не влезли бы. Ради второго случая "
-        "колонка и заведена: занижение — единственная опасная сторона "
-        "расчёта.\n"
-        "Пусто — обещание не записано: заполните «Обещано расчётом» в записи "
-        "или переносите расчёт кнопкой «Взять с „Расчёта“».",
-    ),
-    (
-        "Промах модели, MiB",
-        COL_SIGNED,
-        "Тот же промах за вычетом страховки — насколько ошиблись сами "
-        "модели.\n"
-        "Без него промах неоднозначен: +5 MiB одинаково выглядят и когда "
-        "модель точна при страховке 5 MiB, и когда модель занизила на 3, а "
-        "8 MiB страховки это скрыли. Второе — предвестник аварии.",
-    ),
-    (
-        "Статус",
-        COL_TEXT,
-        "«ок» — запись годится для калибровки.\n"
-        "«ошибки» — что-то не сходится, подробности в подсказке на строке.\n"
-        "«помечена» — сохранена принудительно и в калибровку не идёт.",
-    ),
+    ("records.col.name", COL_TEXT, "records.col.name.tip"),
+    ("records.col.container", COL_COUNT, "records.col.container.tip"),
+    ("records.col.capacity", COL_BYTES, "records.col.capacity.tip"),
+    ("records.col.metadata", COL_BYTES, "records.col.metadata.tip"),
+    ("records.col.deviation", COL_BYTES, "records.col.deviation.tip"),
+    ("records.col.files", COL_COUNT, "records.col.files.tip"),
+    ("records.col.left", COL_BYTES, "records.col.left.tip"),
+    ("records.col.miss", COL_SIGNED, "records.col.miss.tip"),
+    ("records.col.model_miss", COL_SIGNED, "records.col.model_miss.tip"),
+    ("records.col.status", COL_TEXT, "records.col.status.tip"),
 )
 
 #: The role under which a row's first cell holds the record's index in the
@@ -202,35 +140,45 @@ class RecordsTab(QWidget):
         layout.addWidget(with_grip(self._build_table()))
         layout.addWidget(self._build_summary())
         layout.addStretch(1)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        """Set every static text in the current language, and rebuild the
+        table and the summary in it; sorting, selection and widths stay."""
+        self.path_caption.setText(tr("records.path"))
+        self.path_caption.setToolTip(tr("records.path.tip"))
+        self.path_label.setToolTip(tr("records.path.backup.tip"))
+        self.choose_button.setText(tr("records.choose"))
+        self.choose_button.setToolTip(tr("records.choose.tip"))
+        for button, title, tip in self._action_buttons:
+            button.setText(tr(title))
+            button.setToolTip(tr(tip))
+        self.chart_button.setText(tr("records.chart"))
+        self.chart_button.setToolTip(tr("records.chart.tip"))
+        self.table.setToolTip(tr("records.table.tip"))
+        self.summary_label.setToolTip(tr("records.summary.tip"))
+        self._apply_headers()
+        self.refresh()
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     # --- construction ------------------------------------------------------
 
     def _build_path_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        caption = QLabel("Файл записей:")
-        caption.setToolTip(
-            "Записи о копировании. Замеры пустых томов лежат рядом, в "
-            "Calibration.json: они про машину, а не про данные, и на другой "
-            "машине уже не годятся.\n"
-            "Оба файла в папке data рядом с программой — её носят целиком."
-        )
-        row.addWidget(caption)
+        self.path_caption = QLabel()
+        row.addWidget(self.path_caption)
         self.path_label = QLabel()
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.path_label.setStyleSheet("color: palette(mid);")
-        self.path_label.setToolTip(
-            "Рядом с файлом лежит одна резервная копия с расширением .bak."
-        )
         row.addWidget(self.path_label, 1)
 
-        choose = QPushButton("Выбрать…")
-        choose.setToolTip(
-            "Открыть другой файл записей или завести новый. Существующий не "
-            "перезаписывается, а читается.\n"
-            "Замеры возьмутся из Calibration.json в той же папке."
-        )
-        choose.clicked.connect(self._choose_path)
-        row.addWidget(choose)
+        self.choose_button = QPushButton()
+        self.choose_button.clicked.connect(self._choose_path)
+        row.addWidget(self.choose_button)
         return row
 
     def add_calibration_point(self, container_mib: int) -> RecordDialog:
@@ -247,7 +195,8 @@ class RecordsTab(QWidget):
         if opened is not None:
             return self._raise(opened)
         seed = Record(
-            id=f"Калибровка {size_label(container_mib)}", container_mib=container_mib
+            id=tr("collect.record.point", size=size_label(container_mib)),
+            container_mib=container_mib,
         )
         dialog = RecordDialog(seed, parent=self, calibration=True)
         # Keyed by the container size, not id(seed): the point of the window is
@@ -319,9 +268,7 @@ class RecordsTab(QWidget):
         index = self.store.index_of(record)
         if index is None:
             self.report_error(
-                "Запись не найдена",
-                f"«{record.id}» удалили, пока окно правки было открыто. "
-                f"Изменения не сохранены.",
+                tr("records.lost.title"), tr("records.lost.text", id=record.id)
             )
             return
         self.store.replace_at(index, dialog.result_record())
@@ -376,38 +323,19 @@ class RecordsTab(QWidget):
 
     def _build_buttons(self) -> QHBoxLayout:
         row = QHBoxLayout()
+        #: Button, title key, tooltip key: `retranslate` sets the text.
+        self._action_buttons: list[tuple[QPushButton, str, str]] = []
         for title, slot, tip in (
-            (
-                "Добавить…",
-                self._add,
-                "Завести запись о копировании: размер контейнера, замеры "
-                "тома и остаток после копирования.",
-            ),
-            (
-                "Изменить…",
-                self._edit,
-                "Открыть выделенную запись. То же делает двойной щелчок по "
-                "строке.",
-            ),
-            (
-                "Удалить",
-                self._delete,
-                "Убрать выделенную запись. Отменить не выйдет, поэтому "
-                "спросим подтверждение.",
-            ),
+            ("records.add", self._add, "records.add.tip"),
+            ("records.edit", self._edit, "records.edit.tip"),
+            ("records.delete", self._delete, "records.delete.tip"),
         ):
-            button = QPushButton(title)
-            button.setToolTip(tip)
+            button = QPushButton()
             button.clicked.connect(slot)
             row.addWidget(button)
+            self._action_buttons.append((button, title, tip))
 
-        self.chart_button = QPushButton("График промахов…")
-        self.chart_button.setToolTip(
-            "Обещанный размер против того, которого хватило бы впритык, с "
-            "полосой заложенной страховки.\n"
-            "Окно немодальное: его можно оставить рядом и смотреть, как "
-            "меняется картинка после нового замера."
-        )
+        self.chart_button = QPushButton()
         self.chart_button.clicked.connect(
             lambda: self.chartRequested.emit(CHART_FORECAST)
         )
@@ -424,26 +352,19 @@ class RecordsTab(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.doubleClicked.connect(self._edit)
 
-        self.table.setToolTip(
-            "Записи о копировании; замеры пустых томов живут на вкладке "
-            "«Калибровка».\n"
-            "Щелчок по заголовку сортирует: по возрастанию, по убыванию, без "
-            "сортировки. Двойной щелчок по строке открывает запись."
-        )
         setup_table(self.table)
         set_restore_order(self.table, self.refresh)
-        self._apply_headers()
         self._columns_fitted = False
         return self.table
 
     def _apply_headers(self) -> None:
         """The titles of byte columns carry the name of the chosen unit."""
         labels = [
-            title + (unit_suffix(self._unit) if kind == COL_BYTES else "")
+            tr(title) + (unit_suffix(self._unit) if kind == COL_BYTES else "")
             for title, kind, _tip in COLUMNS
         ]
         self.table.setHorizontalHeaderLabels(labels)
-        set_header_tooltips(self.table, [tip for _t, _k, tip in COLUMNS])
+        set_header_tooltips(self.table, [tr(tip) for _t, _k, tip in COLUMNS])
 
     def set_expand_tables(self, expand: bool) -> None:
         apply_table_height(self.table, expand)
@@ -458,13 +379,6 @@ class RecordsTab(QWidget):
         self.summary_label.setWordWrap(True)
         self.summary_label.setAlignment(Qt.AlignTop)
         self.summary_label.setMinimumHeight(48)
-        self.summary_label.setToolTip(
-            "Что дают моделям сами записи. Замеры пустых томов сюда не "
-            "входят — их покрытие показано на «Калибровке».\n"
-            "Запас на копирование калибруют только записи с размером данных и "
-            "остатком, а чтобы отделить по-файловую часть, нужны записи с "
-            "разным числом файлов."
-        )
         return self.summary_label
 
     # --- store -------------------------------------------------------------
@@ -474,7 +388,7 @@ class RecordsTab(QWidget):
         try:
             self.store = Store.load(path)
         except StoreError as exc:
-            self.report_error("Не удалось открыть", str(exc))
+            self.report_error(tr("records.open_failed"), str(exc))
             self.store = Store(path=Path(path))
             self.refresh()
             return False
@@ -486,7 +400,7 @@ class RecordsTab(QWidget):
             try:
                 self.store.save()
             except StoreError as exc:
-                self.report_error("Не удалось сохранить", str(exc))
+                self.report_error(tr("records.save_failed"), str(exc))
         self.refresh()
         self.recordsChanged.emit()
         return True
@@ -494,7 +408,7 @@ class RecordsTab(QWidget):
     def _choose_path(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Файл записей",
+            tr("records.file_dialog"),
             str(self.store.path),
             "JSON (*.json)",
             options=QFileDialog.DontConfirmOverwrite,
@@ -510,7 +424,7 @@ class RecordsTab(QWidget):
         try:
             self.store.save()
         except StoreError as exc:
-            self.report_error("Не удалось сохранить", str(exc))
+            self.report_error(tr("records.save_failed"), str(exc))
             return
         self.refresh()
         self.recordsChanged.emit()
@@ -561,7 +475,7 @@ class RecordsTab(QWidget):
             return
         record = self.store.records[index]
         if not self.confirm(
-            "Удалить запись", f"Удалить «{record.id}»? Действие не отменяется."
+            tr("records.delete.title"), tr("records.delete.text", id=record.id)
         ):
             return
         # This record's edit window is closed along with it: there would be
@@ -600,7 +514,11 @@ class RecordsTab(QWidget):
                     record.volume_bytes
                 )
             issues = validate(record)
-            status = "помечена" if record.flagged else ("ошибки" if issues else "ок")
+            status = tr(
+                "records.status.flagged"
+                if record.flagged
+                else ("records.status.errors" if issues else "records.status.ok")
+            )
 
             values = (
                 record.id,
@@ -618,7 +536,7 @@ class RecordsTab(QWidget):
             if issues:
                 tooltip = LINE_BREAK.join(issue.message for issue in issues)
             elif record.flagged:
-                tooltip = "Запись помечена"
+                tooltip = tr("records.row.flagged")
 
             for column, ((_, kind, _tip), value) in enumerate(zip(COLUMNS, values)):
                 if kind == COL_BYTES:
@@ -642,10 +560,7 @@ class RecordsTab(QWidget):
                 # that would not have fit must be visible without hovering.
                 if kind == COL_SIGNED and value is not None and value < 0:
                     item.setForeground(QColor("#b00020"))
-                    item.setToolTip(
-                        tooltip
-                        or "Обещанного контейнера не хватило бы для этих данных."
-                    )
+                    item.setToolTip(tooltip or tr("records.row.short"))
                 if column == 0:
                     item.setData(STORE_INDEX_ROLE, store_index)
                 self.table.setItem(row, column, item)
@@ -660,56 +575,65 @@ class RecordsTab(QWidget):
         self._refresh_summary(self.store.records)
 
     def _refresh_summary(self, records: list[Record]) -> None:
-        def _files_range(samples: list[tuple[int, int]]) -> str:
-            """Range of file counts; a single value goes without «от … до»."""
-            low = min(count for count, _ in samples)
-            high = max(count for count, _ in samples)
-            if low == high:
-                word = plural(low, "файле", "файлах", "файлах")
-                return f", все при {low} {word}."
-            return f", файлов от {low} до {high}."
-
         from ..records import metadata_points, slack_samples
 
         points = metadata_points(records)
         samples = slack_samples(records)
-        parts = [
-            f"Записей: {len(records)}.",
-            f"Точек для модели NTFS: {len(points)}"
-            + (
-                f" (тома {fmt_bytes(min(v for v, _ in points))}"
-                f"…{fmt_bytes(max(v for v, _ in points))} B)."
-                if points
-                else " — модель работает на значениях по умолчанию."
-            ),
-            f"Замеров запаса на копирование: {len(samples)}"
-            + (
-                _files_range(samples)
-                if samples
-                else " — по-файловая часть не подтверждена."
-            ),
-        ]
+        parts = [tr("records.summary.records", count=len(records))]
+        if points:
+            parts.append(
+                tr(
+                    "records.summary.points",
+                    count=len(points),
+                    low=fmt_bytes(min(v for v, _ in points)),
+                    high=fmt_bytes(max(v for v, _ in points)),
+                )
+            )
+        else:
+            parts.append(tr("records.summary.no_points", count=len(points)))
+        if not samples:
+            parts.append(tr("records.summary.no_slack", count=len(samples)))
+        else:
+            # A single file count goes without «от … до».
+            low = min(count for count, _ in samples)
+            high = max(count for count, _ in samples)
+            if low == high:
+                parts.append(
+                    tr_n("records.summary.slack_same", low, total=len(samples))
+                )
+            else:
+                parts.append(
+                    tr(
+                        "records.summary.slack_range",
+                        count=len(samples),
+                        low=low,
+                        high=high,
+                    )
+                )
 
         # Checking the prediction: the very reason the program exists. Counted
         # only over records where the prediction is recorded and the left space
         # is measured.
         report = forecast(records)
         if not report.checked:
-            parts.append(
-                "Прогноз ни на чём не проверен: ни у одной записи не заполнено "
-                "«Обещано расчётом»."
-            )
+            parts.append(tr("records.forecast.unchecked"))
         elif report.any_short:
             parts.append(
-                f"Прогноз проверен на {report.checked}: занизил на "
-                f"{len(report.short)} — {', '.join(report.short)}; худший "
-                f"промах {report.worst_miss:+d} MiB."
+                tr(
+                    "records.forecast.short",
+                    checked=report.checked,
+                    count=len(report.short),
+                    names=", ".join(report.short),
+                    worst=f"{report.worst_miss:+d}",
+                )
             )
         else:
             parts.append(
-                f"Прогноз проверен на {report.checked}: ни разу не занизил, "
-                f"наименьший перезаклад {report.worst_miss:+d} MiB "
-                f"(из него {report.worst_model_miss:+d} MiB — промах самих "
-                f"моделей, остальное страховка)."
+                tr(
+                    "records.forecast.held",
+                    checked=report.checked,
+                    worst=f"{report.worst_miss:+d}",
+                    model=f"{report.worst_model_miss:+d}",
+                )
             )
         self.summary_label.setText(" ".join(parts))

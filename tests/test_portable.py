@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 _app = QApplication.instance() or QApplication([])
 
 from containerhelper.factory import factory_data, factory_volume  # noqa: E402
+from containerhelper.i18n import catalog  # noqa: E402
 from containerhelper.model import MIB  # noqa: E402
 from containerhelper.paths import (  # noqa: E402
     CALIBRATION_NAME,
@@ -181,7 +182,7 @@ class PreferenceTests(WindowFixture):
         self.window._select_tab(TAB_CALIBRATION)
         self.window._store_preferences()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALIBRATION)
+        self.assertEqual(again.current_tab_id(), TAB_CALIBRATION)
         again.close()
 
     def test_the_tab_is_stored_by_name_not_by_number(self):
@@ -192,12 +193,12 @@ class PreferenceTests(WindowFixture):
         self.assertEqual(settings.value(ACTIVE_TAB_KEY, type=str), TAB_CALIBRATION)
 
     def test_an_old_numeric_setting_falls_back_to_the_first_tab(self):
-        """Earlier versions stored the number; "2" is not a tab title."""
+        """Earlier versions stored the number; "2" is not a tab id."""
         settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
         settings.setValue(ACTIVE_TAB_KEY, 2)
         settings.sync()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
 
     def test_an_unknown_tab_name_falls_back_too(self):
@@ -205,8 +206,20 @@ class PreferenceTests(WindowFixture):
         settings.setValue(ACTIVE_TAB_KEY, "Вкладка, которой нет")
         settings.sync()
         again = MainWindow(data_dir=self.data_dir)
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
+
+    def test_an_old_russian_title_is_migrated_to_the_id(self):
+        """Before the language switch the setting held the Russian title."""
+        settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
+        settings.setValue(ACTIVE_TAB_KEY, catalog("ru")["tab.calibration"])
+        settings.sync()
+        again = MainWindow(data_dir=self.data_dir)
+        self.assertEqual(again.current_tab_id(), TAB_CALIBRATION)
+        again._store_preferences()
+        again.close()
+        settings = QSettings(str(settings_path(self.data_dir)), QSettings.IniFormat)
+        self.assertEqual(settings.value(ACTIVE_TAB_KEY, type=str), TAB_CALIBRATION)
 
     def test_nothing_is_written_outside_the_folder(self):
         self.window._store_preferences()
@@ -227,10 +240,10 @@ class RememberTabTests(unittest.TestCase):
     def opened(self) -> MainWindow:
         return MainWindow(data_dir=self.data_dir)
 
-    def closed_on(self, title: str, remember: bool = True) -> None:
+    def closed_on(self, tab_id: str, remember: bool = True) -> None:
         window = self.opened()
         window.remember_tab.setChecked(remember)
-        window._select_tab(title)
+        window._select_tab(tab_id)
         window._store_preferences()
         window.close()
 
@@ -242,7 +255,7 @@ class RememberTabTests(unittest.TestCase):
     def test_switching_it_off_opens_the_calculation_tab(self):
         self.closed_on(TAB_CALIBRATION, remember=False)
         again = self.opened()
-        self.assertEqual(again.current_tab_title(), TAB_CALC)
+        self.assertEqual(again.current_tab_id(), TAB_CALC)
         again.close()
 
     def test_the_switch_itself_survives_a_restart(self):
@@ -272,7 +285,7 @@ class RememberTabTests(unittest.TestCase):
         back.close()
 
         again = self.opened()
-        self.assertEqual(again.current_tab_title(), TAB_RECORDS)
+        self.assertEqual(again.current_tab_id(), TAB_RECORDS)
         again.close()
 
 

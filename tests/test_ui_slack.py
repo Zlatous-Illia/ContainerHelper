@@ -24,6 +24,7 @@ QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.fileset import FILE_SETS, KIB, FileSet, Group  # noqa: E402
+from containerhelper.i18n import tr  # noqa: E402
 from containerhelper.model import MIB  # noqa: E402
 from tests.reference import HEADERS_AND_TAIL  # noqa: E402
 from containerhelper.records import Record, Store  # noqa: E402
@@ -46,9 +47,10 @@ VOLUME = 1024 * MIB - HEADERS_AND_TAIL
 
 
 def column_of(columns, title: str) -> int:
-    """Column index by header title — a tie to a number breaks silently."""
+    """Column index by header key or title — a tie to a number breaks
+    silently."""
     for index, (name, _kind, _tip) in enumerate(columns):
-        if name == title:
+        if title in (name, tr(name)):
             return index
     raise AssertionError(f"нет столбца «{title}»")
 
@@ -230,19 +232,15 @@ class CoverageTableTests(unittest.TestCase):
 
     def test_the_miss_is_shown_with_its_sign(self):
         self.put(slack_record())
-        column = column_of(SLACK_COLUMNS, "Промах")
+        column = column_of(SLACK_COLUMNS, "calibration.slack_col.miss")
         self.assertTrue(self.tab().slack_table.item(0, column).text().startswith("+"))
 
     def test_the_model_miss_takes_the_safety_out(self):
         self.put(slack_record())
-        miss = int(
-            self.tab().slack_table.item(0, column_of(SLACK_COLUMNS, "Промах")).text()
-        )
-        model_miss = int(
-            self.tab()
-            .slack_table.item(0, column_of(SLACK_COLUMNS, "Промах модели"))
-            .text()
-        )
+        miss_column = column_of(SLACK_COLUMNS, "calibration.slack_col.miss")
+        model_column = column_of(SLACK_COLUMNS, "calibration.slack_col.model_miss")
+        miss = int(self.tab().slack_table.item(0, miss_column).text())
+        model_miss = int(self.tab().slack_table.item(0, model_column).text())
         self.assertEqual(miss - model_miss, 4)
 
     def test_the_summary_says_the_forecast_held(self):

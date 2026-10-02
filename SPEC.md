@@ -1518,9 +1518,11 @@ display units and the Full-height tables and Remember tab toggles.
 
 The active tab is stored **by name, not by index**. The index changes with any
 rearrangement of the tabs, and after one the program silently opens on the
-wrong page — nothing reveals it, because it did open successfully. An unknown
-name (including an index from earlier versions) honestly falls back to the
-first tab.
+wrong page — nothing reveals it, because it did open successfully. The name is
+the tab's id (`calc`, `records`, `model`, `calibration`), not its title: the
+title changes with the language. A Russian title written by an earlier version
+is read as its id. An unknown name (including an index from earlier versions)
+honestly falls back to the first tab.
 
 The Remember tab toggle decides whether to open where the program was closed
 or always on the Calculation tab; it is on by default. While it is off, the

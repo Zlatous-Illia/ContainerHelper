@@ -6,7 +6,13 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QByteArray, QDir, QItemSelection, QItemSelectionModel
+from PySide6.QtCore import (
+    QByteArray,
+    QDir,
+    QEvent,
+    QItemSelection,
+    QItemSelectionModel,
+)
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -21,12 +27,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-HINT = (
-    "Двойной щелчок заходит в папку, «Выбрать» берёт выделенное целиком. "
-    "Мышью можно обвести рамкой, Ctrl и Shift выделяют по одному и подряд — "
-    "файлы и папки можно смешивать. "
-    "Папка внутри другой выбранной папки второй раз не считается."
-)
+from ..i18n import tr
 
 #: The views that hold files and folders: the plain list and the detail view.
 #: By name, not by going through every QAbstractItemView: the sidebar is a
@@ -93,15 +94,12 @@ class PathPicker(QFileDialog):
 
     def __init__(self, parent=None, state: PickerState | None = None) -> None:
         self._state = state or PickerState()
-        super().__init__(parent, "Выберите файлы и папки", self._state.start_directory())
+        super().__init__(parent, "", self._state.start_directory())
         # The stock ExistingFiles mode: it shows folders too (otherwise there
         # is no walking through them), and multiple selection is already set
         # up in it.
         self.setOption(QFileDialog.DontUseNativeDialog, True)
         self.setFileMode(QFileDialog.ExistingFiles)
-        self.setLabelText(QFileDialog.Accept, "Выбрать")
-        self.setLabelText(QFileDialog.Reject, "Отмена")
-        self.setLabelText(QFileDialog.FileName, "Выбрано:")
         self._chosen: list[str] = []
 
         self._views: list[QAbstractItemView] = []
@@ -143,9 +141,44 @@ class PathPicker(QFileDialog):
             self._name_edit.textEdited.connect(self._on_typed)
 
         self._hidden_action = self._find_hidden_action()
+        #: Our selection buttons with their title and tooltip keys.
+        self._buttons: list[tuple[QPushButton, str, str]] = []
+        self._hint: QLabel | None = None
         self._add_controls()
         self._add_hint()
+        self.retranslate()
         self._restore_state()
+
+    # --- language ----------------------------------------------------------
+
+    def retranslate(self) -> None:
+        """Set our own text; the dialog's stock widgets are Qt's business."""
+        self.setWindowTitle(tr("picker.title"))
+        self.setLabelText(QFileDialog.Accept, tr("picker.accept"))
+        self.setLabelText(QFileDialog.Reject, tr("picker.reject"))
+        self.setLabelText(QFileDialog.FileName, tr("picker.selected"))
+        for button, title, tip in self._buttons:
+            button.setText(tr(title))
+            button.setToolTip(tr(tip))
+        self.remember_check.setText(tr("picker.remember"))
+        self.remember_check.setToolTip(tr("picker.remember.tip"))
+        self.hidden_check.setText(tr("picker.hidden"))
+        self.hidden_check.setToolTip(tr("picker.hidden.tip"))
+        if self._hint is not None:
+            self._hint.setText(tr("picker.hint"))
+
+    def event(self, event) -> bool:
+        """Retranslate after Qt, not in `changeEvent`.
+
+        On this event the dialog's button box puts back the stock texts of its
+        buttons, and it gets the event after the dialog's `changeEvent`:
+        retranslated there, Select came back as Open. `QWidget.event` hands
+        the event to the children before it returns.
+        """
+        handled = super().event(event)
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        return handled
 
     # --- memory between showings -------------------------------------------
 
@@ -401,46 +434,21 @@ class PathPicker(QFileDialog):
 
         row = QHBoxLayout()
         for title, tip, slot in (
-            (
-                "Выделить всё",
-                "Выбрать всё в этой папке. То же делает Ctrl+A.",
-                self._select_all,
-            ),
-            (
-                "Снять выделение",
-                "Отпустить выделенное, не закрывая диалог.",
-                self._select_none,
-            ),
-            (
-                "Инвертировать",
-                "Выделить всё, кроме выделенного сейчас. Так проще взять "
-                "папку целиком без двух-трёх лишних имён.",
-                self._invert_selection,
-            ),
+            ("picker.select_all", "picker.select_all.tip", self._select_all),
+            ("picker.select_none", "picker.select_none.tip", self._select_none),
+            ("picker.invert", "picker.invert.tip", self._invert_selection),
         ):
-            button = QPushButton(title)
-            button.setToolTip(tip)
+            button = QPushButton()
             button.clicked.connect(slot)
             row.addWidget(button)
+            self._buttons.append((button, title, tip))
         row.addStretch(1)
 
-        self.remember_check = QCheckBox("Запоминать папку")
-        self.remember_check.setToolTip(
-            "Открываться там, где закрылись в прошлый раз. Выключено — "
-            "открываться на «Компьютере», списком дисков.\n"
-            "Запоминается показанная папка, а не выбранная в ней: рядом с "
-            "выбранным обычно лежит и следующее."
-        )
+        self.remember_check = QCheckBox()
         self.remember_check.setChecked(self._state.remember_dir)
         row.addWidget(self.remember_check)
 
-        self.hidden_check = QCheckBox("Показывать скрытые")
-        self.hidden_check.setToolTip(
-            "Настройку Проводника диалог не наследует, а держит свою — она "
-            "сохраняется в папке данных рядом с остальными настройками вида.\n"
-            "На расчёт не влияет: внутри выбранной папки скрытые файлы "
-            "считаются всегда, обход их не пропускает."
-        )
+        self.hidden_check = QCheckBox()
         self.hidden_check.toggled.connect(self.set_show_hidden)
         if self._hidden_action is not None:
             # The same toggle is in the list's context menu. Without this link
@@ -466,7 +474,7 @@ class PathPicker(QFileDialog):
         layout = self.layout()
         if not isinstance(layout, QGridLayout):
             return
-        hint = QLabel(HINT)
+        hint = self._hint = QLabel()
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(mid);")
         layout.addWidget(hint, layout.rowCount(), 0, 1, max(layout.columnCount(), 1))

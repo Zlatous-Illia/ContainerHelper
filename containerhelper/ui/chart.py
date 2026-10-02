@@ -13,7 +13,7 @@ nothing to notice it by.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFontMetricsF,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..formatting import DEFAULT_UNIT, Unit
+from ..i18n import tr
 from ..plot import (
     KIND_BARS,
     KIND_LINE,
@@ -79,8 +80,9 @@ DRAG_THRESHOLD = 8
 #: because the buttons sit on one line with the title and take width from it:
 #: «Отсоединить» ate a third of the title of a chart in the grid. The full
 #: phrase is in the tooltip and in the menu, where there is room to spare.
-DETACH_TEXT = "В окно"
-RETURN_TEXT = "Вернуть"
+#: Catalog keys, translated where shown.
+DETACH_TEXT = "chart.detach"
+RETURN_TEXT = "chart.return"
 
 #: Reorder buttons are arrows: the words "earlier" and "later" don't fit in the
 #: corner, and an arrow pointing where the chart will actually go explains
@@ -161,6 +163,9 @@ class ChartView(QWidget):
         #: and the menu item.
         self.detached = False
         self.detachable = False
+        #: The last `set_place` arguments: the move tooltips depend on the
+        #: layout, and a language switch has to word them again.
+        self._place: tuple[int, int, int] | None = None
 
         # Buttons, not only menu items: the menu has to be found first — by a
         # double click or the middle button — while moving and detaching a
@@ -174,7 +179,7 @@ class ChartView(QWidget):
         self.up_button = self._move_button(MOVE_UP, "up")
         self.down_button = self._move_button(MOVE_DOWN, "down")
         self.detach_button = self._corner_button(
-            DETACH_TEXT, "", self.detachRequested.emit
+            tr(DETACH_TEXT), "", self.detachRequested.emit
         )
         #: Order in the corner, left to right. Detach is rightmost: it takes
         #: the chart out of the window, while moving keeps it there.
@@ -244,6 +249,7 @@ class ChartView(QWidget):
 
         A detached chart does not move at all — it is not in the window.
         """
+        self._place = (place, count, columns)
         row_place = place % columns
         self._steps = {
             "left": -1,
@@ -260,10 +266,10 @@ class ChartView(QWidget):
             "down": place + columns < count,
         }
         wording = {
-            "left": "Поменять местами с графиком слева.",
-            "right": "Поменять местами с графиком справа.",
-            "up": "Поменять местами с графиком выше." if grid else "Переставить выше.",
-            "down": "Поменять местами с графиком ниже." if grid else "Переставить ниже.",
+            "left": "chart.move.left",
+            "right": "chart.move.right",
+            "up": "chart.move.up.grid" if grid else "chart.move.up.column",
+            "down": "chart.move.down.grid" if grid else "chart.move.down.column",
         }
         for where, button in (
             ("left", self.left_button),
@@ -276,7 +282,7 @@ class ChartView(QWidget):
             # promise a move that never happens.
             button.setVisible(movable and (grid or where in ("up", "down")))
             button.setEnabled(allowed[where])
-            button.setToolTip(wording[where])
+            button.setToolTip(tr(wording[where]))
         self._place_buttons()
         self.updateGeometry()
         self.update()
@@ -290,13 +296,9 @@ class ChartView(QWidget):
         self._refresh_button()
 
     def _refresh_button(self) -> None:
-        self.detach_button.setText(RETURN_TEXT if self.detached else DETACH_TEXT)
+        self.detach_button.setText(tr(RETURN_TEXT if self.detached else DETACH_TEXT))
         self.detach_button.setToolTip(
-            "Поставить график обратно на своё место в общем окне. То же "
-            "делает закрытие этого окна."
-            if self.detached
-            else "Показать этот график в отдельном окне. Масштаб и спрятанные "
-            "серии переезжают вместе с ним."
+            tr("chart.return.tip" if self.detached else "chart.detach.tip")
         )
         self.detach_button.setVisible(self.detachable or self.detached)
         self._place_buttons()
@@ -342,6 +344,23 @@ class ChartView(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 — Qt's name
         self._place_buttons()
         super().resizeEvent(event)
+
+    def retranslate(self) -> None:
+        """Word the corner buttons again; the painted text follows on the
+        next paint, and the menu is built anew each time anyway.
+
+        The chart itself — title, series, axes — is data: the window brings
+        a fresh one built in the new language.
+        """
+        self._refresh_button()
+        if self._place is not None:
+            self.set_place(*self._place)
+        self.update()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt's name
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     # --- content -----------------------------------------------------------
 
@@ -629,7 +648,7 @@ class ChartView(QWidget):
             painter.drawText(
                 QRectF(0, 0, self.width(), self.height()),
                 Qt.AlignCenter,
-                "Замеров пока нет — рисовать нечего.",
+                tr("chart.empty"),
             )
             return
 
@@ -988,7 +1007,7 @@ class ChartView(QWidget):
         if not self._outside:
             return
         metrics = self._metrics()
-        text = f"вне кадра: {self._outside}"
+        text = tr("chart.outside", n=self._outside)
         painter.setPen(self._ink(150))
         painter.drawText(
             QRectF(
@@ -1236,9 +1255,9 @@ class ChartView(QWidget):
         if not path:
             path, _filter = QFileDialog.getSaveFileName(
                 self,
-                "Сохранить график",
-                f"{(self._chart.title if self._chart else 'график')}.png",
-                "Картинка PNG (*.png);;Вектор SVG (*.svg);;Документ PDF (*.pdf)",
+                tr("chart.save.title"),
+                f"{(self._chart.title if self._chart else tr('chart.save.name'))}.png",
+                tr("chart.save.filter"),
             )
         if not path:
             return ""
@@ -1283,7 +1302,7 @@ class ChartView(QWidget):
     def build_menu(self) -> QMenu:
         """The chart menu. Built anew each time: the items depend on state."""
         menu = QMenu(self)
-        reset = menu.addAction("Сбросить масштаб")
+        reset = menu.addAction(tr("chart.reset"))
         reset.setEnabled(self.zoomed)
         reset.triggered.connect(self.reset_zoom)
         for where, button in (
@@ -1299,13 +1318,13 @@ class ChartView(QWidget):
             action.triggered.connect(lambda _=False, name=where: self._move(name))
         if self.detachable or self.detached:
             detach = menu.addAction(
-                "Вернуть в общее окно" if self.detached else "Отсоединить в своё окно"
+                tr("chart.menu.return" if self.detached else "chart.menu.detach")
             )
             detach.setToolTip(self.detach_button.toolTip())
             detach.triggered.connect(self.detachRequested.emit)
         menu.addSeparator()
-        menu.addAction("Копировать картинку").triggered.connect(self.copy_image)
-        menu.addAction("Сохранить картинку…").triggered.connect(lambda: self.save_image())
+        menu.addAction(tr("chart.copy")).triggered.connect(self.copy_image)
+        menu.addAction(tr("chart.save")).triggered.connect(lambda: self.save_image())
         return menu
 
     def _show_menu(self, where) -> None:

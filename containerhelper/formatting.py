@@ -55,22 +55,6 @@ def fmt_both(value_bytes: int | None) -> str:
     return f"{fmt_bytes(value_bytes)} B · {fmt_mib(value_bytes)} MiB"
 
 
-def plural(count: int, one: str, few: str, many: str) -> str:
-    """Russian noun form after a number: «1 точка, 2 точки, 5 точек».
-
-    Needed wherever a number is put into text. «23 точек» in a report reads
-    like machine translation, and it is fixed with one line.
-    """
-    if 11 <= abs(count) % 100 <= 14:
-        return many
-    tail = abs(count) % 10
-    if tail == 1:
-        return one
-    if 2 <= tail <= 4:
-        return few
-    return many
-
-
 def size_label(container_mib: int) -> str:
     """1024 → "1 GiB", 512 → "512 MiB" — the way a size is said out loud.
 

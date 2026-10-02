@@ -19,6 +19,7 @@ QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
 from containerhelper.factory import factory_data  # noqa: E402
 from containerhelper.formatting import UNIT_GIB  # noqa: E402
+from containerhelper.i18n import tr  # noqa: E402
 from containerhelper.model import MIB  # noqa: E402
 from containerhelper.records import Record  # noqa: E402
 from containerhelper.plot import (  # noqa: E402
@@ -878,10 +879,10 @@ class DetachButtonTests(unittest.TestCase):
         self.view.show()
         _app.processEvents()
         self.assertTrue(self.view.detach_button.isVisible())
-        self.assertEqual(self.view.detach_button.text(), DETACH_TEXT)
+        self.assertEqual(self.view.detach_button.text(), tr(DETACH_TEXT))
         self.assertIn("отдельном окне", self.view.detach_button.toolTip())
         self.view.set_detached(True)
-        self.assertEqual(self.view.detach_button.text(), RETURN_TEXT)
+        self.assertEqual(self.view.detach_button.text(), tr(RETURN_TEXT))
 
     def test_the_corner_leaves_the_title_its_room(self):
         """The buttons sit in the title row and take width away from the title.

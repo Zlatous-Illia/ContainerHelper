@@ -19,6 +19,7 @@ _settings_dir = tempfile.mkdtemp(prefix="containerhelper-settings-")
 QSettings.setDefaultFormat(QSettings.IniFormat)
 QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, _settings_dir)
 
+from containerhelper.i18n import tr  # noqa: E402
 from containerhelper.model import Payload, solve_container_mib  # noqa: E402
 from containerhelper.records import Record, Store  # noqa: E402
 from containerhelper.ui.app import MainWindow  # noqa: E402
@@ -34,7 +35,7 @@ def column_of(title: str) -> int:
     number breaks silently — the test keeps comparing, just the wrong thing.
     """
     for index, (name, _kind, _tip) in enumerate(COLUMNS):
-        if name == title:
+        if tr(name) == title:
             return index
     raise AssertionError(f"нет столбца «{title}»")
 

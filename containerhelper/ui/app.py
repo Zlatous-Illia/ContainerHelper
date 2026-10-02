@@ -6,7 +6,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QSettings
+from PySide6.QtCore import QByteArray, QEvent, QSettings
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from .. import charts
 from ..fileset import FILE_SETS
 from ..formatting import DEFAULT_UNIT, UNITS, unit_by_key
+from ..i18n import catalog, tr
 from ..model import CopySlackModel, MetadataModel, SafetyModel
 from ..paths import (
     DataDirError,
@@ -74,13 +75,15 @@ PICKER_WIDTH_KEY = "picker/width"
 PICKER_HEIGHT_KEY = "picker/height"
 PICKER_LAYOUT_KEY = "picker/layout"
 
-#: Tab titles. Kept in constants because the active tab's name goes into the
+#: Tab ids. Kept in constants because the active tab's name goes into the
 #: settings: the number used to go there, and one reordering of the tabs was
-#: enough for the program to start opening on the wrong page.
-TAB_CALC = "Расчёт"
-TAB_RECORDS = "Записи"
-TAB_MODEL = "Модель"
-TAB_CALIBRATION = "Калибровка"
+#: enough for the program to start opening on the wrong page. An id, not the
+#: title: the title changes with the language, and the program would open on
+#: the first tab after every switch.
+TAB_CALC = "calc"
+TAB_RECORDS = "records"
+TAB_MODEL = "model"
+TAB_CALIBRATION = "calibration"
 
 #: Where to open the program when remembering the tab is off. Calculation is
 #: what it is opened for nine times out of ten.
@@ -92,30 +95,45 @@ DEFAULT_TAB = TAB_CALC
 MIN_WINDOW_WIDTH = 720
 MIN_TAB_WIDTH = 680
 
+#: Tab title keys by id, in the order the tabs are added.
+TAB_TITLES = {
+    TAB_CALC: "tab.calc",
+    TAB_RECORDS: "tab.records",
+    TAB_MODEL: "tab.model",
+    TAB_CALIBRATION: "tab.calibration",
+}
+
 #: What each tab does. One-word titles say nothing about the order of work,
 #: nor about how Calibration differs from Records.
 TAB_TIPS = {
-    "calc": (
-        "Выбрать файлы и папки — или ввести размер руками — и получить "
-        "Container init для VeraCrypt.\n"
-        "Тут же видно, из чего это число сложилось."
-    ),
-    "records": (
-        "Записи о реальных копированиях: какой контейнер, что в него легло, "
-        "сколько осталось. По ним калибруется запас на копирование.\n"
-        "Замеры пустых томов не здесь, а на «Калибровке»."
-    ),
-    "calibration": (
-        "Покрытие размеров замерами пустых томов. Данные для такого замера "
-        "не нужны — метаданные зависят только от размера тома.\n"
-        "Сюда идут, когда расчёт помечен как экстраполяция."
-    ),
-    "model": (
-        "На чём стоят обе модели и насколько они промахиваются на своих же "
-        "замерах: каждый предсказан моделью, собранной без него.\n"
-        "Править тут нечего, это диагностика."
-    ),
+    TAB_CALC: "tab.calc.tip",
+    TAB_RECORDS: "tab.records.tip",
+    TAB_MODEL: "tab.model.tip",
+    TAB_CALIBRATION: "tab.calibration.tip",
 }
+
+#: The keys of the chart windows' titles.
+CHART_TITLES = {
+    CHART_NTFS: "app.chart.ntfs",
+    CHART_SLACK: "app.chart.slack",
+    CHART_FORECAST: "app.chart.forecast",
+    CHART_CALC: "app.chart.calc",
+}
+
+
+def stored_tab_id(stored: str) -> str:
+    """The tab id of a stored setting; an old Russian title is migrated.
+
+    Before the language switch the setting held the tab's title, and the
+    title was Russian. Compared with the Russian catalog, not with literals:
+    the catalog is where that text lives. Anything else comes back as it is
+    and, if it is no id, falls back to the default tab.
+    """
+    russian = catalog("ru")
+    for tab_id, key in TAB_TITLES.items():
+        if stored == russian.get(key):
+            return tab_id
+    return stored
 
 
 def _is_profile_point(record: Record) -> bool:
@@ -126,7 +144,6 @@ def _is_profile_point(record: Record) -> bool:
 class MainWindow(QMainWindow):
     def __init__(self, data_dir: Path | None = None) -> None:
         super().__init__()
-        self.setWindowTitle("ContainerHelper — размер контейнеров VeraCrypt")
         self.resize(880, 900)
         self.setMinimumWidth(MIN_WINDOW_WIDTH)
 
@@ -188,14 +205,16 @@ class MainWindow(QMainWindow):
         self.calibration_tab.slackRemoveRequested.connect(self._remove_slack)
 
         self.tabs = QTabWidget()
-        for tab, title, tip in (
-            (self.calc_tab, TAB_CALC, TAB_TIPS["calc"]),
-            (self.records_tab, TAB_RECORDS, TAB_TIPS["records"]),
-            (self.model_tab, TAB_MODEL, TAB_TIPS["model"]),
-            (self.calibration_tab, TAB_CALIBRATION, TAB_TIPS["calibration"]),
+        #: Tab ids by index; the titles are set in `retranslate`.
+        self._tab_ids: list[str] = []
+        for tab, tab_id in (
+            (self.calc_tab, TAB_CALC),
+            (self.records_tab, TAB_RECORDS),
+            (self.model_tab, TAB_MODEL),
+            (self.calibration_tab, TAB_CALIBRATION),
         ):
-            index = self.tabs.addTab(scrollable(tab, MIN_TAB_WIDTH), title)
-            self.tabs.setTabToolTip(index, tip)
+            self.tabs.addTab(scrollable(tab, MIN_TAB_WIDTH), "")
+            self._tab_ids.append(tab_id)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -203,6 +222,7 @@ class MainWindow(QMainWindow):
         outer.addLayout(self._build_view_row())
         outer.addWidget(self.tabs)
         self.setCentralWidget(central)
+        self.retranslate()
 
         self.records_tab.load_from(records_path(self.data_dir))
         self.model_tab.set_safety_mib(self.calc_tab.safety_spin.value())
@@ -226,12 +246,9 @@ class MainWindow(QMainWindow):
             return found
 
         QMessageBox.information(
-            self,
-            "Где хранить данные",
-            "Папка рядом с программой недоступна на запись. Выберите каталог "
-            "для записей и настроек — он запомнится для этой копии программы.",
+            self, tr("app.data_dir.title"), tr("app.data_dir.text")
         )
-        chosen = QFileDialog.getExistingDirectory(self, "Каталог данных")
+        chosen = QFileDialog.getExistingDirectory(self, tr("app.data_dir.pick"))
         target = Path(chosen) if chosen else Path.home() / "ContainerHelper"
         target.mkdir(parents=True, exist_ok=True)
         remember_data_dir(target)
@@ -268,7 +285,7 @@ class MainWindow(QMainWindow):
         store = lambda: self.records_tab.store
         return {
             CHART_NTFS: (
-                "Метаданные NTFS",
+                CHART_TITLES[CHART_NTFS],
                 (
                     # The list of recommended sizes — so that the curve can say
                     # in its caption which of them no measurement covers.
@@ -282,7 +299,7 @@ class MainWindow(QMainWindow):
                 True,
             ),
             CHART_SLACK: (
-                "Запас на копирование",
+                CHART_TITLES[CHART_SLACK],
                 (
                     lambda: charts.slack_curve(store()),
                     lambda: charts.slack_residuals(store()),
@@ -290,12 +307,12 @@ class MainWindow(QMainWindow):
                 True,
             ),
             CHART_FORECAST: (
-                "Промах прогноза",
+                CHART_TITLES[CHART_FORECAST],
                 (lambda: charts.forecast_misses(store()),),
                 False,
             ),
             CHART_CALC: (
-                "Текущий расчёт",
+                CHART_TITLES[CHART_CALC],
                 (
                     self._breakdown_chart,
                     self._cluster_chart,
@@ -308,8 +325,7 @@ class MainWindow(QMainWindow):
         solution = self.calc_tab.current_solution()
         if solution is None:
             return charts.empty_chart(
-                "Из чего сложен контейнер",
-                "Расчёт пуст: выберите источники или введите размер.",
+                tr("app.chart.breakdown.title"), tr("app.chart.breakdown.empty")
             )
         return charts.container_breakdown(solution)
 
@@ -317,8 +333,7 @@ class MainWindow(QMainWindow):
         sizes = self.calc_tab.current_file_sizes()
         if not sizes:
             return charts.empty_chart(
-                "Занятое место от размера кластера",
-                "Считается по настоящим размерам файлов — выберите источники.",
+                tr("app.chart.cluster.title"), tr("app.chart.cluster.empty")
             )
         return charts.cluster_tail(sizes, CLUSTER_CHOICES, self.calc_tab.current_cluster())
 
@@ -432,9 +447,8 @@ class MainWindow(QMainWindow):
         numbers.
         """
         if not self.confirm(
-            "Удалить замер",
-            f"Удалить «{record.id}»? Числа исчезнут из файла, "
-            f"действие не отменяется.",
+            tr("app.remove_slack.title"),
+            tr("app.remove_slack.text", name=record.id),
         ):
             return
         self.records_tab.remove_calibration(record)
@@ -472,11 +486,8 @@ class MainWindow(QMainWindow):
         if not live:
             return
         if not self.confirm(
-            "Вернуться к заводским",
-            f"Отключить свои замеры пустых томов ({len(live)} шт.) и считать "
-            f"по заводским?\n"
-            f"Числа остаются в файле — каждый можно включить обратно. Замеры "
-            f"запаса на копирование это не затронет.",
+            tr("app.reset_points.title"),
+            tr("app.reset_points.text", n=len(live)),
         ):
             return
         store.calibration = [
@@ -491,35 +502,53 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setContentsMargins(8, 6, 8, 0)
 
-        self.expand_tables = QCheckBox("Таблицы во всю высоту")
-        self.expand_tables.setToolTip(
-            "Растянуть таблицы на все строки. Вкладка станет выше окна, "
-            "появится прокрутка. Высоту каждой таблицы можно тянуть и "
-            "отдельно — за полоску под ней."
-        )
+        self.expand_tables = QCheckBox()
         self.expand_tables.toggled.connect(self._on_expand_toggled)
         row.addWidget(self.expand_tables)
 
-        self.remember_tab = QCheckBox("Запоминать вкладку")
-        self.remember_tab.setToolTip(
-            f"Открывать программу на той вкладке, где её закрыли.\n"
-            f"Выключено — программа всегда открывается на «{DEFAULT_TAB}»."
-        )
+        self.remember_tab = QCheckBox()
         self.remember_tab.toggled.connect(self._on_remember_tab_toggled)
         row.addWidget(self.remember_tab)
 
         row.addStretch(1)
-        row.addWidget(QLabel("Единицы:"))
+        self.unit_label = QLabel()
+        row.addWidget(self.unit_label)
         self.unit_combo = QComboBox()
         for unit in UNITS:
             self.unit_combo.addItem(unit.label, unit.key)
-        self.unit_combo.setToolTip(
-            "В чём показывать байтовые столбцы. На ввод, хранение и на сам "
-            "Container init не влияет."
-        )
         self.unit_combo.currentIndexChanged.connect(self._on_unit_changed)
         row.addWidget(self.unit_combo)
         return row
+
+    # --- language ----------------------------------------------------------
+
+    def retranslate(self) -> None:
+        """Set the window's own text in the current language.
+
+        The tabs retranslate themselves; the chart windows are rebuilt
+        through the usual update path, because their titles and series names
+        are made by `charts` when a chart is built.
+        """
+        self.setWindowTitle(tr("app.title"))
+        for index, tab_id in enumerate(self._tab_ids):
+            self.tabs.setTabText(index, tr(TAB_TITLES[tab_id]))
+            self.tabs.setTabToolTip(index, tr(TAB_TIPS[tab_id]))
+        self.expand_tables.setText(tr("app.expand_tables"))
+        self.expand_tables.setToolTip(tr("app.expand_tables.tip"))
+        self.remember_tab.setText(tr("app.remember_tab"))
+        self.remember_tab.setToolTip(
+            tr("app.remember_tab.tip", tab=tr(TAB_TITLES[DEFAULT_TAB]))
+        )
+        self.unit_label.setText(tr("app.units"))
+        self.unit_combo.setToolTip(tr("app.units.tip"))
+        # By index: the item data stays the unit key, and the selection holds.
+        for index, unit in enumerate(UNITS):
+            self.unit_combo.setItemText(index, unit.label)
+
+    def changeEvent(self, event) -> None:
+        if event.type() == QEvent.Type.LanguageChange:
+            self.retranslate()
+        super().changeEvent(event)
 
     def view_tabs(self):
         return (self.calc_tab, self.records_tab, self.calibration_tab, self.model_tab)
@@ -551,20 +580,20 @@ class MainWindow(QMainWindow):
     def _on_remember_tab_toggled(self, remember: bool) -> None:
         self.settings.setValue(REMEMBER_TAB_KEY, remember)
 
-    def _select_tab(self, title: str) -> None:
-        """Open a tab by name; an unknown name opens the first tab.
+    def _select_tab(self, tab_id: str) -> None:
+        """Open a tab by id; an unknown id opens the first tab.
 
         By name, not by number. The number changes with any reordering of the
         tabs, and the program then silently opens on the wrong page — with no
         way to notice, because it did open successfully. This also survives
-        the old setting that held a number: "2" matches no title and honestly
+        the old setting that held a number: "2" matches no id and honestly
         falls back to the first tab.
         """
-        titles = [self.tabs.tabText(index) for index in range(self.tabs.count())]
-        self.tabs.setCurrentIndex(titles.index(title) if title in titles else 0)
+        ids = self._tab_ids
+        self.tabs.setCurrentIndex(ids.index(tab_id) if tab_id in ids else 0)
 
-    def current_tab_title(self) -> str:
-        return self.tabs.tabText(self.tabs.currentIndex())
+    def current_tab_id(self) -> str:
+        return self._tab_ids[self.tabs.currentIndex()]
 
     # --- preferences -------------------------------------------------------
 
@@ -586,7 +615,9 @@ class MainWindow(QMainWindow):
 
         remember = self.settings.value(REMEMBER_TAB_KEY, True, type=bool)
         self.remember_tab.setChecked(remember)
-        stored = self.settings.value(ACTIVE_TAB_KEY, DEFAULT_TAB, type=str)
+        stored = stored_tab_id(
+            self.settings.value(ACTIVE_TAB_KEY, DEFAULT_TAB, type=str)
+        )
         self._select_tab(stored if remember else DEFAULT_TAB)
 
         for name, table in self.all_tables().items():
@@ -633,7 +664,7 @@ class MainWindow(QMainWindow):
         # the program opened on Calculation anyway, and writing that would wipe
         # out what was remembered without asking.
         if self.remember_tab.isChecked():
-            self.settings.setValue(ACTIVE_TAB_KEY, self.current_tab_title())
+            self.settings.setValue(ACTIVE_TAB_KEY, self.current_tab_id())
         self.settings.setValue(REMEMBER_TAB_KEY, self.remember_tab.isChecked())
         self._store_picker()
         # The chart windows' layout is stored under its own name, not by

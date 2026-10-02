@@ -8,16 +8,22 @@ Comments, docstrings, docs (`*.md`) and commit messages are **English**;
 identifiers are English. Terms come from `GLOSSARY.md` — one word per idea,
 and *copy slack* is never *safety margin*.
 
-The UI is still Russian, and its strings are moving out of the code into
-per-language catalogs (`containerhelper/locale/<code>.json`), module by
-module. A new UI string goes in as a key: `tr("records.col.metadata")`, with
-the text in `en.json` and `ru.json` both; a string not yet moved stays a
-Russian literal and is not translated in place. English prose quotes a
-Russian label only where the exact wording matters, in «guillemets».
+UI text lives in per-language catalogs
+(`containerhelper/locale/<code>.json`), not in the code. A UI string goes in
+as a key: `tr("records.col.metadata")`, with the text in `en.json` and
+`ru.json` both. English prose quotes a Russian label only where the exact
+wording matters, in «guillemets».
+
+Every window switches language live: a class that owns text sets all of it in
+`retranslate()`, which the constructor calls and `changeEvent` calls again on
+`QEvent.LanguageChange`. Text built from data is rebuilt by the same refresh
+that fills it, without touching the selection, sorting or column widths.
 
 `tests/test_i18n.py` fails on a key that is missing from a catalog or unused,
 on a key glued together (a key chosen by condition comes from a dict of
-literals), and on a `tr()` that runs at import.
+literals), on a `tr()` that runs at import, and on Cyrillic in any string of
+the code. `tests/test_ui_language.py` switches open windows to English and
+back and fails on a label that stayed behind.
 
 `tests/test_source_language.py` fails on Cyrillic in comments, docstrings or
 docs outside «…» and backticks.
@@ -195,10 +201,17 @@ measurements are in the "Charts" section of SPEC.
   entirely. The height has to be computed from the guaranteed minimum width of
   the content, not from the current one.
 - **UI state is stored by name, not by number.** The active tab is stored as
-  its title (`TAB_CALC` and its siblings), not its index: after a single
+  its id (`TAB_CALC` and its siblings), not its index: after a single
   reordering of the tabs the program would open on the wrong page, and there
-  would be nothing to notice — it did open successfully. For the same reason
-  the tests look a tab up by its title.
+  would be nothing to notice — it did open successfully. Nor as its title:
+  the title changes with the language. An old settings file holds the Russian
+  title, and `stored_tab_id` maps it back through the Russian catalog.
+- **A dialog's button box puts its stock captions back on a language
+  change**, after the dialog's own `changeEvent` has run: «Выбрать» turned
+  back into "Open", «Сохранить с пометкой» into "Save". A button with our own
+  caption is added with a role (`addButton("", AcceptRole)`), not as a
+  standard button; the file picker retranslates in `event()` after
+  `super()`, when the box has had its turn.
 - **Logic does not raise modal windows.** Showing errors and confirmations
   goes through substitutable attributes (`RecordsTab.report_error`,
   `RecordsTab.confirm`), otherwise a test has nothing to close the dialog
