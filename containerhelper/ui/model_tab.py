@@ -312,7 +312,7 @@ class ModelTab(QWidget):
         table.setRowCount(len(checks))
         for row, check in enumerate(checks):
             values = (
-                check.record.id,
+                check.record.name,
                 check.measured,
                 check.predicted,
                 check.deviation,

@@ -294,7 +294,6 @@ class FactorySlackTests(unittest.TestCase):
         volume = 1024 * MIB - HEADERS_AND_TAIL
         return FactorySample(
             fileset="small-500",
-            title="500 файлов по 1 KiB",
             container_mib=1024,
             cluster_bytes=4096,
             mounted_bytes=volume,
@@ -333,7 +332,7 @@ class FactorySlackTests(unittest.TestCase):
         self.assertEqual(record.file_count, 500)
 
     def test_the_record_names_the_set(self):
-        self.assertIn("500 файлов", factory_slack_record(self.sample()).id)
+        self.assertIn("500 файлов", factory_slack_record(self.sample()).name)
 
     def test_the_derived_slack_matches_the_sample(self):
         sample = self.sample()

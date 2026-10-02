@@ -46,6 +46,12 @@ MIN_TABLE_WIDTH = 320
 #: Height of the strip by which the table is dragged vertically.
 GRIP_HEIGHT = 7
 
+#: Room past the contents of a fitted column: the sort arrow and some air.
+HEADER_PADDING = 16
+
+#: The table property holding the header labels last given room.
+HEADER_LABELS = "header_labels"
+
 #: What a size field accepts: digits and the digit-group separators that
 #: `parse_bytes` throws away anyway. A letter, a minus or a comma in a bytes
 #: field is not "a value that failed to parse" but a slip of the finger, and
@@ -299,12 +305,18 @@ def set_table_height(table: QTableWidget, height: int) -> None:
 
 
 def set_header_tooltips(table: QTableWidget, tips) -> None:
-    """A tooltip on every column header.
+    """A tooltip on every column header, and room for the header's text.
 
     Headers are short by necessity — otherwise the columns do not fit — and
     two words do not always make clear what exactly the column holds and
     where it comes from. Call after setHorizontalHeaderLabels: it creates the
     header items anew and wipes the tooltips along with them.
+
+    New labels come with a new language or unit, after the widths were
+    fitted once: «Ёмкость, B» became "Capacité du volume, B" and showed
+    its middle. So a column whose header changed and no longer fits is
+    widened. Only widened, and only on a change: a column dragged narrower
+    than its header stays so until the header itself changes.
     """
     for column, tip in enumerate(tips):
         if column >= table.columnCount():
@@ -314,9 +326,21 @@ def set_header_tooltips(table: QTableWidget, tips) -> None:
             item = QTableWidgetItem()
             table.setHorizontalHeaderItem(column, item)
         item.setToolTip(tip)
+    header = table.horizontalHeader()
+    before = table.property(HEADER_LABELS) or []
+    labels = []
+    for column in range(header.count()):
+        item = table.horizontalHeaderItem(column)
+        labels.append(item.text() if item is not None else "")
+        if column < len(before) and before[column] == labels[column]:
+            continue
+        wanted = header.sectionSizeHint(column) + HEADER_PADDING
+        if header.sectionSize(column) < wanted:
+            header.resizeSection(column, wanted)
+    table.setProperty(HEADER_LABELS, labels)
 
 
-def fit_columns(table: QTableWidget, padding: int = 16) -> None:
+def fit_columns(table: QTableWidget, padding: int = HEADER_PADDING) -> None:
     """Fit the column widths to the contents — once, not for good.
 
     After that the width belongs to the user: resizeColumnsToContents on

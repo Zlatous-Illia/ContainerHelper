@@ -90,7 +90,7 @@ beyond their cluster-rounded size), `SafetyModel` (the safety margin),
 container size and vice versa).
 
 **`records.py`** — the store (`Store`, atomic write, a single `.bak`), JSON
-schema version 6, plausibility checks (`validate` → `Issue` with the scope
+schema version 7, plausibility checks (`validate` → `Issue` with the scope
 `metadata`/`slack`) and turning records into calibration points
 (`metadata_points`, `slack_samples`, `metadata_cross_check`) of one volume
 profile (`VolumeProfile`: filesystem plus cluster size). There are two
@@ -199,7 +199,8 @@ measurements are in the "Charts" section of SPEC.
   `fit_widget_columns`: widgets in cells (the Re-measure and Use factory
   buttons) do not exist for `resizeColumnsToContents` at all, and the column
   holding them came out at 97 px where 284 were needed. It is called on every
-  update and **only widens**.
+  update and **only widens**. So does `set_header_tooltips`, for a header
+  that a new language or unit made wider than its column.
 - **A wrapped label has to be given its height by hand.** The minimum height
   of a `QLabel` does not depend on its width, and under a scroll area the
   layout squeezes it to one line and less — the second line disappears

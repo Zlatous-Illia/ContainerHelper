@@ -87,7 +87,7 @@ class FactoryDataTests(unittest.TestCase):
     def test_the_package_carries_measurements(self):
         data = factory_data()
         self.assertGreaterEqual(len(data.points), 12)
-        self.assertTrue(data.source)
+        self.assertTrue(data.samples)
 
     def test_points_cover_one_to_a_hundred_gigabytes(self):
         sizes = {point.container_mib for point in factory_data().points}

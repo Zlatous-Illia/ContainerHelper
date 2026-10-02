@@ -53,6 +53,7 @@ from ..formatting import UNIT_AUTO, fmt_both, fmt_with_unit
 from ..i18n import tr, tr_n
 from ..model import MIB, CopySlackModel, MetadataModel, SafetyModel
 from ..paths import is_writable
+from ..records import UNREAD_VERSION
 from .language import repeated_change
 from .table import scrollable, wrapped
 from ..veracrypt import (
@@ -238,6 +239,9 @@ class CollectDialog(QDialog):
         #: the coverage table, and the Use factory button in such a row would
         #: disable the copy-slack measurement along with it.
         self._forbidden = tuple(forbidden_sizes)
+        #: The steps the scope text was last built from. Read only by the
+        #: constructor, right after retranslate built them.
+        self._scope_steps: Sequence[Step] = ()
         self._settings = settings
         self._data_dir = data_dir
         #: Set before the widgets are built: redrawing the collection scope
@@ -313,8 +317,11 @@ class CollectDialog(QDialog):
 
         self._restore_install()
         self._restore_workdir()
+        # The text half of the scope is built by retranslate, from the same
+        # steps: worked out a second time, they would cost a second pass of
+        # the models over the whole plan for nothing.
         self.retranslate()
-        self._refresh_scope()
+        self._refresh_scope_controls(self._scope_steps)
 
     def retranslate(self) -> None:
         """Set the static text in the current language and rebuild the text
@@ -732,6 +739,13 @@ class CollectDialog(QDialog):
         return steps
 
     def _refresh_scope(self) -> None:
+        steps = self.steps()
+        self._refresh_scope_text(steps)
+        self._refresh_scope_controls(steps)
+
+    def _refresh_scope_controls(self, steps: Sequence[Step]) -> None:
+        """What the scope shows and allows: the options of the chosen kinds,
+        the progress bar's length and the Start button."""
         self.ntfs_options.setVisible(self.want_ntfs.isChecked())
 
         self.want_slack.setVisible(bool(self._filesets))
@@ -739,8 +753,6 @@ class CollectDialog(QDialog):
             bool(self._filesets) and self.want_slack.isChecked()
         )
 
-        steps = self.steps()
-        self._refresh_scope_text(steps)
         self.progress.setMaximum(max(self._plan_weight(steps) // MIB, 1))
         self.progress.setValue(0)
         self.start_button.setEnabled(bool(steps) and self._supported)
@@ -748,6 +760,7 @@ class CollectDialog(QDialog):
     def _refresh_scope_text(self, steps: Sequence[Step]) -> None:
         """The scope's text alone: the radio buttons, the file set notes and
         the summary. Leaves the progress bar and the buttons as they are."""
+        self._scope_steps = steps
         missing = len([size for size in self._sizes if size not in self._covered])
         self.only_missing.setText(tr("collect.dialog.only_missing", n=missing))
         self.everything.setText(tr("collect.dialog.everything", n=len(self._sizes)))
@@ -1007,7 +1020,7 @@ class CollectDialog(QDialog):
             # The measurement goes out even when the self-check fails: it is
             # real, and the second of the pair is precisely the ordinary
             # container.
-            self.pointMeasured.emit(result.measurement.as_record(self._note()))
+            self.pointMeasured.emit(result.measurement.as_record(self._version()))
             self._measured += 1
             self._say(self._measurement_line(result))
         if result.error:
@@ -1077,11 +1090,9 @@ class CollectDialog(QDialog):
             self._thread = None
         self._worker = None
 
-    def _note(self) -> str:
+    def _version(self) -> str:
         version = self._install.version if self._install else ""
-        if version:
-            return tr("collect.dialog.note.version", version=version)
-        return tr("collect.dialog.note")
+        return version or UNREAD_VERSION
 
     def _say(self, text: str) -> None:
         self.log.appendPlainText(text)

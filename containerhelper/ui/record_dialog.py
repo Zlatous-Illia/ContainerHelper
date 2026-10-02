@@ -38,7 +38,7 @@ MAX_COUNT_CHARS = 11
 MAX_ID_CHARS = 80
 MAX_NOTE_CHARS = 400
 from ..sizes import scan_volume
-from ..records import Record, validate
+from ..records import Record, collection_note, generated_name, validate
 from .calc_tab import CLUSTER_CHOICES
 from .language import repeated_change
 from .measure_dialog import MeasureDialog
@@ -116,7 +116,6 @@ class RecordDialog(QDialog):
         self._derived_group.setTitle(tr("record.group.derived"))
         for label, key in self._row_labels:
             label.setText(tr(key))
-        self.id_edit.setPlaceholderText(tr("record.id.placeholder"))
         for edit in self._number_edits:
             edit.setPlaceholderText(tr("record.unset"))
         for button, key in (
@@ -546,9 +545,22 @@ class RecordDialog(QDialog):
         self.consumed_label.setText(fmt_both(record.consumed_bytes))
         self.slack_label.setText(fmt_both(record.copy_slack_measured))
         self._refresh_forecast(record)
+        # A collected record goes by a name built from its data, and so does a
+        # new calibration point: the field stays empty and shows that name,
+        # which follows the size and the language. Typed in, a name is kept.
+        # Only such a record: a blank ordinary one is an empty volume too, and
+        # would go nameless into the records as "Calibration 1 GiB".
+        generated = (
+            generated_name(record)
+            if self._calibration or record.fileset or record.veracrypt
+            else ""
+        )
+        self.id_edit.setPlaceholderText(generated or tr("record.id.placeholder"))
+        self.note_edit.setPlaceholderText(collection_note(record.veracrypt))
+        named = bool(record.id or generated)
 
         issues = validate(record)
-        if not record.id:
+        if not named:
             self.issues_label.setText(f"<i>{tr('record.no_name')}</i>")
         elif issues:
             body = "<br>".join(f"⚠ {issue.message}" for issue in issues)
@@ -557,7 +569,7 @@ class RecordDialog(QDialog):
             self.issues_label.setText("")
         self._notice = None
 
-        self.save_button.setEnabled(bool(record.id))
+        self.save_button.setEnabled(named)
         self.save_button.setText(
             tr("record.save.flagged") if issues else tr("record.save")
         )

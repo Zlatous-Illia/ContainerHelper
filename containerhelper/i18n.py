@@ -26,7 +26,7 @@ LOCALE_PACKAGE = "containerhelper.locale"
 REFERENCE = "en"
 
 #: Shipped languages, in the order of the language list.
-LANGUAGES = ("ru", "en")
+LANGUAGES = ("ru", "en", "zh_CN", "es", "fr", "de")
 
 #: Key of the catalog's own description; never a UI string.
 META = "_meta"
@@ -163,9 +163,18 @@ def _fill(text: str, params: dict) -> str:
         return text
 
 
-def tr(key: str, **params) -> str:
+def tr(key: str, /, **params) -> str:
     """The text of a key in the current language, with `{name}` filled in."""
-    for code in (_current, REFERENCE):
+    return tr_in(_current, key, **params)
+
+
+def tr_in(language: str, key: str, /, **params) -> str:
+    """The text of a key in the given language, falling back to English.
+
+    For recognising text written to a file in whatever language the UI spoke
+    then; what is shown goes through `tr`.
+    """
+    for code in (language, REFERENCE):
         value = catalog(code).get(key)
         if isinstance(value, str):
             return _fill(value, params)

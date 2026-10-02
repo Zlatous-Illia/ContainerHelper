@@ -478,7 +478,7 @@ class MainWindow(QMainWindow):
         """
         if not self.confirm(
             tr("app.remove_slack.title"),
-            tr("app.remove_slack.text", name=record.id),
+            tr("app.remove_slack.text", name=record.name),
         ):
             return
         self.records_tab.remove_calibration(record)
@@ -595,6 +595,10 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.Type.LanguageChange:
+            # The safety advice names the records near it, and a factory
+            # record's name is made when the model is built: built again
+            # here, before the tabs hear the event and explain the advice.
+            self._safety = self.records_tab.store.safety()
             self.retranslate()
         super().changeEvent(event)
 

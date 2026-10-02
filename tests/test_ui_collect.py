@@ -296,7 +296,8 @@ class RunTests(DialogFixture):
         dialog._start()
         self.drain(dialog)
 
-        self.assertIn("Автоматический сбор", measured[0].note)
+        self.assertIn("Автоматический сбор", measured[0].shown_note)
+        self.assertEqual(measured[0].note, "")
 
     def test_buttons_come_back_after_the_run(self):
         dialog = self.running_dialog()

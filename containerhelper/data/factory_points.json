@@ -1,6 +1,6 @@
 {
-  "source": "Windows 10 Pro 19045, VeraCrypt, NTFS, кластер 4096",
-  "note": "Замеры пустых контейнеров на одной машине. До 100 GiB — обычные контейнеры, от 512 MiB и выше 100 GiB — динамические с быстрым форматированием: на перекрывающихся размерах те и другие совпали, разреженность файла-контейнера видна хосту, а не файловой системе внутри тома. Размер метаданных решает код форматирования: другая сборка Windows или версия VeraCrypt могли выбрать другой $LogFile. Свой замер на тот же размер всегда вытесняет заводской. Четыре размера — 768, 1536, 3072 и 6144 MiB — сняты позже автоматическим сбором и добавлены сюда: с ними точка есть на каждую строку таблицы рекомендуемых размеров, а между 512 MiB и 8 GiB кривая перестала опираться на редкие отсчёты — именно там у неё лестница.",
+  "source": "Windows 10 Pro 19045, VeraCrypt, NTFS, cluster 4096",
+  "note": "Empty containers measured on one machine. Up to 100 GiB, ordinary containers; from 512 MiB, and above 100 GiB, dynamic ones with quick format: on the overlapping sizes the two agreed, because the sparseness of the container file is seen by the host, not by the filesystem inside the volume. The size of the metadata is decided by the formatting code: another Windows build or VeraCrypt version could have chosen a different $LogFile. An own measurement of the same size always supersedes the factory one. Four sizes — 768, 1536, 3072 and 6144 MiB — were taken later by automatic collection and added here: with them every row of the recommended sizes table has a point, and between 512 MiB and 8 GiB the curve no longer rests on sparse samples — that is exactly where it has its staircase.",
   "points": [
     {
       "container_mib": 512,

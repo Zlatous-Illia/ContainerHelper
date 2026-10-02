@@ -14,6 +14,7 @@ from containerhelper.collect import (
     plan,
     self_check_verdict,
 )
+from containerhelper.i18n import set_language
 from containerhelper.model import MIB
 from containerhelper.veracrypt import (
     VeraCrypt,
@@ -117,15 +118,30 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(stored["filesystem"], "NTFS")
 
     def test_the_record_is_named_like_a_hand_made_one(self):
-        self.assertEqual(measurement(1024, 1).as_record().id, "Калибровка 1 GiB")
-        self.assertEqual(measurement(512, 1).as_record().id, "Калибровка 512 MiB")
+        self.assertEqual(measurement(1024, 1).as_record().name, "Калибровка 1 GiB")
+        self.assertEqual(measurement(512, 1).as_record().name, "Калибровка 512 MiB")
+
+    def test_the_name_is_not_written(self):
+        """Built when shown, so it switches with the language (decision 9)."""
+        record = measurement(1024, 1).as_record()
+        self.assertEqual(record.id, "")
+        self.assertEqual(record.to_json()["id"], "")
+        set_language("en")
+        try:
+            self.assertEqual(record.name, "Calibration 1 GiB")
+        finally:
+            set_language("ru")
 
     def test_it_counts_as_a_calibration_point(self):
         self.assertTrue(measurement(1024, 1).as_record().is_calibration_point)
 
-    def test_the_note_travels_into_the_record(self):
-        record = measurement(1024, 1).as_record("Автоматический сбор, VeraCrypt 1.26")
-        self.assertIn("VeraCrypt", record.note)
+    def test_the_version_travels_into_the_record(self):
+        """As a fact, not as text: the note is built from it when shown."""
+        record = measurement(1024, 1).as_record("1.26.24")
+        self.assertEqual(record.veracrypt, "1.26.24")
+        self.assertEqual(record.note, "")
+        self.assertEqual(record.to_json()["veracrypt"], "1.26.24")
+        self.assertEqual(record.shown_note, "Автоматический сбор, VeraCrypt 1.26.24")
 
 
 class Fixture(unittest.TestCase):

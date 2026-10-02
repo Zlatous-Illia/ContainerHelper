@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -19,7 +20,8 @@ from typing import Any, Iterable, Sequence
 
 from .factory import FactoryPoint, FactorySample, factory_data
 from .fileset import FILE_SETS
-from .i18n import tr
+from .formatting import size_label
+from .i18n import LANGUAGES, catalog, current, tr, tr_in
 from .paths import CALIBRATION_NAME
 from .sizes import SUPPORTED_FS
 from .model import (
@@ -38,16 +40,28 @@ from .model import (
     volume_of,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 #: Schema 1 did not know file_alloc_bytes, schema 2 did not know filesystem,
 #: schema 3 did not know the calibration key, schema 4 kept that key in one
-#: file with the records, schema 5 left filesystem out when it was not read.
-#: All of them are still read: a missing field means exactly the old
-#: behaviour — a missing filesystem is NTFS — and empty-volume measurements
-#: move on read first from records to calibration, and from there to their
-#: own file. The new version is always what gets written.
-SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5, 6)
+#: file with the records, schema 5 left filesystem out when it was not read,
+#: schema 6 wrote the names and notes of collected records as text in the
+#: language of the moment. All of them are still read: a missing field means
+#: exactly the old behaviour — a missing filesystem is NTFS — empty-volume
+#: measurements move on read first from records to calibration, and from
+#: there to their own file, and a written name that a collected record would
+#: be given anyway is forgotten (`_forget_generated`). The new version is
+#: always what gets written.
+SUPPORTED_SCHEMAS = (1, 2, 3, 4, 5, 6, 7)
+
+#: `Record.veracrypt` of a collection whose VeraCrypt version could not be
+#: read: collection still runs then, and the record still has to say where
+#: its numbers came from.
+UNREAD_VERSION = "?"
+
+#: What a version in an old collection note looks like: "1.26.24", "1.24a".
+#: Anything else after "VeraCrypt" is a person's own words.
+VERSION_SHAPE = re.compile(r"\d+(\.\d+)*[a-z]?")
 
 #: Plausibility bounds for NTFS metadata. The lower one catches lost digits
 #: (Cache 2 has 36 573 written instead of 36 573 184). The upper one grows
@@ -186,6 +200,10 @@ class Record:
     #: machine, not the user's data, and on another machine it has to be
     #: rebuilt.
     fileset: str = ""
+    #: VeraCrypt version that made the measurement, if automatic collection
+    #: did. A fact about the machine, not text: the note "Automatic
+    #: collection, VeraCrypt …" is built from it when shown (`shown_note`).
+    veracrypt: str = ""
 
     def __post_init__(self) -> None:
         if not self.created:
@@ -233,6 +251,21 @@ class Record:
         if self.empty_free_bytes is None or self.left_bytes is None:
             return None
         return self.empty_free_bytes - self.left_bytes
+
+    @property
+    def name(self) -> str:
+        """The name as shown: the one given, or one built from the data.
+
+        Collection does not write a name. "Calibration 1 GiB" and "Copy slack
+        500 files of 1 KiB" say nothing the record itself does not, and
+        written down they would stay in the language they were written in.
+        """
+        return self.id or generated_name(self)
+
+    @property
+    def shown_note(self) -> str:
+        """The note as shown: the one given, or the collection's own."""
+        return self.note or collection_note(self.veracrypt)
 
     @property
     def is_calibration_point(self) -> bool:
@@ -347,6 +380,8 @@ class Record:
             data["fileset"] = self.fileset
         if self.note:
             data["note"] = self.note
+        if self.veracrypt:
+            data["veracrypt"] = self.veracrypt
         if self.flagged:
             data["flagged"] = True
         if self.disabled:
@@ -355,7 +390,7 @@ class Record:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "Record":
-        return cls(
+        return _forget_generated(cls(
             id=str(data.get("id", "")),
             created=str(data.get("created", "")),
             container_mib=int(data["container_mib"]),
@@ -373,7 +408,70 @@ class Record:
             predicted_mib=_opt_int(data.get("predicted_mib")),
             predicted_safety_mib=_opt_int(data.get("predicted_safety_mib")),
             fileset=str(data.get("fileset", "")),
-        )
+            veracrypt=str(data.get("veracrypt", "")),
+        ))
+
+
+def collection_note(veracrypt: str) -> str:
+    """The note of a record collected by this VeraCrypt version; empty for a
+    record collection did not make."""
+    if not veracrypt:
+        return ""
+    if veracrypt == UNREAD_VERSION:
+        return tr("collect.dialog.note")
+    return tr("collect.dialog.note.version", version=veracrypt)
+
+
+def generated_name(record: Record, language: str | None = None) -> str:
+    """The name a collected record goes by; empty for any other record.
+
+    In the current language, or in the given one when recognising a name
+    written by an older version.
+    """
+    language = language or current()
+    if record.fileset:
+        titles = {item.key: item.title for item in FILE_SETS}
+        title = titles.get(record.fileset)
+        fileset = tr_in(language, title) if title else record.fileset
+        return tr_in(language, "collect.record.slack", fileset=fileset)
+    if record.is_calibration_point:
+        size = size_label(record.container_mib)
+        return tr_in(language, "collect.record.point", size=size)
+    return ""
+
+
+def _forget_generated(record: Record) -> Record:
+    """Drop the name and note that schema 6 wrote as text.
+
+    Only what collection itself would write, in any shipped language: a name
+    a person gave stays. The note "Automatic collection, VeraCrypt 1.26.24"
+    gives back its version, and the text is built again when shown.
+    """
+    if record.id and record.id in {
+        generated_name(record, code) for code in LANGUAGES
+    }:
+        record.id = ""
+    if not record.note:
+        return record
+    for code in LANGUAGES:
+        if record.note == tr_in(code, "collect.dialog.note"):
+            record.note = ""
+            record.veracrypt = record.veracrypt or UNREAD_VERSION
+            break
+        template = catalog(code).get("collect.dialog.note.version")
+        if not isinstance(template, str) or "{version}" not in template:
+            continue
+        head, _, tail = template.partition("{version}")
+        version = record.note[len(head) : len(record.note) - len(tail)]
+        if (
+            record.note.startswith(head)
+            and record.note.endswith(tail)
+            and VERSION_SHAPE.fullmatch(version)
+        ):
+            record.note = ""
+            record.veracrypt = record.veracrypt or version
+            break
+    return record
 
 
 def _opt_int(value: Any) -> int | None:
@@ -677,12 +775,12 @@ def build_safety(
     """
     checks = metadata_cross_check(records, profile)
     deviations = [
-        (check.record.volume_bytes, check.deviation, check.record.id)
+        (check.record.volume_bytes, check.deviation, check.record.name)
         for check in checks
         if check.record.mounted_bytes
     ]
     slack_deviations = [
-        (check.record.file_count or 1, check.deviation, check.record.id)
+        (check.record.file_count or 1, check.deviation, check.record.name)
         for check in slack_cross_check(records, profile)
     ]
     return SafetyModel(
@@ -798,11 +896,9 @@ def factory_slack_record(sample: FactorySample) -> Record:
     so it is also an NTFS point. That is by design — the measurement was
     taken on a real volume, and throwing away its metadata would be wasteful.
     """
-    # The file's title is Russian data; a known file set speaks the current
-    # language instead.
     titles = {item.key: item.title for item in FILE_SETS}
     known = titles.get(sample.fileset)
-    title = tr(known) if known else sample.title or sample.fileset
+    title = tr(known) if known else sample.fileset
     return Record(
         id=tr("records.factory_slack.id", title=title).strip(),
         created="",
@@ -861,7 +957,7 @@ def forecast(records: Iterable[Record]) -> Forecast:
         checked=len(checked),
         worst_miss=min(record.miss_mib for record in checked),
         worst_model_miss=min(record.model_miss_mib for record in checked),
-        short=tuple(record.id for record in checked if record.miss_mib < 0),
+        short=tuple(record.name for record in checked if record.miss_mib < 0),
     )
 
 

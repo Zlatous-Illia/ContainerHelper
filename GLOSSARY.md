@@ -156,7 +156,7 @@ its English term.
 | view row | «строка вида» | The row of view options under the tabs. |
 | file and folder picker | «диалог выбора файлов и папок» | `ui/path_picker.py`. Short: *picker*. |
 | "Selected" line | «Выбрано» | The picker's selection field. |
-| My Computer | «Компьютер» | Qt's list of drives; Qt's own English label on Windows. |
+| My Computer | «Мой компьютер» | Qt's list of drives, named by Qt's own catalog; a tooltip quotes Qt's label for the language. |
 | edit window | «окно правки» | |
 | check box; toggle | «галочка»; «переключатель» | |
 | scroll area | «прокрутка» | |

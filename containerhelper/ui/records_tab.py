@@ -26,7 +26,6 @@ from ..formatting import (
     Unit,
     fmt_bytes,
     fmt_table_cell,
-    size_label,
     unit_suffix,
 )
 from ..i18n import tr, tr_n
@@ -184,8 +183,9 @@ class RecordsTab(QWidget):
     def add_calibration_point(self, container_mib: int) -> RecordDialog:
         """Create a calibration point for the given size.
 
-        The name is filled in, and so is the size — all that is needed from the
-        user is the measurement of the mounted empty volume.
+        The size is filled in and the name is left to the record, which builds
+        it from the size when shown — all that is needed from the user is the
+        measurement of the mounted empty volume.
 
         The window is modeless, as for an ordinary record: the measurement is
         taken while looking at the mounted volume and at the Calculation tab,
@@ -194,10 +194,7 @@ class RecordsTab(QWidget):
         opened = self._points.get(container_mib)
         if opened is not None:
             return self._raise(opened)
-        seed = Record(
-            id=tr("collect.record.point", size=size_label(container_mib)),
-            container_mib=container_mib,
-        )
+        seed = Record(id="", container_mib=container_mib)
         dialog = RecordDialog(seed, parent=self, calibration=True)
         # Keyed by the container size, not id(seed): the point of the window is
         # which size it measures, and a second window for the same size would
@@ -268,7 +265,7 @@ class RecordsTab(QWidget):
         index = self.store.index_of(record)
         if index is None:
             self.report_error(
-                tr("records.lost.title"), tr("records.lost.text", id=record.id)
+                tr("records.lost.title"), tr("records.lost.text", id=record.name)
             )
             return
         self.store.replace_at(index, dialog.result_record())
@@ -475,7 +472,7 @@ class RecordsTab(QWidget):
             return
         record = self.store.records[index]
         if not self.confirm(
-            tr("records.delete.title"), tr("records.delete.text", id=record.id)
+            tr("records.delete.title"), tr("records.delete.text", id=record.name)
         ):
             return
         # This record's edit window is closed along with it: there would be
@@ -521,7 +518,7 @@ class RecordsTab(QWidget):
             )
 
             values = (
-                record.id,
+                record.name,
                 record.container_mib,
                 record.mounted_bytes,
                 record.metadata_bytes,

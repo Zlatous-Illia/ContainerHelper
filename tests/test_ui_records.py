@@ -362,6 +362,21 @@ class ModelessDialogTests(unittest.TestCase):
         volumes = [item.mounted_bytes for item in self.tab.store.calibration]
         self.assertIn(1073475584, volumes)
 
+    def test_a_new_calibration_point_is_named_by_its_size(self):
+        """The name is shown, not written: it follows the size and the
+        language, and the field is left for a name a person wants instead."""
+        dialog = self.tab.add_calibration_point(1024)
+        self.assertEqual(dialog.id_edit.text(), "")
+        self.assertEqual(dialog.id_edit.placeholderText(), "Калибровка 1 GiB")
+        dialog.mounted_edit.setText("1073475584")
+        dialog.free_edit.setText("1055596544")
+        dialog.save_button.click()
+        saved = next(
+            item for item in self.tab.store.calibration
+            if item.mounted_bytes == 1073475584
+        )
+        self.assertEqual((saved.id, saved.name), ("", "Калибровка 1 GiB"))
+
 
 class FieldValidationTests(unittest.TestCase):
     """A letter in a byte field is a slipped key, not an unparsable value."""
