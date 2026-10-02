@@ -6,9 +6,11 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from containerhelper.i18n import set_language
 from containerhelper.model import MIB, VC_HEADERS_BYTES
 from containerhelper.records import (
     SCHEMA_VERSION,
+    UNREAD_VERSION,
     SCOPE_METADATA,
     SCOPE_SLACK,
     Record,
@@ -391,6 +393,100 @@ class SchemaCompatibilityTests(unittest.TestCase):
         """Schema rule: only what was measured goes into the file."""
         payload = Record(id="one", container_mib=1024, file_bytes=10_000).to_json()
         self.assertNotIn("file_alloc_bytes", payload)
+
+
+class GeneratedNameTests(unittest.TestCase):
+    """Schema 6 wrote the names and notes of collected records as text, in
+    the language of the moment; schema 7 builds them when shown."""
+
+    def point(self, **fields):
+        data = {"id": "", "container_mib": 1024, "mounted_bytes": 1073475584,
+                "empty_free_bytes": 1055596544, "schema": 6}
+        data.update(fields)
+        return Record.from_json(data)
+
+    def sample(self, **fields):
+        return self.point(fileset="small-500", file_bytes=500 * 1024,
+                          file_count=500, left_bytes=1000 * MIB, **fields)
+
+    def tearDown(self):
+        set_language("ru")
+
+    def test_a_written_name_in_any_language_is_forgotten(self):
+        for name in ("Калибровка 1 GiB", "Calibration 1 GiB"):
+            with self.subTest(name):
+                record = self.point(id=name)
+                self.assertEqual(record.id, "")
+                self.assertEqual(record.name, "Калибровка 1 GiB")
+
+    def test_a_file_set_name_is_forgotten_too(self):
+        record = self.sample(id="Запас 500 файлов по 1 KiB")
+        self.assertEqual(record.id, "")
+        set_language("en")
+        self.assertEqual(record.name, "Copy slack 500 files of 1 KiB")
+
+    def test_an_english_file_set_name_is_forgotten(self):
+        self.assertEqual(self.sample(id="Copy slack 500 files of 1 KiB").id, "")
+
+    def test_an_unknown_file_set_keeps_its_name(self):
+        """No title to build a name from: what was written is all there is."""
+        record = self.point(id="Запас x", fileset="gone", file_bytes=1,
+                            file_count=1, left_bytes=1)
+        self.assertEqual(record.id, "Запас x")
+
+    def test_a_name_a_person_gave_stays(self):
+        """Including one that names another size: it is not this record's."""
+        for name in ("Мой замер", "Калибровка 2 GiB"):
+            with self.subTest(name):
+                self.assertEqual(self.point(id=name).id, name)
+
+    def test_a_copy_has_no_generated_name(self):
+        record = Record(id="", container_mib=1024, file_bytes=1, left_bytes=1)
+        self.assertEqual(record.name, "")
+
+    def test_the_collection_note_gives_back_its_version(self):
+        record = self.point(note="Автоматический сбор, VeraCrypt 1.26.24")
+        self.assertEqual((record.note, record.veracrypt), ("", "1.26.24"))
+        set_language("en")
+        self.assertEqual(record.shown_note, "Automatic collection, VeraCrypt 1.26.24")
+
+    def test_a_note_without_a_version_still_says_collection(self):
+        record = self.point(note="Automatic collection")
+        self.assertEqual((record.note, record.veracrypt), ("", UNREAD_VERSION))
+        self.assertEqual(record.shown_note, "Автоматический сбор")
+
+    def test_a_note_a_person_wrote_stays(self):
+        for note in ("Автоматический сбор, VeraCrypt 1.26.24 и ещё руками",
+                     "Automatic collection, VeraCrypt broke",
+                     "Снято на ноутбуке"):
+            with self.subTest(note):
+                record = self.point(note=note)
+                self.assertEqual((record.note, record.veracrypt), (note, ""))
+
+    def test_a_schema_6_store_is_written_back_as_7(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "Records.json"
+            path.write_text(json.dumps({"schema": 6, "records": []}), encoding="utf-8")
+            calibration = Path(folder) / "Calibration.json"
+            calibration.write_text(json.dumps({"schema": 6, "calibration": [{
+                "id": "Калибровка 1 GiB", "container_mib": 1024,
+                "mounted_bytes": 1073475584, "empty_free_bytes": 1055596544,
+                "note": "Автоматический сбор, VeraCrypt 1.26.24",
+            }]}), encoding="utf-8")
+            Store.load(path).save()
+            raw = json.loads(calibration.read_text(encoding="utf-8"))
+        self.assertEqual(raw["schema"], SCHEMA_VERSION)
+        stored = raw["calibration"][0]
+        self.assertEqual((stored["id"], stored["veracrypt"]), ("", "1.26.24"))
+        self.assertNotIn("note", stored)
+
+    def test_neither_is_written_back(self):
+        stored = self.point(
+            id="Калибровка 1 GiB", note="Автоматический сбор, VeraCrypt 1.26.24"
+        ).to_json()
+        self.assertEqual(stored["id"], "")
+        self.assertNotIn("note", stored)
+        self.assertEqual(stored["veracrypt"], "1.26.24")
 
 
 if __name__ == "__main__":

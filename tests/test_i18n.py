@@ -151,6 +151,13 @@ class LookupTests(unittest.TestCase):
             self.assertEqual(tr("b", y=1), "{x} 1")
             self.assertEqual(tr("b"), "{{x}} {y}")
 
+    def test_a_given_language_needs_no_switch(self):
+        """`tr_in` reads written text back; the current language stays."""
+        self.assertEqual(i18n.tr_in("ru", "n.missing"), "n.missing")
+        self.assertEqual(i18n.tr_in("xx", "a", x=2), "A 2")
+        self.assertEqual(i18n.tr_in("en", "a", key=1, x=3), "A 3")
+        self.assertEqual(i18n.current(), "ru")
+
     def test_unknown_key_shows_itself(self):
         self.assertEqual(tr("nowhere"), "nowhere")
         self.assertEqual(tr_n("nowhere", 3), "nowhere")

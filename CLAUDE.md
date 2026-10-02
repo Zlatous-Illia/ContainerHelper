@@ -90,7 +90,7 @@ beyond their cluster-rounded size), `SafetyModel` (the safety margin),
 container size and vice versa).
 
 **`records.py`** — the store (`Store`, atomic write, a single `.bak`), JSON
-schema version 6, plausibility checks (`validate` → `Issue` with the scope
+schema version 7, plausibility checks (`validate` → `Issue` with the scope
 `metadata`/`slack`) and turning records into calibration points
 (`metadata_points`, `slack_samples`, `metadata_cross_check`) of one volume
 profile (`VolumeProfile`: filesystem plus cluster size). There are two

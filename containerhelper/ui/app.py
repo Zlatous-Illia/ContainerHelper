@@ -478,7 +478,7 @@ class MainWindow(QMainWindow):
         """
         if not self.confirm(
             tr("app.remove_slack.title"),
-            tr("app.remove_slack.text", name=record.id),
+            tr("app.remove_slack.text", name=record.name),
         ):
             return
         self.records_tab.remove_calibration(record)

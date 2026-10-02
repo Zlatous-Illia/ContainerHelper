@@ -243,8 +243,6 @@ class Measurement:
     cluster_bytes: int
     filesystem: str
     fileset: str = ""
-    #: A catalog key, as FileSet.title.
-    fileset_title: str = ""
     file_bytes: int | None = None
     file_count: int | None = None
     file_alloc_bytes: int | None = None
@@ -263,18 +261,15 @@ class Measurement:
             return None
         return (self.empty_free_bytes - self.left_bytes) - self.file_alloc_bytes
 
-    def as_record(self, note: str = "") -> Record:
+    def as_record(self, veracrypt: str = "") -> Record:
         """The measurement as a record.
 
-        What is computable is not written, same as everywhere else.
+        What is computable is not written, same as everywhere else — the name
+        and the note included: both are built from the record when shown
+        (`Record.name`, `Record.shown_note`), in the language of the moment.
         """
-        title = (
-            tr("collect.record.slack", fileset=tr(self.fileset_title))
-            if self.fileset
-            else tr("collect.record.point", size=size_label(self.container_mib))
-        )
         return Record(
-            id=title,
+            id="",
             container_mib=self.container_mib,
             cluster_bytes=self.cluster_bytes,
             mounted_bytes=self.mounted_bytes,
@@ -284,7 +279,7 @@ class Measurement:
             file_alloc_bytes=self.file_alloc_bytes,
             left_bytes=self.left_bytes,
             filesystem=self.filesystem,
-            note=note,
+            veracrypt=veracrypt,
             predicted_mib=self.predicted_mib or None,
             predicted_safety_mib=self.predicted_safety_mib or None,
             fileset=self.fileset,
@@ -638,7 +633,6 @@ def _measure_slack(
     return replace(
         empty,
         fileset=fileset.key,
-        fileset_title=fileset.title,
         file_bytes=scan.logical_bytes,
         file_count=scan.file_count,
         file_alloc_bytes=scan.payload.alloc_bytes,

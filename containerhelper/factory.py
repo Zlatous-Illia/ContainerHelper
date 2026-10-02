@@ -63,7 +63,6 @@ class FactorySample:
     """
 
     fileset: str
-    title: str
     container_mib: int
     cluster_bytes: int
     mounted_bytes: int
@@ -85,8 +84,13 @@ class FactorySample:
 
 @dataclass(frozen=True)
 class FactoryData:
-    source: str
-    note: str
+    """What the files hold, without their `source` and `note`.
+
+    Those two are for whoever reads the file; the window says the same from
+    the language catalog (`calibration.intro.factory`), in the language it
+    speaks.
+    """
+
     points: tuple[FactoryPoint, ...]
     #: Factory copy-slack measurements. Empty until they have been taken even
     #: once: an empty list is more honest than made-up numbers.
@@ -94,7 +98,7 @@ class FactoryData:
 
 
 def _empty() -> FactoryData:
-    return FactoryData(source="", note="", points=(), samples=())
+    return FactoryData(points=(), samples=())
 
 
 def _read_resource(name: str) -> dict:
@@ -128,7 +132,6 @@ def _read_samples(data: dict) -> tuple[FactorySample, ...]:
         return tuple(
             FactorySample(
                 fileset=str(item.get("fileset", "")),
-                title=str(item.get("title", "")),
                 container_mib=int(item["container_mib"]),
                 cluster_bytes=int(item.get("cluster_bytes", 4096)),
                 mounted_bytes=int(item["mounted_bytes"]),
@@ -168,8 +171,6 @@ def factory_data() -> FactoryData:
         return _empty()
 
     return FactoryData(
-        source=str(data.get("source", "")),
-        note=str(data.get("note", "")),
         points=points,
         samples=_read_samples(_read_resource(FACTORY_SLACK_FILE)),
     )

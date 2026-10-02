@@ -372,6 +372,27 @@ class FactoryOverrideTests(unittest.TestCase):
         self.assertGreaterEqual(with_factory.metadata_bytes, FACTORY_MARGIN_BYTES)
 
 
+class GeneratedNameDialogTests(unittest.TestCase):
+    def test_an_ordinary_record_still_needs_a_name(self):
+        """A blank record is an empty volume too, and would otherwise go
+        nameless into the records as «Калибровка 1 GiB»."""
+        dialog = RecordDialog(Record(id="", container_mib=1024))
+        dialog._refresh()
+        self.assertFalse(dialog.save_button.isEnabled())
+        self.assertNotIn("Калибровка", dialog.id_edit.placeholderText())
+
+    def test_a_collected_record_goes_by_its_generated_name(self):
+        dialog = RecordDialog(
+            Record(id="", container_mib=1024, veracrypt="1.26.24")
+        )
+        dialog._refresh()
+        self.assertTrue(dialog.save_button.isEnabled())
+        self.assertEqual(dialog.id_edit.placeholderText(), "Калибровка 1 GiB")
+        self.assertEqual(
+            dialog.note_edit.placeholderText(), "Автоматический сбор, VeraCrypt 1.26.24"
+        )
+
+
 class SimplifiedDialogTests(unittest.TestCase):
     def dialog(self, mib=12288):
         return RecordDialog(

@@ -39,6 +39,7 @@ from .plot import (
 )
 from .records import (
     Record,
+    profile_of,
     factory_points,
     factory_samples,
     gives_metadata_point,
@@ -77,6 +78,20 @@ def _is_own(record: Record, own: Sequence[Record]) -> bool:
     all, and a person is free to give any name, including «Заводская».
     """
     return any(record is item for item in own)
+
+
+def _point_key(record: Record) -> tuple:
+    """What a chart point is found by again after a refresh.
+
+    Not the shown name: that one changes with the language, and the selected
+    point would be lost on every switch. A calibration point or a file set
+    measurement — own or factory, the name is built either way — is told
+    apart by its size and file set: one supersedes the other on exactly
+    those. Any other record keeps the name it was given.
+    """
+    if record.fileset or record.is_calibration_point:
+        return ("", profile_of(record), record.container_mib, record.fileset)
+    return (record.id, profile_of(record), record.container_mib, record.fileset)
 
 
 def _geometric(lo: float, hi: float, count: int = CURVE_SAMPLES) -> list[float]:
@@ -142,11 +157,11 @@ def ntfs_curve(store, sizes: Sequence[int] = ()) -> Chart:
             float(overhead),
             tr(
                 "charts.ntfs_curve.tip",
-                id=record.id,
+                id=record.name,
                 volume=fmt_both(record.volume_bytes),
                 metadata=fmt_both(overhead),
             ),
-            key=record.id,
+            key=_point_key(record),
         )
         (mine if _is_own(record, own) else factory).append(point)
 
@@ -213,13 +228,13 @@ def ntfs_residuals(store) -> Chart:
             float(check.deviation),
             tr(
                 "charts.ntfs_residuals.tip",
-                id=record.id,
+                id=record.name,
                 volume=fmt_both(record.volume_bytes),
                 measured=fmt_both(check.measured),
                 predicted=fmt_both(check.predicted),
                 miss=fmt_both(check.deviation),
             ),
-            key=record.id,
+            key=_point_key(record),
         )
         if record.volume_bytes in edges:
             edge.append(point)
@@ -278,12 +293,12 @@ def ntfs_share(store) -> Chart:
             share,
             tr(
                 "charts.ntfs_share.tip",
-                id=record.id,
+                id=record.name,
                 volume=fmt_both(record.volume_bytes),
                 metadata=fmt_both(overhead),
                 share=f"{share:.3f}",
             ),
-            key=record.id,
+            key=_point_key(record),
         )
         (mine if _is_own(record, own) else factory).append(point)
 
@@ -367,12 +382,12 @@ def slack_curve(store) -> Chart:
             float(measured),
             tr(
                 "charts.slack_curve.tip",
-                id=record.id,
+                id=record.name,
                 files=fmt_bytes(record.file_count),
                 measured=fmt_both(measured),
                 per_file=fmt_bytes(measured // max(record.file_count, 1)),
             ),
-            key=record.id,
+            key=_point_key(record),
         )
         (mine if _is_own(record, own) else factory).append(point)
 
@@ -411,12 +426,12 @@ def slack_residuals(store) -> Chart:
             float(check.deviation),
             tr(
                 "charts.slack_residuals.tip",
-                id=record.id,
+                id=record.name,
                 measured=fmt_both(check.measured),
                 predicted=fmt_both(check.predicted),
                 miss=fmt_both(check.deviation),
             ),
-            key=record.id,
+            key=_point_key(record),
         )
         (under if check.deviation > 0 else over).append(point)
 
@@ -451,20 +466,20 @@ def forecast_misses(store) -> Chart:
     for index, record in enumerate(checked):
         miss = record.miss_mib or 0
         model_miss = record.model_miss_mib
-        labels.append(record.id)
+        labels.append(record.name)
         misses.append(
             Point(
                 float(index),
                 float(miss),
                 tr(
                     "charts.forecast.tip",
-                    id=record.id,
+                    id=record.name,
                     predicted=record.predicted_mib,
                     minimum=record.minimum_mib,
                     miss=miss,
                     safety=record.predicted_safety_mib or 0,
                 ),
-                key=record.id,
+                key=_point_key(record),
             )
         )
         if model_miss is not None:
@@ -472,8 +487,8 @@ def forecast_misses(store) -> Chart:
                 Point(
                     float(index),
                     float(model_miss),
-                    tr("charts.forecast.bare_tip", id=record.id, miss=model_miss),
-                    key=record.id,
+                    tr("charts.forecast.bare_tip", id=record.name, miss=model_miss),
+                    key=_point_key(record),
                 )
             )
 

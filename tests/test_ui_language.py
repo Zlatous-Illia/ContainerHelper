@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (  # noqa: E402
 _app = QApplication.instance() or QApplication([])
 
 from containerhelper import i18n  # noqa: E402
-from containerhelper.factory import factory_data  # noqa: E402
 from containerhelper.model import MIB  # noqa: E402
 from containerhelper.records import Record  # noqa: E402
 from containerhelper.ui.app import LANGUAGE_KEY, MainWindow, language_name  # noqa: E402
@@ -54,10 +53,10 @@ def texts(top: QWidget):
     """Every piece of UI text of a window, with the kind of widget it sits in.
 
     Not with its position: a refresh rebuilds the widgets in table cells, and
-    the order of children changes with it. Table cells are left out: they show
-    data, and record names stay in the language they were made in. So is the
-    language list: each name there is in its own language, whatever the
-    current one.
+    the order of children changes with it. Table cells are in: the names of
+    collected and factory records are built when shown, and switch with the
+    rest (decision 9). The language list is left out: each name there is in
+    its own language, whatever the current one.
     """
     # Cell widgets replaced by a refresh are only scheduled for deletion;
     # until then they are still children, in the old language.
@@ -90,6 +89,12 @@ def texts(top: QWidget):
                 if item is not None:
                     yield kind + ":column", item.text()
                     yield kind + ":column:tip", item.toolTip()
+            for row in range(widget.rowCount()):
+                for column in range(widget.columnCount()):
+                    item = widget.item(row, column)
+                    if item is not None:
+                        yield kind + ":cell", item.text()
+                        yield kind + ":cell:tip", item.toolTip()
 
 
 def switch(code: str) -> None:
@@ -116,6 +121,23 @@ class LiveSwitchTests(unittest.TestCase):
         self.window = MainWindow(data_dir=folder)
         self.window.records_tab.report_error = lambda *_: None
         self.window.show()
+        # Collected measurements, as collection hands them over: no name and
+        # no note written, both built when shown, in the language of the
+        # moment (a point and a file set; the second is a point as well).
+        for fileset in ("", "small-500"):
+            self.window.records_tab.store_calibration_point(
+                Record(
+                    id="",
+                    container_mib=1536 if fileset else 1024,
+                    mounted_bytes=(1536 if fileset else 1024) * MIB - 266_240,
+                    empty_free_bytes=(1536 if fileset else 1024) * MIB - 20 * MIB,
+                    file_bytes=500 * 1024 if fileset else None,
+                    file_count=500 if fileset else None,
+                    left_bytes=1400 * MIB if fileset else None,
+                    fileset=fileset,
+                    veracrypt="1.26.24",
+                )
+            )
         for key in (CHART_NTFS, CHART_SLACK, CHART_FORECAST, CHART_CALC):
             self.window.open_chart(key)
         charts = self.window._charts[CHART_NTFS]
@@ -169,11 +191,8 @@ class LiveSwitchTests(unittest.TestCase):
         )
 
     def test_english_leaves_no_russian(self):
-        """Data keeps its language: the folder path in the picker, and the
-        factory measurements' own description, which is data until it
-        becomes catalog keys."""
-        factory = factory_data()
-        data = (str(Path.cwd()), factory.source, factory.note)
+        """Data keeps its language: the folder path in the picker."""
+        data = (str(Path.cwd()),)
         switch("en")
         russian = []
         for number, kind, text in self.shown():

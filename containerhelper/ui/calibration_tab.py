@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..factory import factory_data
 from ..formatting import (
     DASH,
     DEFAULT_UNIT,
@@ -170,14 +169,13 @@ class CalibrationTab(QWidget):
         self._intro.setTitle(tr("calibration.intro.title"))
         self._intro_text.setText(tr("calibration.intro.text"))
         if self._origin is not None:
-            data = factory_data()
             count = len(factory_points())
             self._origin.setText(
                 tr_n(
                     "calibration.intro.factory",
                     count,
-                    source=data.source,
-                    note=data.note,
+                    source=tr("factory.source"),
+                    note=tr("factory.note"),
                 )
             )
 
@@ -394,7 +392,7 @@ class CalibrationTab(QWidget):
         for row, record in enumerate(records):
             miss, model_miss = record.miss_mib, record.model_miss_mib
             cells = (
-                record.id,
+                record.name,
                 fmt_bytes(record.file_count),
                 fmt_table_cell(record.payload_alloc, self._unit),
                 fmt_table_cell(record.copy_slack_measured, self._unit),
@@ -451,8 +449,8 @@ class CalibrationTab(QWidget):
             )
         else:
             lines.append(tr("calibration.slack.row.unpredicted"))
-        if record.note:
-            lines.append(record.note)
+        if record.shown_note:
+            lines.append(record.shown_note)
         return LINE_BREAK.join(lines)
 
     def _slack_button(self, record: Record) -> QWidget:
@@ -533,7 +531,7 @@ class CalibrationTab(QWidget):
             )
         ]
         if record is not None:
-            lines.append(tr("calibration.row.own", id=record.id))
+            lines.append(tr("calibration.row.own", id=record.name))
         return LINE_BREAK.join(lines)
 
     def _row_button(self, size_mib: int, record, point) -> QWidget:

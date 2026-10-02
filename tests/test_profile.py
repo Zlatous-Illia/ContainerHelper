@@ -19,6 +19,7 @@ from containerhelper.model import (
 )
 from containerhelper.paths import CALIBRATION_NAME
 from containerhelper.records import (
+    SCHEMA_VERSION,
     DEFAULT_PROFILE,
     EXFAT,
     FAT,
@@ -228,7 +229,7 @@ class SchemaSixTests(unittest.TestCase):
         """The file says which profile a record calibrates, unread ones too."""
         Store(path=self.path, records=[copied()]).save()
         raw = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(raw["schema"], 6)
+        self.assertEqual(raw["schema"], SCHEMA_VERSION)
         self.assertEqual(raw["records"][0]["filesystem"], "NTFS")
 
     def test_a_schema_5_record_without_it_reads_as_ntfs(self):
