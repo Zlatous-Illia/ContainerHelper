@@ -2098,6 +2098,14 @@ file it would mean that something was measured there, while it is just the
 place where the cursor happened to be. The screen and the file are drawn by the
 same `_render`, and the `live` flag separates one from the other.
 
+A PDF is written at the screen's resolution, not a printer's 300 dpi. The
+layout is measured with the widget's font metrics, while a font in points
+on a 300 dpi page is three times as many dots; the scale to the page
+enlarges both alike and keeps the mismatch. The labels overran the axes and
+each other, in every language. A vector file loses no sharpness at 96 dpi. An SVG keeps its text
+as text with the font's name, without the glyphs: Chinese labels are drawn
+by whatever font the viewer's machine has for them.
+
 ### Detaching
 
 A chart moves into its own window by a menu item and comes back to its former
