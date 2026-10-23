@@ -13,17 +13,26 @@ its parent as well. Taking the posted events back does not catch them all.
 So a switch tells each parentless window at once, and every top-level window
 lets through only the first event for a language (`repeated_change`): the
 rest would rebuild the charts and read the volume again for nothing.
+
+A language may name a font of its own (`_meta.font`), added after the
+system one: Qt looks for the characters the system font lacks along the
+Windows fallback chain, and for Chinese that starts with a Japanese font.
+Characters it lacks came from a third one — two typefaces in one line.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication, QEvent, QLibraryInfo, QTranslator
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QWidget
 
 from .. import i18n
 
 #: Qt's own catalog for the current language; None while none is installed.
 _translator: QTranslator | None = None
+
+#: The application font before any language added its own to it.
+_system_font: QFont | None = None
 
 #: The window property holding the language the window last answered.
 APPLIED = "applied_language"
@@ -38,6 +47,28 @@ def _qt_translator(code: str) -> QTranslator | None:
     translator = QTranslator()
     folder = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
     return translator if translator.load(name, folder) else None
+
+
+def _language_font() -> None:
+    """Put the current language's own font after the system one.
+
+    After, not instead: Latin letters and digits stay in the system font,
+    and the language's font only fills in what that one lacks. A font the
+    machine does not have changes nothing — Qt falls back as before.
+    """
+    global _system_font
+    app = QCoreApplication.instance()
+    if not isinstance(app, QApplication):
+        return
+    if _system_font is None:
+        _system_font = QApplication.font()
+    font = QFont(_system_font)
+    extra = i18n.meta(i18n.current()).get("font")
+    if extra:
+        system = _system_font.families() or [_system_font.family()]
+        font.setFamilies([*system, extra])
+    if font != QApplication.font():
+        QApplication.setFont(font)
 
 
 def load_language(code: str) -> None:
@@ -57,6 +88,7 @@ def load_language(code: str) -> None:
     _translator = _qt_translator(i18n.current())
     if _translator is not None:
         app.installTranslator(_translator)
+    _language_font()
 
 
 def apply_language(code: str) -> None:

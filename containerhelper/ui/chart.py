@@ -1291,7 +1291,11 @@ class ChartView(QWidget):
 
         writer = QPdfWriter(path)
         writer.setPageSize(QPageSize(QPageSize.A5))
-        writer.setResolution(300)
+        # The screen's resolution, not a printer's: the font is in points, and
+        # at 300 dpi it came out three times the size the layout was measured
+        # for with the widget's metrics. The labels overran the axes. A vector
+        # file loses nothing.
+        writer.setResolution(self.logicalDpiX())
         painter = QPainter(writer)
         # Stretch to the page with the same code: QPainter does the scaling,
         # not a separate drawing branch.

@@ -3,12 +3,13 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPointF, QSettings, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QMouseEvent, QPdfWriter  # noqa: E402
 from PySide6.QtWidgets import QApplication, QSplitter  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
@@ -545,6 +546,31 @@ class CrosshairTests(unittest.TestCase):
         mouse(self.view, QMouseEvent.MouseMove, Qt.NoButton, middle_of(self.view))
         with_cursor = self.view.image(1.0).toImage()
         self.assertEqual(plain, with_cursor)
+
+
+class PdfExportTests(unittest.TestCase):
+    def test_the_page_has_the_resolution_the_layout_was_measured_for(self):
+        """At 300 dpi the text came out three times the size of the layout.
+
+        The layout is measured with the widget's font metrics; a font in
+        points is as many dots as the device's resolution makes it. Asked of
+        the writer rather than read from the file: offscreen Qt has no fonts
+        and leaves the text out of the PDF altogether.
+        """
+        view = ChartView(sample_chart())
+        view.resize(640, 420)
+        writers = []
+
+        def writer(path):
+            made = QPdfWriter(path)
+            writers.append(made)
+            return made
+
+        path = Path(tempfile.mkdtemp()) / "chart.pdf"
+        with mock.patch("PySide6.QtGui.QPdfWriter", writer):
+            view.save_image(str(path))
+        self.assertTrue(path.stat().st_size)
+        self.assertEqual(writers[0].logicalDpiY(), view.logicalDpiY())
 
 
 class KeepViewTests(unittest.TestCase):

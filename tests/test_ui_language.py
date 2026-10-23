@@ -10,7 +10,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, QSize  # noqa: E402
+from PySide6.QtGui import QFont, QFontDatabase  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from shiboken6 import isValid  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (  # noqa: E402
     QGroupBox,
     QLabel,
     QLineEdit,
+    QStyle,
+    QStyleOptionComboBox,
     QTableWidget,
     QTabWidget,
     QWidget,
@@ -42,6 +45,7 @@ from containerhelper.ui.language import _qt_translator, apply_language  # noqa: 
 from containerhelper.ui.measure_dialog import MeasureDialog  # noqa: E402
 from containerhelper.ui.path_picker import PathPicker  # noqa: E402
 from containerhelper.ui.record_dialog import RecordDialog  # noqa: E402
+from containerhelper.ui.table import TextComboBox  # noqa: E402
 from tests.test_veracrypt import make_install  # noqa: E402
 
 MEASURE = "containerhelper.ui.measure_dialog"
@@ -381,6 +385,69 @@ class LanguageChoiceTests(unittest.TestCase):
         again = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
         self.assertEqual(names, again)
         self.assertEqual(names["ru"], i18n.meta("ru")["name"])
+
+
+class LanguageFontTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(apply_language, i18n.current())
+
+    def test_chinese_brings_its_font_after_the_system_one(self):
+        """Without it Qt took a Japanese font first and a third one for what
+        that lacked: two typefaces in one line of Chinese."""
+        system = QApplication.font().family()
+        apply_language("zh_CN")
+        self.assertEqual(
+            QApplication.font().families(), [system, i18n.meta("zh_CN")["font"]]
+        )
+
+    def test_an_open_widget_takes_the_font_too(self):
+        """The application font alone proves nothing: an open widget, one with
+        a font of its own included, has to take the family as well."""
+        label = QLabel()
+        self.addCleanup(label.deleteLater)
+        bold = QFont(label.font())
+        bold.setBold(True)
+        label.setFont(bold)
+        apply_language("zh_CN")
+        # The change reaches the widgets as posted events.
+        QCoreApplication.processEvents()
+        self.assertIn(i18n.meta("zh_CN")["font"], label.font().families())
+        self.assertTrue(label.font().bold())
+
+    def test_switching_back_takes_it_away(self):
+        system = QApplication.font()
+        apply_language("zh_CN")
+        apply_language("en")
+        self.assertEqual(QApplication.font(), system)
+
+
+class LanguageListWidthTests(unittest.TestCase):
+    def test_the_list_fits_a_full_width_bracket(self):
+        """QComboBox measured the ink, and the empty half of «）» is not
+        ink: the closing bracket of «（测试版）» was cut off. Offscreen Qt
+        has no fonts of its own, so the test brings the real one."""
+        path = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "msyh.ttc"
+        if not path.exists():
+            self.skipTest("no Microsoft YaHei on this machine")
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        self.addCleanup(QFontDatabase.removeApplicationFont, font_id)
+        combo = TextComboBox()
+        self.addCleanup(combo.deleteLater)
+        combo.setFont(QFont(i18n.meta("zh_CN")["font"]))
+        text = language_name("zh_CN")
+        combo.addItem(text)
+        metrics = combo.fontMetrics()
+        self.assertLess(metrics.boundingRect(text).width(), metrics.horizontalAdvance(text))
+        option = QStyleOptionComboBox()
+        combo.initStyleOption(option)
+        needed = combo.style().sizeFromContents(
+            QStyle.ContentsType.CT_ComboBox,
+            option,
+            QSize(metrics.horizontalAdvance(text), combo.sizeHint().height()),
+            combo,
+        )
+        self.assertGreaterEqual(combo.sizeHint().width(), needed.width())
+        self.assertGreaterEqual(combo.minimumSizeHint().width(), needed.width())
 
 
 class GuardTests(unittest.TestCase):

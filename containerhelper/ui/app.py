@@ -49,6 +49,7 @@ from .path_picker import PickerState
 from .model_tab import ModelTab
 from .records_tab import RecordsTab
 from .table import (
+    TextComboBox,
     column_widths,
     scrollable,
     set_column_widths,
@@ -551,7 +552,7 @@ class MainWindow(QMainWindow):
 
         self.language_label = QLabel()
         row.addWidget(self.language_label)
-        self.language_combo = QComboBox()
+        self.language_combo = TextComboBox()
         self.language_combo.setObjectName("language")
         for code in LANGUAGES:
             self.language_combo.addItem(language_name(code), code)

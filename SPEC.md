@@ -1825,6 +1825,20 @@ The choice is stored by its code (`language = en`), not by its name.
 - **The safety model is built again on a switch.** The advice names the
   records near it, and a factory record's name is made when the model is
   built: kept, the advice spoke German around Russian names.
+- **Chinese brings its own font.** Segoe UI has no Chinese characters, and
+  Qt looks for them along the Windows fallback chain, which starts with a
+  Japanese font: the characters it lacks came from a third one, and a line
+  of Chinese was set in two typefaces, on screen and in an exported chart
+  alike. The catalog names the font (`_meta.font`, Microsoft YaHei UI), and
+  it goes after the system font, not instead of it: Latin letters and digits
+  stay as they were. A machine without the font falls back as before; a
+  switch to another language takes the font away.
+- **The language list is as wide as the text, not its ink.** QComboBox
+  measures an item by the outline of its glyphs, and the empty right half of
+  a full-width bracket is not ink: in Chinese «中文（简体） （测试版）» got
+  119 px of the 135 it takes, and the closing bracket was cut off. The list
+  (`ui/table.TextComboBox`) asks for the advance of its widest item instead,
+  and asks again on every font change, a language switch included.
 
 ## Charts
 
@@ -2097,6 +2111,14 @@ The crosshair is not in a saved image: it is mouse state, not the chart. In a
 file it would mean that something was measured there, while it is just the
 place where the cursor happened to be. The screen and the file are drawn by the
 same `_render`, and the `live` flag separates one from the other.
+
+A PDF is written at the screen's resolution, not a printer's 300 dpi. The
+layout is measured with the widget's font metrics, while a font in points
+on a 300 dpi page is three times as many dots; the scale to the page
+enlarges both alike and keeps the mismatch. The labels overran the axes and
+each other, in every language. A vector file loses no sharpness at 96 dpi. An SVG keeps its text
+as text with the font's name, without the glyphs: Chinese labels are drawn
+by whatever font the viewer's machine has for them.
 
 ### Detaching
 
