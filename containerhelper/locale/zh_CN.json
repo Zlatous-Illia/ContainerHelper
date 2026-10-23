@@ -1,6 +1,7 @@
 {
   "_meta": {
     "name": "中文（简体）",
+    "font": "Microsoft YaHei UI",
     "plural": "other",
     "qt": "qtbase_zh_CN",
     "status": "draft"

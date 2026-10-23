@@ -11,6 +11,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent, QSettings  # noqa: E402
+from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from shiboken6 import isValid  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -381,6 +382,40 @@ class LanguageChoiceTests(unittest.TestCase):
         again = {combo.itemData(i): combo.itemText(i) for i in range(combo.count())}
         self.assertEqual(names, again)
         self.assertEqual(names["ru"], i18n.meta("ru")["name"])
+
+
+class LanguageFontTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(apply_language, i18n.current())
+
+    def test_chinese_brings_its_font_after_the_system_one(self):
+        """Without it Qt took a Japanese font first and a third one for what
+        that lacked: two typefaces in one line of Chinese."""
+        system = QApplication.font().family()
+        apply_language("zh_CN")
+        self.assertEqual(
+            QApplication.font().families(), [system, i18n.meta("zh_CN")["font"]]
+        )
+
+    def test_an_open_widget_takes_the_font_too(self):
+        """The application font alone proves nothing: an open widget, one with
+        a font of its own included, has to take the family as well."""
+        label = QLabel()
+        self.addCleanup(label.deleteLater)
+        bold = QFont(label.font())
+        bold.setBold(True)
+        label.setFont(bold)
+        apply_language("zh_CN")
+        # The change reaches the widgets as posted events.
+        QCoreApplication.processEvents()
+        self.assertIn(i18n.meta("zh_CN")["font"], label.font().families())
+        self.assertTrue(label.font().bold())
+
+    def test_switching_back_takes_it_away(self):
+        system = QApplication.font()
+        apply_language("zh_CN")
+        apply_language("en")
+        self.assertEqual(QApplication.font(), system)
 
 
 class GuardTests(unittest.TestCase):

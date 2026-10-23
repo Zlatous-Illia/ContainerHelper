@@ -1825,6 +1825,14 @@ The choice is stored by its code (`language = en`), not by its name.
 - **The safety model is built again on a switch.** The advice names the
   records near it, and a factory record's name is made when the model is
   built: kept, the advice spoke German around Russian names.
+- **Chinese brings its own font.** Segoe UI has no Chinese characters, and
+  Qt looks for them along the Windows fallback chain, which starts with a
+  Japanese font: the characters it lacks came from a third one, and a line
+  of Chinese was set in two typefaces, on screen and in an exported chart
+  alike. The catalog names the font (`_meta.font`, Microsoft YaHei UI), and
+  it goes after the system font, not instead of it: Latin letters and digits
+  stay as they were. A machine without the font falls back as before; a
+  switch to another language takes the font away.
 
 ## Charts
 
