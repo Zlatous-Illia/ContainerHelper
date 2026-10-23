@@ -1833,6 +1833,12 @@ The choice is stored by its code (`language = en`), not by its name.
   it goes after the system font, not instead of it: Latin letters and digits
   stay as they were. A machine without the font falls back as before; a
   switch to another language takes the font away.
+- **The language list is as wide as the text, not its ink.** QComboBox
+  measures an item by the outline of its glyphs, and the empty right half of
+  a full-width bracket is not ink: in Chinese «中文（简体） （测试版）» got
+  119 px of the 135 it takes, and the closing bracket was cut off. The list
+  (`ui/table.TextComboBox`) asks for the advance of its widest item instead,
+  and asks again on every font change, a language switch included.
 
 ## Charts
 

@@ -6,7 +6,7 @@ the tabs depend on each other for the sake of a few helpers.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRegularExpression, Qt, Signal
+from PySide6.QtCore import QEvent, QRegularExpression, QSize, Qt, Signal
 from PySide6.QtGui import (
     QCursor,
     QFontMetrics,
@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyleOptionComboBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -406,6 +408,36 @@ def wrapped(label: QLabel) -> QLabel:
     policy.setHeightForWidth(True)
     label.setSizePolicy(policy)
     return label
+
+
+class TextComboBox(QComboBox):
+    """A list as wide as the advance of its widest item, not its ink.
+
+    QComboBox measures an item by the outline of its glyphs
+    (`boundingRect`), and the empty right half of a full-width bracket is
+    not ink: «中文（简体） （测试版）» got 119 px of the 135 it takes, and
+    the closing bracket was cut off. Not cached: a font change, a language
+    switch included, makes the layout ask again.
+    """
+
+    def _fit(self, hint: QSize) -> QSize:
+        metrics = self.fontMetrics()
+        text = max(
+            (metrics.horizontalAdvance(self.itemText(i)) for i in range(self.count())),
+            default=0,
+        )
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        width = self.style().sizeFromContents(
+            QStyle.ContentsType.CT_ComboBox, option, QSize(text, hint.height()), self
+        ).width()
+        return QSize(max(hint.width(), width), hint.height())
+
+    def sizeHint(self) -> QSize:
+        return self._fit(super().sizeHint())
+
+    def minimumSizeHint(self) -> QSize:
+        return self._fit(super().minimumSizeHint())
 
 
 def digits_only(field: QLineEdit | QComboBox) -> None:
